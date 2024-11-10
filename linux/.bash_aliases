@@ -135,20 +135,6 @@ upgrade_system() {
         apt autoremove -y >> "$LOG_FILE" 2>&1
         apt autoclean >> "$LOG_FILE" 2>&1
 
-        # Run ClamAV scan
-        echo "Running ClamAV scan..." | tee -a "$LOG_FILE"
-        if command -v clamscan >/dev/null 2>&1; then
-            echo "Updating ClamAV virus database..." | tee -a "$LOG_FILE"
-            freshclam >> "$LOG_FILE" 2>&1
-
-            echo "Scanning system with ClamAV..." | tee -a "$LOG_FILE"
-            clamscan -r / --bell -i >> "$LOG_FILE" 2>&1
-        else
-            echo "ClamAV is not installed. Installing now..." | tee -a "$LOG_FILE"
-            apt install clamav -y >> "$LOG_FILE" 2>&1
-            freshclam >> "$LOG_FILE" 2>&1
-            clamscan -r / --bell -i >> "$LOG_FILE" 2>&1
-        fi
         # Check if a reboot is required
         if [ -f /var/run/reboot-required ]; then
             echo "System reboot is recommended." | tee -a "$LOG_FILE"
