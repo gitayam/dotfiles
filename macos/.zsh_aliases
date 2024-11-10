@@ -92,7 +92,7 @@ create_repo() {
     fi
 
     local repo_name=$1
-    local base_dir="/Users/sac/Documents/Git"
+    local base_dir="$HOME/Documents/Git"
     mkdir -p "$base_dir"
 
     gh repo create "$repo_name" --private || return 1
@@ -163,7 +163,7 @@ matrix_setup() {
     fi
 
     local mode="${1:-normal}"
-    local hosts_file="${2:-/Users/sac/Documents/Git/matrix-docker-ansible-deploy/inventory/hosts}"
+    local hosts_file="${2:-$HOME/Documents/Git/matrix-docker-ansible-deploy/inventory/hosts}"
 
     if [[ ! -f "$hosts_file" ]]; then
         echo "Error: Hosts file not found at $hosts_file"
@@ -208,7 +208,7 @@ matrix_setup_user() {
     local password="${2:-$(openssl rand -base64 18)}"
     local admin="${3:-no}"
     local device_id="${4:-${username}_$(openssl rand -hex 3)}"
-    local hosts_file="${5:-/Users/sac/Documents/Git/matrix-docker-ansible-deploy/inventory/hosts}"
+    local hosts_file="${5:-$HOME/Documents/Git/matrix-docker-ansible-deploy/inventory/hosts}"
 
     if [[ ! -f "$hosts_file" ]]; then
         echo "Error: Hosts file not found at $hosts_file"
