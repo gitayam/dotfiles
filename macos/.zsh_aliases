@@ -1,13 +1,14 @@
 # ----------------------
 # Git Aliases
 # ----------------------
-alias gita="git_add"
-alias gitcg="git_commit"
-alias gitp="git push"
-alias gitpl="git pull"
-alias gitco="git checkout"
-alias gitcb="git checkout -b"
-alias gitlog="git log --oneline --graph --all"
+alias gita="git_add" # Add files to staging area
+alias gitcg="git_commit" # Commit changes using the function 
+alias gitp="git push" # Push changes to remote repository
+alias gitpl="git pull" # Pull changes from remote repository
+alias gitco="git checkout" # Switch branches
+alias gitcb="git checkout -b" # Create a new branch
+alias gitlog="git log --oneline --graph --all" # Show a pretty git log
+alias gitrepo="create_repo" # Create a new GitHub repository
 
 # ----------------------
 # Git Functions
