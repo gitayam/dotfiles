@@ -57,3 +57,47 @@ sync_file "$SYSTEM_BASHRC" "$REPO_BASHRC"
 sync_file "$SYSTEM_BASH_ALIASES" "$REPO_BASH_ALIASES"
 
 echo "Sync process completed."
+
+# Define paths for cron configs and a temporary file for comparison
+CRON_CONFIG="./cron_config.txt"
+TEMP_CRON="temp_crontab"
+
+# Load current crontab into a temporary file
+crontab -l > "$TEMP_CRON"
+
+# Compare the cron configs file with the current crontab and store differences
+DIFF_ADDED=$(grep -Fxv -f "$TEMP_CRON" "$CRON_CONFIG")  # Entries in cron_configs.txt but not in crontab
+DIFF_REMOVED=$(grep -Fxv -f "$CRON_CONFIG" "$TEMP_CRON") # Entries in crontab but not in cron_configs.txt
+
+# Display and prompt to add missing entries from cron_configs.txt to crontab
+if [ -n "$DIFF_ADDED" ]; then
+    echo "The following entries are in $CRON_CONFIG but not in the current crontab:"
+    echo "$DIFF_ADDED"
+    read -p "Do you want to add these entries to your crontab? (y/n): " add_response
+    if [[ "$add_response" =~ ^[Yy]$ ]]; then
+        echo "$DIFF_ADDED" >> "$TEMP_CRON"
+    fi
+else
+    echo "No new entries to add from $CRON_CONFIG."
+fi
+
+# Display and prompt to remove extra entries from crontab
+if [ -n "$DIFF_REMOVED" ]; then
+    echo "The following entries are in the current crontab but not in $CRON_CONFIG:"
+    echo "$DIFF_REMOVED"
+    read -p "Do you want to remove these entries from your crontab? (y/n): " remove_response
+    if [[ "$remove_response" =~ ^[Yy]$ ]]; then
+        grep -Fxv -f <(echo "$DIFF_REMOVED") "$TEMP_CRON" > "${TEMP_CRON}_clean"
+        mv "${TEMP_CRON}_clean" "$TEMP_CRON"
+    fi
+else
+    echo "No extra entries to remove from the crontab."
+fi
+
+# Update crontab with any approved changes
+crontab "$TEMP_CRON"
+
+# Clean up temporary file
+rm "$TEMP_CRON"
+
+echo "Crontab synchronization complete."
