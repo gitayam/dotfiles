@@ -1,1 +1,266 @@
-/Users/sac/.zsh_aliases
+# ----------------------
+# Git Aliases
+# ----------------------
+alias gta="git_add"
+alias gtcg="git_commit"
+alias gtp="git push"
+alias gtpl="git pull"
+alias gtco="git checkout"
+alias gtcb="git checkout -b"
+alias gtlog="git log --oneline --graph --all"
+
+# ----------------------
+# Git Functions
+# ----------------------
+git_commit() {
+    if [[ -z "$1" ]]; then
+        echo "No commit message provided. Opening editor for interactive commit message."
+        git commit
+    else
+        git commit -m "$1"
+    fi
+}
+
+git_add() {
+    if [[ -z "$1" ]]; then
+        echo "No files specified. Defaulting to 'git add .'"
+        git add .
+    else
+        git add "$@"
+    fi
+}
+# ----------------------
+# Navigation and File Management Aliases
+# ----------------------
+alias ..="cd .."
+alias ...="cd ../.."
+alias ....="cd ../../.."
+alias mkdir="mkdir -p"
+alias rmr="rm -rf"
+alias untar="tar -zxvf"
+
+# ----------------------
+# Security Tools Aliases
+# ----------------------
+alias scan="sudo nmap -sS -Pn"
+alias json="jq ."
+alias http="curl -I"
+alias ports="netstat -tuln"
+
+# ----------------------
+# Helper Functions
+# ----------------------
+
+# General Help Checker
+show_help() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "$2"
+        return 0
+    fi
+}
+
+# Menu with all functions in ~/.zsh_aliases and ~/.mac_functions.sh
+helpmenu() {
+    echo "Help Menu:"
+    echo "----------"
+
+    for file in ~/.zsh_aliases ~/.mac_functions.sh; do
+        if [ -f "$file" ]; then
+            echo "Functions in $file:"
+            while IFS= read -r line; do
+                if [[ "$line" =~ ^[a-zA-Z_][a-zA-Z0-9_]*\(\)\ *\{ ]]; then
+                    echo "  - ${line%%()*}"
+                fi
+            done < "$file"
+        else
+            echo "No file found at $file"
+        fi
+        echo ""
+    done
+}
+
+# ----------------------
+# GitHub Repository Management
+# ----------------------
+
+create_repo() {
+    show_help "$1" "Usage: create_repo repo_name"
+
+    if ! command -v gh &> /dev/null; then
+        echo "Error: GitHub CLI 'gh' is not installed."
+        return 1
+    fi
+
+    local repo_name=$1
+    local base_dir="/Users/sac/Documents/Git"
+    mkdir -p "$base_dir"
+
+    gh repo create "$repo_name" --private || return 1
+    git clone "https://github.com/$(gh api user | jq -r '.login')/$repo_name.git" "$base_dir/$repo_name" || return 1
+    cd "$base_dir/$repo_name" || return 1
+    echo "# $repo_name" > README.md
+    git add README.md
+    git commit -m "Initial commit"
+    git branch -M main
+    git push -u origin main
+
+    echo "Repository $repo_name created and initialized successfully in $base_dir."
+}
+
+# ----------------------
+# MAC Address Management
+# ----------------------
+
+gen_mac_addr() {
+    local mac=$(openssl rand -hex 6 | sed 's/\(..\)/\1:/g; s/.$//')
+    echo "$mac"
+}
+
+change_mac_menu() {
+    echo "Choose an option:"
+    echo "1. Set a specific MAC address"
+    echo "2. Set a random MAC address"
+    echo "3. Restore original MAC address"
+    echo -n "Enter your choice (1/2/3): "
+    read choice
+
+    case $choice in
+        1)
+            echo -n "Enter the new MAC address (e.g., E6:B8:BA:D2:41:07): "
+            read mac_address
+            echo -n "Enter the name of the new network location: "
+            read location_name
+            change_mac_address "$mac_address" "$location_name"
+            ;;
+        2)
+            echo -n "Enter the name of the new network location: "
+            read location_name
+            mac_address=$(gen_mac_addr)
+            change_mac_address "$mac_address" "$location_name"
+            ;;
+        3)
+            restore_original_mac
+            ;;
+        *)
+            echo "Invalid choice. Exiting."
+            ;;
+    esac
+}
+
+# ----------------------
+# Matrix Setup
+# ----------------------
+
+matrix_setup() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: matrix_setup {full|1|normal|restart} [hosts_file_path]"
+        return 0
+    fi
+
+    if ! command -v ansible-playbook &> /dev/null; then
+        echo "Error: 'ansible-playbook' is not installed."
+        return 1
+    fi
+
+    local mode="${1:-normal}"
+    local hosts_file="${2:-/Users/sac/Documents/Git/matrix-docker-ansible-deploy/inventory/hosts}"
+
+    if [[ ! -f "$hosts_file" ]]; then
+        echo "Error: Hosts file not found at $hosts_file"
+        return 1
+    fi
+
+    case "$mode" in
+        full|1)
+            git pull && sudo make roles
+            sudo ansible-playbook -i "$hosts_file" setup.yml --tags=install-all,setup-all,ensure-matrix-users-created,start || return 1
+            ;;
+        normal)
+            git pull && sudo make roles
+            sudo ansible-playbook -i "$hosts_file" setup.yml --tags=setup-all,start || return 1
+            ;;
+        restart)
+            sudo ansible-playbook -i "$hosts_file" setup.yml --tags=restart || return 1
+            ;;
+        *)
+            echo "Usage: matrix_setup {full|1|normal|restart} [hosts_file_path]"
+            return 1
+            ;;
+    esac
+}
+
+# ----------------------
+# Matrix User Setup
+# ----------------------
+
+matrix_setup_user() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: matrix_setup_user username [password] [admin] [device_id] [hosts_file_path]"
+        return 0
+    fi
+
+    if ! command -v curl &> /dev/null || ! command -v ansible-playbook &> /dev/null; then
+        echo "Error: Required commands 'curl' or 'ansible-playbook' are not installed."
+        return 1
+    fi
+
+    local username="$1"
+    local password="${2:-$(openssl rand -base64 18)}"
+    local admin="${3:-no}"
+    local device_id="${4:-${username}_$(openssl rand -hex 3)}"
+    local hosts_file="${5:-/Users/sac/Documents/Git/matrix-docker-ansible-deploy/inventory/hosts}"
+
+    if [[ ! -f "$hosts_file" ]]; then
+        echo "Error: Hosts file not found at $hosts_file"
+        return 1
+    fi
+
+    sudo ansible-playbook -i "$hosts_file" setup.yml \
+        --extra-vars="username=${username} password='${password}' admin=${admin}" \
+        --tags=register-user
+
+    curl -XPOST -d "{
+        \"identifier\": { \"type\": \"m.id.user\", \"user\": \"${username}\" },
+        \"password\": \"${password}\",
+        \"type\": \"m.login.password\",
+        \"device_id\": \"${device_id}\"
+    }" 'https://matrix.irregularchat.com/_matrix/client/r0/login'
+}
+
+# ----------------------
+# Movie Transfer
+# ----------------------
+
+transfer_movie() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: transfer_movie path1 path2 ..."
+        return 0
+    fi
+
+    local remote_host="root@proxmox-main"
+    local remote_port=314
+    local base_remote_path="/datadrive/Media/Movies"
+
+    if ! ssh -q -p "$remote_port" "$remote_host" "exit"; then
+        echo "Error: Cannot connect to remote host"
+        return 1
+    fi
+
+    for path in "$@"; do
+        if [[ ! -e "$path" ]]; then
+            echo "Error: '$path' does not exist"
+            continue
+        fi
+
+        local target_path="$base_remote_path/$(basename "$path")"
+        if [[ -d "$path" ]]; then
+            ssh -p "$remote_port" "$remote_host" "mkdir -p \"$target_path\""
+            rsync -vz --progress -e "ssh -p $remote_port" "$path/"* "$remote_host:$target_path/" || echo "Failed to transfer directory '$path'"
+        elif [[ -f "$path" ]]; then
+            ssh -p "$remote_port" "$remote_host" "mkdir -p \"$base_remote_path\""
+            rsync -vz --progress -e "ssh -p $remote_port" "$path" "$remote_host:$target_path" || echo "Failed to transfer file '$path'"
+        else
+            echo "Error: '$path' is neither a file nor a directory"
+        fi
+    done
+}
