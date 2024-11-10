@@ -35,6 +35,16 @@ alias rm='rm -i'
 alias cp='cp -i'
 alias mv='mv -i'
 
+# Nano Editor settings
+alias nano='nano -c'                # Enable line numbers
+alias nanobash='nano ~/.bashrc'     # Open the bashrc file in nano
+alias erase='erase_file'          # Custom function to erase a file content then open with nano
+
+# Nano Functions
+erase_file() {
+    echo -n > $1
+    nano $1
+}
 # Custom prompt with color (optional, can be adjusted as needed)
 export PS1='\[\e[0;32m\]\u@\h\[\e[m\]:\[\e[0;34m\]\w\[\e[m\]$ '
 
