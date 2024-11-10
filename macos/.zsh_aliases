@@ -1,13 +1,13 @@
 # ----------------------
 # Git Aliases
 # ----------------------
-alias gta="git_add"
-alias gtcg="git_commit"
-alias gtp="git push"
-alias gtpl="git pull"
-alias gtco="git checkout"
-alias gtcb="git checkout -b"
-alias gtlog="git log --oneline --graph --all"
+alias gita="git_add"
+alias gitcg="git_commit"
+alias gitp="git push"
+alias gitpl="git pull"
+alias gitco="git checkout"
+alias gitcb="git checkout -b"
+alias gitlog="git log --oneline --graph --all"
 
 # ----------------------
 # Git Functions
