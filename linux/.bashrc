@@ -23,6 +23,30 @@ if [ -f ~/.bash_aliases ]; then
   source ~/.bash_aliases
 fi
 
+# Define OS 
+if [ -f /etc/os-release ]; then
+  . /etc/os-release
+  OS=$NAME
+elif type lsb_release &> /dev/null; then
+  OS=$(lsb_release -si)
+else
+  OS=$(uname -s)
+fi
+
+
+# History settings
+HISTSIZE=1000
+HISTFILESIZE=2000
+HISTCONTROL=ignoredups:erasedups  # No duplicate entries
+shopt -s histappend                # Append to history, don't overwrite
+
+# Enhanced command-line editing
+shopt -s cdspell                   # Correct minor spelling errors in cd
+shopt -s autocd                    # Allow directory paths as commands
+shopt -s checkwinsize              # Adjust window size after each command
+shopt -s globstar                  # Enable recursive globbing (e.g., **/*.txt)
+
+
 # Colorize the `ls` output and setup useful aliases
 export LS_OPTIONS='--color=auto'
 alias ls='ls $LS_OPTIONS'
