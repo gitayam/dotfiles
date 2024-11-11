@@ -29,11 +29,23 @@ alias ls='ls $LS_OPTIONS'
 alias ll='ls -lh $LS_OPTIONS'        # Detailed list view
 alias la='ls -lha $LS_OPTIONS'       # Show hidden files
 alias l='ls -lA $LS_OPTIONS'         # Short list view with hidden files
+alias lt='ls -strhal $LS_OPTIONS'       # Sort by date, most recent last
 
 # Safe aliases to prevent accidental file overwrites or deletions
 alias rm='rm -i'
 alias cp='cp -i'
 alias mv='mv -i'
+
+# Navigation Function
+# change dir and List Directory Contents
+cdl() {
+  if [ -n "$1" ]; then
+    cd "$1" && ll
+  else
+    cd ~ && ll
+  fi
+}
+
 # create backup of a file or directory
 backup() {
   # human readiable date and time with backup
