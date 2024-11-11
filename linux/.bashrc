@@ -45,6 +45,15 @@ erase_file() {
     echo -n > $1
     nano $1
 }
+
+
+# Docker Aliases
+alias docker-compose="docker compose"
+alias dc="docker compose"
+alias d="docker"
+alias dps="docker ps"
+alias dexec="docker exec -it $1 /bin/bash"
+
 # Custom prompt with color (optional, can be adjusted as needed)
 export PS1='\[\e[0;32m\]\u@\h\[\e[m\]:\[\e[0;34m\]\w\[\e[m\]$ '
 
