@@ -46,6 +46,10 @@ shopt -s autocd                    # Allow directory paths as commands
 shopt -s checkwinsize              # Adjust window size after each command
 shopt -s globstar                  # Enable recursive globbing (e.g., **/*.txt)
 
+# Custom prompt with color (optional, can be adjusted as needed)
+export PS1='\[\e[0;32m\]\u@\h\[\e[m\]:\[\e[0;34m\]\w\[\e[m\]$ '
+
+
 
 # Colorize the `ls` output and setup useful aliases
 export LS_OPTIONS='--color=auto'
@@ -61,6 +65,11 @@ alias cp='cp -i'
 alias mv='mv -i'
 
 # Navigation Function
+# Fast directory navigation
+alias ..="cd .."
+alias ...="cd ../.."
+alias ....="cd ../../.."
+
 # change dir and List Directory Contents
 cdl() {
   if [ -n "$1" ]; then
@@ -96,7 +105,15 @@ backup() {
   done
 
 }
-# Shred a file by overwriting it with random data 3 times or the specified number of times
+# Searching 
+# Grep aliases and functions
+alias grep='grep -i --color=auto "$@"' # Ignore case and colorize output and pass all arguments to grep in quotes
+alias grepv='grep -vi --color=auto' # Ignore case, invert match, and colorize output
+
+# Find aliases and functions
+alias findf='find . -type f -name' # Find files by name
+alias findd='find . -type d -name' # Find directories by name
+alias findex=''
 
 # Nano Editor settings
 alias nano='nano -c'                # Enable line numbers
@@ -134,14 +151,6 @@ alias dps="d ps"
 alias dbash="d exec -it $1 /bin/bash"
 alias dsh="d exec -it $1 /bin/sh"
 
-# Custom prompt with color (optional, can be adjusted as needed)
-export PS1='\[\e[0;32m\]\u@\h\[\e[m\]:\[\e[0;34m\]\w\[\e[m\]$ '
-
-
-# Fast directory navigation
-alias ..="cd .."
-alias ...="cd ../.."
-alias ....="cd ../../.."
 
 # Networking shortcuts
 alias ports='netstat -tulanp'  # List open ports
