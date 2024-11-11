@@ -34,6 +34,32 @@ alias l='ls -lA $LS_OPTIONS'         # Short list view with hidden files
 alias rm='rm -i'
 alias cp='cp -i'
 alias mv='mv -i'
+# create backup of a file or directory
+backup() {
+  # human readiable date and time with backup
+  # check if dir or files exists
+  backup_name=".bak_$(date +%Y-%m-%d_%H-%M-%S)"
+  # check if rsync is installed if not set copy command to cp
+  if command -v rsync &> /dev/null; then
+    COPY_CMD="rsync"
+  else
+    COPY_CMD="cp"
+  fi
+  # take files, dictionaries as arguments get full path as needed many args possible
+  
+  for file in "$@"; do
+    if [ -f "$file" ]; then
+      $COPY_CMD "$file" "$file$backup_name"
+      echo "Backup of $file created as $file$backup_name"
+    elif [ -d "$file" ]; then
+      $COPY_CMD -r "$file" "$file$backup_name"
+      echo "Backup of $file created as $file$backup_name"
+    else
+      echo "$file does not exist"
+    fi
+  done
+}
+# Shred a file by overwriting it with random data 3 times or the specified number of times
 
 # Nano Editor settings
 alias nano='nano -c'                # Enable line numbers
