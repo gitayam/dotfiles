@@ -103,10 +103,23 @@ alias nanobash='nano ~/.bashrc'     # Open the bashrc file in nano
 alias erase='erase_file'          # Custom function to erase a file content then open with nano
 
 # Nano Functions
-erase_file() {
-    echo -n > $1
-    nano $1
+reset_file() {
+  # Reset the file content to an empty string
+  # use the backup function to create a backup of the file before erasing
+  backup "$1"
+  echo "" > "$1"
+  echo "File content erased."
+  nano "$1"
+  # prompt user to restore backup file if needed, else delete
+  read -p "Do you want to delete the backup file? (y/n): " delete_backup
+  if [ "$delete_backup" == "y" ]; then
+    rm $file$backup_name # from the backup function
+    echo "Backup file deleted."
+  fi
+
 }
+
+
 
 
 # Docker Aliases
