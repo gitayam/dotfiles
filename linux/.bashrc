@@ -94,6 +94,7 @@ backup() {
       echo "$file does not exist"
     fi
   done
+
 }
 # Shred a file by overwriting it with random data 3 times or the specified number of times
 
@@ -125,30 +126,22 @@ reset_file() {
 # Docker Aliases
 alias docker-compose="docker compose"
 alias dc="docker compose"
+alias dcu="dc pull && dc up -d"
+alias dcr="dc down && dc up -d"
+alias dcp="dc pull"
 alias d="docker"
-alias dps="docker ps"
-alias dexec="docker exec -it $1 /bin/bash"
+alias dps="d ps"
+alias dbash="d exec -it $1 /bin/bash"
+alias dsh="d exec -it $1 /bin/sh"
 
 # Custom prompt with color (optional, can be adjusted as needed)
 export PS1='\[\e[0;32m\]\u@\h\[\e[m\]:\[\e[0;34m\]\w\[\e[m\]$ '
 
-# History settings
-HISTSIZE=1000
-HISTFILESIZE=2000
-HISTCONTROL=ignoredups:erasedups  # No duplicate entries
-shopt -s histappend                # Append to history, don't overwrite
-
-# Enhanced command-line editing
-shopt -s cdspell                   # Correct minor spelling errors in cd
-shopt -s autocd                    # Allow directory paths as commands
-shopt -s checkwinsize              # Adjust window size after each command
-shopt -s globstar                  # Enable recursive globbing (e.g., **/*.txt)
 
 # Fast directory navigation
 alias ..="cd .."
 alias ...="cd ../.."
 alias ....="cd ../../.."
-alias ~="cd ~"
 
 # Networking shortcuts
 alias ports='netstat -tulanp'  # List open ports
