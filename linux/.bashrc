@@ -137,9 +137,29 @@ reset_file() {
 
 }
 
+# Python Aliases 
+pyenv(){
+  python3 -m venv env  # Create the virtual environment
+  source env/bin/activate  # Activate the virtual environment (on Linux/Mac)
+}
 
-
-
+pyserver(){
+  #get local ip
+  local_ip=$(hostname -I | awk '{print $1}')
+  # path for the server else use current dir
+  # if multiple files passed in arg then create tmp dir and add those passed files or dir via ln to the temp server dir
+  if [ -n "$1" ]; then
+    # create temp dir
+    mkdir -p /tmp/pyserver
+    # add files or dir to the temp dir
+    #create python server for the dir
+    for file in "$@"; do
+      ln -s "$file" /tmp/pyserver
+    done
+    # change dir to the temp dir
+    cd /tmp/pyserver
+  fi
+}
 # Docker Aliases
 alias docker-compose="docker compose"
 alias dc="docker compose"
