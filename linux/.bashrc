@@ -161,8 +161,8 @@ pyserver(){
   fi
 }
 # Docker Aliases
-alias docker-compose="docker compose"
 alias dc="docker compose"
+alias docker-compose="dc"
 alias dcu="dc pull && dc up -d"
 alias dcr="dc down && dc up -d"
 alias dcp="dc pull"
@@ -187,7 +187,7 @@ alias gitc='git commit -m'
 alias gitp='git push'
 alias gitpl='git pull'
 alias gitl='git log --oneline --graph --decorate'
-
+gitupdate='update_git_repos'
 # Quick access to server logs
 alias logs='tail -f /var/log/syslog'
 
