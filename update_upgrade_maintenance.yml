@@ -1,0 +1,147 @@
+---
+- name: Update, Upgrade, Maintenance, and Git Repositories Update on Remote Servers
+  hosts: all
+  become: yes
+  vars:
+    log_path: "/var/log/maintenance_log.txt"
+    search_path: "/home/"
+    exclude_path: "/home/discourse"
+
+  tasks:
+    - name: Update APT package index
+      apt:
+        update_cache: yes
+      tags: update
+
+    - name: Upgrade all packages to latest version
+      apt:
+        upgrade: dist
+      tags: upgrade
+
+    - name: Remove unused packages
+      apt:
+        autoremove: yes
+      tags: cleanup
+
+    - name: Clean up APT cache
+      apt:
+        autoclean: yes
+      tags: cleanup
+
+    - name: Update Cryptpad on irregularchat-information
+      shell: |
+        git pull
+        pm2 restart cryptpad
+      args:
+        chdir: /home/cryptpad/cryptpad
+      async: 0
+      poll: 1
+      no_log: False
+      when: inventory_hostname == 'irregularchat-information'
+      tags: cryptpad
+
+    - name: Update Vaultwarden on proxmox-main
+      shell: ./docker-cmd.sh
+      args:
+        chdir: /home/vaultwarden
+      async: 0
+      poll: 1
+      no_log: False
+      when: inventory_hostname == 'proxmox-main'
+      tags: vaultwarden
+
+
+    - name: Recursively find all .git directories, excluding /home/discourse
+      shell: "find {{ search_path }} -path {{ exclude_path }} -prune -o -type d -name '.git' -print"
+      register: git_dirs
+      changed_when: false
+      tags: git_update
+
+    - name: Update each Git repository
+      shell: git pull
+      args:
+        chdir: "{{ item }}"
+      loop: "{{ git_dirs.stdout_lines | map('dirname') | list }}"
+      async: 0
+      poll: 1
+      no_log: False
+      tags: git_update
+
+    - name: Pull all Docker images individually
+      shell: |
+        update_docker_images() {
+            images=$(docker images --format '{{"{{"}}.Repository{{"}}"}}' | grep -v '<none>')
+
+            for image in $images; do
+                echo "Pulling image $image"
+                docker pull "$image"
+            done
+        }
+
+        update_docker_images
+      args:
+        executable: /bin/bash
+      async: 0
+      poll: 1
+      no_log: False
+      tags: docker_pull
+
+    - name: Recursively find Docker Compose files, excluding /home/discourse
+      shell: "find {{ search_path }} -path {{ exclude_path }} -prune -o -type f \\( -name 'docker-compose.yml' -o -name 'docker-compose.yaml' \\) -print"
+      register: docker_compose_files
+      changed_when: false
+      tags: docker_compose_update
+
+    - name: Pull and update Docker Compose services
+      shell: |
+        docker compose pull && docker compose up -d
+      args:
+        chdir: "{{ item }}"
+      loop: "{{ docker_compose_files.stdout_lines | map('dirname') | list }}"
+      async: 0
+      poll: 1
+      no_log: False
+      tags: docker_compose_update
+      
+    - name: Check disk usage and log results
+      shell: "df -h | grep '^/dev/'"
+      register: disk_usage
+      tags: maintenance
+
+    - name: Write disk usage to log
+      copy:
+        content: "{{ disk_usage.stdout }}"
+        dest: "{{ log_path }}"
+        owner: root
+        mode: '0644'
+      tags: maintenance
+
+    - name: Check for server uptime and log results
+      command: uptime
+      register: uptime_info
+      tags: maintenance
+
+    - name: Append uptime to log file
+      lineinfile:
+        path: "{{ log_path }}"
+        line: "{{ uptime_info.stdout }}"
+        create: yes
+      tags: maintenance
+
+    - name: Display the last 10 lines of the log file
+      shell: tail -n 10 "{{ log_path }}"
+      register: log_tail
+      tags: log_output
+
+    - name: Show log tail
+      debug:
+        var: log_tail.stdout
+      tags: log_output
+
+    - name: Reboot the server if a reboot is needed
+      reboot:
+        msg: "Reboot initiated by Ansible for maintenance"
+        connect_timeout: 5
+      when: inventory_hostname != 'proxmox-main'
+      tags: reboot
+
