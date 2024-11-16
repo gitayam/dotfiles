@@ -1,0 +1,30 @@
+---
+- name: Update, Upgrade, and Clean Up Servers
+  hosts: all
+  become: yes
+  vars:
+    log_path: "/var/log/maintenance_log.txt"
+    search_path: "/home/"
+    exclude_path: "/home/discourse"
+
+  tasks:
+    - name: Update APT package index
+      apt:
+        update_cache: yes
+      tags: update
+
+    - name: Upgrade all packages to latest version
+      apt:
+        upgrade: dist
+      tags: upgrade
+
+    - name: Remove unused packages
+      apt:
+        autoremove: yes
+      tags: cleanup
+
+    - name: Clean up APT cache
+      apt:
+        autoclean: yes
+      tags: cleanup
+
