@@ -32,3 +32,6 @@ precmd() { vcs_info }
 zstyle ':vcs_info:*' formats '(%b)'
 
 export PS1="%n@%m %1~ [%D{%L:%M:%S}] ${vcs_info_msg_0_} %# "
+
+# Use Touch ID for sudo
+sudo sed -i '' '1s;^;auth       sufficient     pam_tid.so\n;' /etc/pam.d/sudo
