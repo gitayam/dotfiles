@@ -1,0 +1,4 @@
+[my_servers]
+matrix ansible_host=matrix ansible_user=root
+proxmox-main ansible_host=proxmox-main ansible_user=root ansible_port=314
+irregularchat-information ansible_host=irregularchat-information ansible_user=root
