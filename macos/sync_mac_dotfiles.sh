@@ -56,3 +56,4 @@ sync_file "$SYSTEM_ZSHRC" "$REPO_ZSHRC"
 sync_file "$SYSTEM_ZSH_ALIASES" "$REPO_ZSH_ALIASES"
 
 echo "Sync process completed."
+source "$SYSTEM_ZSHRC"

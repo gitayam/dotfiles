@@ -13,6 +13,17 @@ if [ -f ~/.zsh_aliases ]; then
   source ~/.zsh_aliases
 fi
 
+# Define OS 
+if [ -f /etc/os-release ]; then
+  . /etc/os-release
+  OS=$NAME
+elif type lsb_release &> /dev/null; then
+  OS=$(lsb_release -si)
+else
+  OS=$(uname -s)
+fi
+
+
 # Enable syntax highlighting if installed
 if [ -f /usr/local/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]; then
   source /usr/local/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
@@ -33,5 +44,5 @@ zstyle ':vcs_info:*' formats '(%b)'
 
 export PS1="%n@%m %1~ [%D{%L:%M:%S}] ${vcs_info_msg_0_} %# "
 
-# Use Touch ID for sudo
+# Use Touch ID for sudo for Macs with Touch Bar
 sudo sed -i '' '1s;^;auth       sufficient     pam_tid.so\n;' /etc/pam.d/sudo
