@@ -1,6 +1,10 @@
 export PATH=$PATH:/Users/sac/.local/bin
 alias age_pub='/private/tmp/age-py/age.sh'
 # ~/.zshrc
+# Set GPG TTY
+export GPG_TTY=$(tty)
+# Set the default gpg program
+git config --global gpg.program $(which gpg)
 
 # Set the default prompt
 export PS1="%n@%m %1~ %# "
@@ -54,3 +58,4 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
 else 
   echo "Touch ID for sudo not enabled. Passwords will be required for sudo."
 fi
+
