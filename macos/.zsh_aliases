@@ -29,6 +29,54 @@ git_add() {
         git add "$@"
     fi
 }
+
+update_git_repos() {
+    # Default variables
+    search_path="$HOME/Documents/Git/"  # Default search path
+    exclude_paths=()                   # Array to store excluded paths
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --search-path)
+                search_path="$2"
+                shift 2
+                ;;
+            --exclude)
+                exclude_paths+=("$2")
+                shift 2
+                ;;
+            *)
+                echo "Unknown argument: $1"
+                return 1
+                ;;
+        esac
+    done
+
+    # Build the find command
+    find_cmd="find \"$search_path\" -type d -name \".git\""
+
+    for exclude in "${exclude_paths[@]}"; do
+        find_cmd+=" ! -path \"$exclude/*\""
+    done
+
+    find_cmd+=" -print"
+
+    # Execute the find command and update repositories
+    eval "$find_cmd" | while IFS= read -r gitdir; do
+        repo_dir=$(dirname "$gitdir")
+
+        # Ensure the directory is marked safe for Git operations
+        git config --global --add safe.directory "$repo_dir"
+
+        echo "Updating repository in $repo_dir"
+        cd "$repo_dir" || {
+            echo "Failed to access $repo_dir"
+            continue
+        }
+        git pull --rebase || echo "Failed to update $repo_dir"
+    done
+}
 # ----------------------
 # Navigation and File Management Aliases
 # ----------------------
