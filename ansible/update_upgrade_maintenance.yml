@@ -6,6 +6,7 @@
     log_path: "/var/log/maintenance_log.txt"
     search_path: "/home/"
     exclude_path: "/home/discourse"
+    authentik_version: "2024.10" # this is the version of authentik that will be used to download the docker-compose.yml file
 
   tasks:
     - name: Update APT package index
@@ -28,6 +29,7 @@
         autoclean: yes
       tags: cleanup
 
+## Custom tasks for each server
     - name: Update Cryptpad on irregularchat-information
       shell: |
         git pull
@@ -50,7 +52,20 @@
       when: inventory_hostname == 'proxmox-main'
       tags: vaultwarden
 
+    - name: Update Authentik on irregularchat-information
+      shell: |
+        # rename the backup file to include the current date
+        mv docker-compose.yml docker-compose.yml.bak.$(date +%Y%m%d); wget -O docker-compose.yml https://goauthentik.io/version/$authentik_version/docker-compose.yml
+        docker compose pull && docker compose up -d
+      args:
+        chdir: /home/authentik/authentik
+      async: 0
+      poll: 1
+      no_log: False
+      when: inventory_hostname == 'irregularchat-information'
+      tags: authentik
 
+## Git Repositories Update based on the search_path and exclude_path variables at the top of the file
     - name: Recursively find all .git directories, excluding /home/discourse
       shell: "find {{ search_path }} -path {{ exclude_path }} -prune -o -type d -name '.git' -print"
       register: git_dirs
@@ -86,6 +101,7 @@
       no_log: False
       tags: docker_pull
 
+## Docker Compose Update based on the search_path and exclude_path variables at the top of the file
     - name: Recursively find Docker Compose files, excluding /home/discourse
       shell: "find {{ search_path }} -path {{ exclude_path }} -prune -o -type f \\( -name 'docker-compose.yml' -o -name 'docker-compose.yaml' \\) -print"
       register: docker_compose_files
@@ -102,7 +118,8 @@
       poll: 1
       no_log: False
       tags: docker_compose_update
-      
+
+## Maintenance tasks
     - name: Check disk usage and log results
       shell: "df -h | grep '^/dev/'"
       register: disk_usage
