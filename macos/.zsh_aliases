@@ -320,15 +320,20 @@ matrix_setup() {
         echo "Error: 'ansible-playbook' is not installed."
         return 1
     fi
-
+    # set mode to normal if no mode is passed
     local mode="${1:-normal}"
-    local hosts_file="${2:-$HOME/Documents/Git/matrix-docker-ansible-deploy/inventory/hosts}"
-
+    # set vars file to the default path if no path is passed $HOME/Documents/Git/matrix-docker-ansible-deploy/inventory/host_vars/matrix.irregularchat.com
+    local vars_file="${2:-$HOME/Documents/Git/matrix-docker-ansible-deploy/inventory/host_vars/matrix.irregularchat.com}"
+    # set to ../.. above the vars file
+    local hosts_file="${vars_file%/*}/../hosts"
+    # example for the default vars file the hosts file is $HOME/Documents/Git/matrix-docker-ansible-deploy/inventory/hosts
+    
+    # show error if hosts file does not exist
     if [[ ! -f "$hosts_file" ]]; then
         echo "Error: Hosts file not found at $hosts_file"
         return 1
     fi
-
+    # run the case statement
     case "$mode" in
         full|1)
             git pull && sudo make roles
