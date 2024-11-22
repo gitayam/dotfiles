@@ -312,11 +312,13 @@ change_mac_menu() {
 
 matrix_setup() {
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-        echo "Usage: matrix_setup {full|1|normal|restart} [hosts_file_path]"
+        # show help
+        echo "Usage: matrix_setup {full|1|normal|restart} [vars_directory_path]"
         return 0
     fi
 
     if ! command -v ansible-playbook &> /dev/null; then
+        # show error
         echo "Error: 'ansible-playbook' is not installed."
         return 1
     fi
