@@ -51,11 +51,26 @@ zipfile() {
 # ----------------------
 # Security Tools Aliases
 # ----------------------
-alias scan="sudo nmap -sS -Pn"
 alias json="jq ."
 alias http="curl -I"
 alias ports="netstat -tuln"
 
+scan_ports() {
+    #check if package is installed
+    if ! command -v nmap &> /dev/null; then
+        echo "Error: nmap is not installed"
+        #prompt to install if yes install and continue else return 1
+        REPLY="y"
+        read -p "Do you want to install nmap? (y/n): " REPLY
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            brew install nmap
+            echo "nmap installed, continuing with scan"
+        else
+            return 1
+        fi
+    fi
+    sudo nmap -sS -Pn $1
+}
 # ----------------------
 # Helper Functions
 # ----------------------
