@@ -1,1 +1,18 @@
 #Cron Config
+#This file is used to configure the cron jobs for the macos system
+#The cron jobs are stored in the /etc/cron.d directory
+#The cron jobs are executed with the root user
+
+###### Security ######
+#TODO: Add cron job to check for suspicious cron jobs and remove them
+#TODO: Add cron job to check for open ports and close them
+#TODO: Add cron job to check for rootkits
+
+
+
+###### Maintenance ######
+#TODO: Add cron job to check for updates and install them
+#TODO: Add cron job to check for disk space and delete old files
+#TODO: Add cron job to check for duplicate files and delete them
+#TODO: Add cron job to check for and kill processes that shouldn't be running
+#TODO: Keep git repos updated with the latest code

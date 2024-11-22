@@ -122,19 +122,45 @@ alias erase='erase_file'          # Custom function to erase a file content then
 
 # Nano Functions
 reset_file() {
+    # usage: reset_file file1 file2 ...
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: reset_file file1 file2 ..."
+        return 0
+    fi
   # Reset the file content to an empty string
   # use the backup function to create a backup of the file before erasing
-  backup "$1"
-  echo "" > "$1"
-  echo "File content erased."
-  nano "$1"
-  # prompt user to restore backup file if needed, else delete
-  read -p "Do you want to delete the backup file? (y/n): " delete_backup
-  if [ "$delete_backup" == "y" ]; then
-    rm $file$backup_name # from the backup function
-    echo "Backup file deleted."
-  fi
-
+  #handle one or multiple files
+  # catch escapes and errors to handle prompting user to restore backup or delete
+  for file in "$@"; do
+    backup "$file"
+    echo "" > "$file"
+    echo "File content backed up and erased."
+    echo "Opening $file in nano editor"
+    #echo >> the filename to the file with a # at the beginning
+    echo "# $file" >> "$file"
+    #sleep half a second
+    sleep 0.5
+    nano "$file"
+    # prompt user to restore backup or delete
+    ls $file$backup_name
+    # default to no
+    see_diff="n"
+    read -p "Do you want to see the difference between the original and backup file? (y/n):(default:n) " see_diff
+    if [ "$see_diff" == "y" ]; then
+      diff "$file" "$file$backup_name"
+      restore_backup="n"
+      read -p "Do you want to restore the backup file? (y/n):(default:n) " restore_backup
+      if [ "$restore_backup" == "y" ]; then
+        echo "This will delete any changes made to the original file"
+        restore_backup_confirm="n"
+        read -p "Are you sure you want to restore the backup file? (y/n):(default:n) " restore_backup_confirm
+        if [ "$restore_backup_confirm" == "y" ]; then
+          mv "$file$backup_name" "$file"
+          echo "Backup file restored."
+        fi
+      fi
+    fi
+  done
 }
 
 # Python Aliases 
