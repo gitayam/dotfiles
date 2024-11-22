@@ -115,7 +115,6 @@ alias findd='find . -type d -name' # Find directories by name
 alias findex=''
 
 # Nano Editor settings
-alias nano='nano -c'                # Enable line numbers
 alias nanozsh='nano ~/.zshrc'     # Open the bashrc file in nano
 alias reset='reset_file'          # Custom function to erase a file content then open with nano
 
