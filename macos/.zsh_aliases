@@ -38,7 +38,16 @@ alias ....="cd ../../.."
 alias mkdir="mkdir -p"
 alias rmr="rm -rf"
 alias untar="tar -zxvf"
-
+alias tarx="tar -xvf"
+#TODO: zipfile function
+zipfile() {
+    # usage: zipfile name file_or_dir1 file_or_dir2 ...
+    # check if args are passed
+    # check if name is passed or if file or dir is passed
+    # If name is passed then zip the file or dir with the name
+    # if no name is passed then zip the file or dir with the name of the file or dir
+    # if multiple files or dirs are passed then zip them all with the name of the first file or dir + more + .zip
+}
 # ----------------------
 # Security Tools Aliases
 # ----------------------
