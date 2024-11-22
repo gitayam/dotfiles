@@ -311,7 +311,7 @@ change_mac_menu() {
 matrix_setup() {
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
         # show help
-        echo "Usage: matrix_setup {full|1|normal|restart} [vars_directory_path]"
+        echo "Usage: matrix_setup {full|1|normal|restart} {vars_directory_path}"
         return 0
     fi
 
@@ -325,9 +325,12 @@ matrix_setup() {
     # set vars file to the default path if no path is passed $HOME/Documents/Git/matrix-docker-ansible-deploy/inventory/host_vars/matrix.irregularchat.com
     local vars_file="${2:-$HOME/Documents/Git/matrix-docker-ansible-deploy/inventory/host_vars/matrix.irregularchat.com}"
     # set to ../.. above the vars file
-    local hosts_file="${vars_file%/*}/../hosts"
-    # example for the default vars file the hosts file is $HOME/Documents/Git/matrix-docker-ansible-deploy/inventory/hosts
-    
+    local hosts_file="${vars_file%/*}/../hosts" # example for the default vars file the hosts file is $HOME/Documents/Git/matrix-docker-ansible-deploy/inventory/hosts
+    # check if vars file and hosts file exist
+    if [[ ! -f "$vars_file" || ! -f "$hosts_file" ]]; then
+        echo "Error: Vars file file not found"
+        return 1
+    fi
     # show error if hosts file does not exist
     if [[ ! -f "$hosts_file" ]]; then
         echo "Error: Hosts file not found at $hosts_file"
@@ -336,10 +339,12 @@ matrix_setup() {
     # run the case statement
     case "$mode" in
         full|1)
+            # full will update the repo and make roles then setup and start the services using all the tags
             git pull && sudo make roles
             sudo ansible-playbook -i "$hosts_file" setup.yml --tags=install-all,setup-all,ensure-matrix-users-created,start || return 1
             ;;
         normal)
+            # normal will update the repo and make roles then setup and start the services
             git pull && sudo make roles
             sudo ansible-playbook -i "$hosts_file" setup.yml --tags=setup-all,start || return 1
             ;;
