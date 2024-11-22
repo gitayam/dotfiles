@@ -323,15 +323,17 @@ matrix_setup() {
     # set mode to normal if no mode is passed
     local mode="${1:-normal}"
     # set vars file to the default path if no path is passed $HOME/Documents/Git/matrix-docker-ansible-deploy/inventory/host_vars/matrix.irregularchat.com
-    local vars_file="${2:-$HOME/Documents/Git/matrix-docker-ansible-deploy/inventory/host_vars/matrix.irregularchat.com}"
-    # set to ../.. above the vars file
-    local hosts_file="${vars_file%/*}/../hosts" # example for the default vars file the hosts file is $HOME/Documents/Git/matrix-docker-ansible-deploy/inventory/hosts
-    # check if vars file and hosts file exist
-    if [[ ! -f "$vars_file" || ! -f "$hosts_file" ]]; then
-        echo "Error: Vars file file not found"
+    local vars_file="${2:-$HOME/Documents/Git/matrix-docker-ansible-deploy/inventory/host_vars/matrix.irregularchat.com/vars.yml}"
+    # Fix: Go up three directories from vars file to reach inventory directory
+    local hosts_file="$(dirname "$(dirname "$(dirname "$vars_file")")")/hosts"
+    # set the matrix repo path to the directory above the inventory directory
+    local matrix_repo_path="${hosts_file%/*}/.."
+    # check if vars file exists
+    if [[ ! -f "$vars_file" ]]; then
+        echo "Error: Vars file not found at $vars_file"
         return 1
     fi
-    # show error if hosts file does not exist
+    # check if hosts file exists
     if [[ ! -f "$hosts_file" ]]; then
         echo "Error: Hosts file not found at $hosts_file"
         return 1
@@ -340,16 +342,20 @@ matrix_setup() {
     case "$mode" in
         full|1)
             # full will update the repo and make roles then setup and start the services using all the tags
-            git pull && sudo make roles
+            # git pull && sudo make roles of the matrix repo without moving to the repo dir
+            cd "$matrix_repo_path" && git pull && sudo make roles
             sudo ansible-playbook -i "$hosts_file" setup.yml --tags=install-all,setup-all,ensure-matrix-users-created,start || return 1
+            cd - # return to the previous directory
             ;;
         normal)
             # normal will update the repo and make roles then setup and start the services
-            git pull && sudo make roles
+            cd "$matrix_repo_path" && git pull && sudo make roles
             sudo ansible-playbook -i "$hosts_file" setup.yml --tags=setup-all,start || return 1
+            cd - # return to the previous directory
             ;;
         restart)
             sudo ansible-playbook -i "$hosts_file" setup.yml --tags=restart || return 1
+            cd - # return to the previous directory
             ;;
         *)
             echo "Usage: matrix_setup {full|1|normal|restart} [hosts_file_path]"
