@@ -42,6 +42,10 @@ alias tarx="tar -xvf"
 #TODO: zipfile function
 zipfile() {
     # usage: zipfile name file_or_dir1 file_or_dir2 ...
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "usage: zipfile name file_or_dir1 file_or_dir2 ..."
+        return 0
+    fi
     # check if args are passed
     # check if name is passed or if file or dir is passed
     # If name is passed then zip the file or dir with the name
@@ -56,13 +60,26 @@ alias http="curl -I"
 alias ports="netstat -tuln"
 
 scan_ports() {
+    #usage: scan_ports ip_or_host
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "usage: scan_ports ip_or_host"
+        return 0
+    fi
+    # if no ip_or_host is passed then use the local ip
+    if [[ -z "$1" ]]; then
+        local_ip=$(hostname -I | awk '{print $1}')
+        ip_or_host=$local_ip
+    else
+        ip_or_host=$1
+    fi
     #check if package is installed
     if ! command -v nmap &> /dev/null; then
         echo "Error: nmap is not installed"
         #prompt to install if yes install and continue else return 1
-        REPLY="y"
-        read -p "Do you want to install nmap? (y/n): " REPLY
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
+        install_nmap="n"
+        echo -n "Do you want to install nmap? (y/n): " 
+        read install_nmap
+        if [[ $install_nmap =~ ^[Yy]$ ]]; then
             brew install nmap
             echo "nmap installed, continuing with scan"
         else
