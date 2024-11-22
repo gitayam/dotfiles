@@ -148,29 +148,50 @@ pyenv(){
 }
 
 pyserver(){
-  #get local ip
-  local_ip=$(hostname -I | awk '{print $1}')
-  # path for the server else use current dir
-  # if multiple files passed in arg then create tmp dir and add those passed files or dir via ln to the temp server dir
-  if [ -n "$1" ]; then
-    # create temp dir
-    mkdir -p /tmp/pyserver
-    # add files or dir to the temp dir
-    #create python server for the dir
-    for file in "$@"; do
-      ln -s "$file" /tmp/pyserver
-    done
-    # change dir to the temp dir
-    cd /tmp/pyserver
-  fi
+    # usage: pyserver file1 file2 ...
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: pyserver file1 file2 ..."
+        return 0
+    fi
+    # check if python3 is installed
+    if ! command -v python3 &> /dev/null; then
+        echo "Error: Python 3 is not installed"
+        return 1
+    fi
+    # set port for the python server
+    local port=8000
+    # create a python server for the passed files or dir
+    #get local ip
+    local_ip=$(hostname -I | awk '{print $1}')
+    # path for the server else use current dir
+    # if multiple files passed in arg then create tmp dir and add those passed files or dir via ln to the temp server dir
+    # if no files passed in arg then use current dir
+    if [ -n "$1" ]; then # if there are files passed in arg
+        # create temp dir
+        mkdir -p /tmp/pyserver
+        # add files or dir to the temp dir
+        for file in "$@"; do
+            ln -s "$file" /tmp/pyserver
+        done
+        # change dir to the temp dir
+        cd /tmp/pyserver
+        # start the python server
+        python3 -m http.server $port
+    else
+        # use current dir
+        cd .
+        # start the python server
+        python3 -m http.server $port
+    fi
+    
 }
 # Docker Aliases
 alias dc="docker compose"
-alias docker-compose="dc"
-alias dcu="dc pull && dc up -d"
-alias dcr="dc down && dc up -d"
-alias dcp="dc pull"
-alias d="docker"
+alias docker-compose="dc" # alias for docker compose instead of docker-compose
+alias dcu="dc pull && dc up -d" # pull and start the docker compose services
+alias dcr="dc down && dc up -d" # stop and start the docker compose services
+alias dcp="dc pull" # pull the docker compose services
+alias d="docker" # alias for docker
 alias dps="d ps"
 alias dbash="d exec -it $1 /bin/bash"
 alias dsh="d exec -it $1 /bin/sh"
@@ -185,32 +206,15 @@ alias du='du -h --max-depth=1'  # Show disk usage in human-readable format
 alias df='df -h'                # Show free disk space in human-readable format
 
 
-# General Help Checker
-show_help() {
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-        echo "$2"
-        return 0
-    fi
-}
-
 # Menu with all functions in ~/.zsh_aliases and ~/.mac_functions.sh
 helpmenu() {
     echo "Help Menu:"
     echo "----------"
 
-    for file in ~/.zsh_aliases ~/.mac_functions.sh; do
-        if [ -f "$file" ]; then
-            echo "Functions in $file:"
-            while IFS= read -r line; do
-                if [[ "$line" =~ ^[a-zA-Z_][a-zA-Z0-9_]*\(\)\ *\{ ]]; then
-                    echo "  - ${line%%()*}"
-                fi
-            done < "$file"
-        else
-            echo "No file found at $file"
-        fi
-        echo ""
-    done
+    # show all functions in the ~/.zsh_aliases file
+    cat ~/.zsh_aliases | grep -E '^[a-zA-Z_][a-zA-Z0-9_]*(\(\))? *\{' | sed 's/{$//'
+    echo ""
+    echo "To see the help for a specific function, use the show_help function with the function name as the argument."
 }
 
 # ----------------------
@@ -409,7 +413,7 @@ matrix_setup_user() {
 }
 
 # ----------------------
-# Movie Transfer
+# File Transfer
 # ----------------------
 
 transfer_file() {
