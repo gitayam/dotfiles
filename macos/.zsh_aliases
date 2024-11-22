@@ -89,8 +89,8 @@ backup() {
   else
     COPY_CMD="cp"
   fi
-  # take files, dictionaries as arguments get full path as needed many args possible
   
+  # take files, dictionaries as arguments get full path as needed many args possible
   for file in "$@"; do
     if [ -f "$file" ]; then
       $COPY_CMD "$file" "$file$backup_name"
@@ -102,7 +102,6 @@ backup() {
       echo "$file does not exist"
     fi
   done
-
 }
 # Searching 
 # Grep aliases and functions
@@ -112,7 +111,36 @@ alias grepv='grep -vi --color=auto' # Ignore case, invert match, and colorize ou
 # Find aliases and functions
 alias findf='find . -type f -name' # Find files by name
 alias findd='find . -type d -name' # Find directories by name
-alias findex=''
+
+#TODO
+# findex() {
+#   # Skip if being sourced (zsh-specific check)
+#   if [[ ${zsh_eval_context[-1]} == "file" ]]; then
+#     return 0
+#   }
+  
+  # Show help menu if -h or --help is passed
+#   if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+#     echo "Usage: findex <pattern> <command> [args...]"
+#     echo "Examples:"
+#     echo "  findex '*.txt' ls -l"
+#     echo "  findex '*.php' nano"
+#     echo "  findex '*.sh' chmod 755"
+#     echo "  findex '*.log' grep 'error'"
+#     echo "  findex '*.txt' sed 's/old/new/g'"
+#     return 0
+#   fi
+
+  # Need at least pattern and command
+#   if [[ $# -lt 2 ]]; then
+#     echo "Error: Missing command. See 'findex --help' for usage."
+#     return 1
+#   fi
+
+#   local pattern="$1"
+#   shift # Remove pattern from arguments
+#   find . -iname "$pattern" -exec "$@" \;
+# }
 
 # Nano Editor settings
 alias nanozsh='nano ~/.zshrc'     # Open the bashrc file in nano
