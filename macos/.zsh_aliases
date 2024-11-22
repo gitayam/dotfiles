@@ -65,9 +65,9 @@ scan_ports() {
         echo "usage: scan_ports ip_or_host"
         return 0
     fi
-    # if no ip_or_host is passed then use the local ip
+    # if no ip_or_host is passed then use the router ip 
     if [[ -z "$1" ]]; then
-        local_ip=$(hostname -I | awk '{print $1}')
+        local_ip=$(ifconfig | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -n 1)
         ip_or_host=$local_ip
     else
         ip_or_host=$1
