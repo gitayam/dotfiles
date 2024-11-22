@@ -45,7 +45,8 @@ SAVEHIST=10000
 # export PS1="%n@%m %1~ [%D{%L:%M:%S}] ${vcs_info_msg_0_} %# "
 
 # Use Touch ID for sudo for Macs with Touch Bar if user selects yes 
-echo -n "Do you want to use Touch ID for sudo for Macs with Touch Bar? (y/n) "
+REPLY="n" # default to no
+echo -n "Do you want to use Touch ID for sudo for Macs with Touch Bar? (y/n):(default:n) "
 read REPLY
 REPLY=${REPLY:-n}
 if [[ $REPLY =~ ^[Yy]$ ]]; then
