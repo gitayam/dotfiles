@@ -5,8 +5,8 @@ alias age_pub='/private/tmp/age-py/age.sh'
 # Set the default prompt
 export PS1="%n@%m %1~ %# "
 
-# Enable command auto-suggestions
-autoload -U compinit && compinit
+# # Enable command auto-suggestions
+# autoload -U compinit && compinit
 
 # Load aliases from ~/.zsh_aliases
 if [ -f ~/.zsh_aliases ]; then
@@ -38,11 +38,16 @@ SAVEHIST=10000
 # ----------------------
 # Enhanced Prompt with Git Branch and Time
 # ----------------------
-autoload -Uz vcs_info
-precmd() { vcs_info }
-zstyle ':vcs_info:*' formats '(%b)'
+# autoload -Uz vcs_info
+# precmd() { vcs_info }
+# zstyle ':vcs_info:*' formats '(%b)'
 
-export PS1="%n@%m %1~ [%D{%L:%M:%S}] ${vcs_info_msg_0_} %# "
+# export PS1="%n@%m %1~ [%D{%L:%M:%S}] ${vcs_info_msg_0_} %# "
 
-# Use Touch ID for sudo for Macs with Touch Bar
-sudo sed -i '' '1s;^;auth       sufficient     pam_tid.so\n;' /etc/pam.d/sudo
+# Use Touch ID for sudo for Macs with Touch Bar if user selects yes 
+read -p "Do you want to use Touch ID for sudo for Macs with Touch Bar? (y/n)" REPLY
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+  sudo sed -i '' '1s;^;auth       sufficient     pam_tid.so\n;' /etc/pam.d/sudo
+else 
+  echo "Touch ID for sudo not enabled. Passwords will be required for sudo."
+fi
