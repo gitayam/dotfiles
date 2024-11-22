@@ -238,7 +238,6 @@ create_repo() {
 # ----------------------
 # Python Virtual Environment Management
 # ----------------------
-# Python Aliases
 # Python Aliases 
 pyenv(){
   python3 -m venv env  # Create the virtual environment
@@ -396,16 +395,40 @@ matrix_setup_user() {
 # Movie Transfer
 # ----------------------
 
-transfer_movie() {
+transfer_file() {
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-        echo "Usage: transfer_movie path1 path2 ..."
+        echo "Usage: transfer_file path1 path2 ..."
+        printf "This command uses rsync to transfer files or directories to a remote host.\n"
+        printf "The remote host, port, and base remote path are read from the ~/.env file.\n"
+        printf "An example ~/.env file is provided at $HOME/macos/.env-template\n"
         return 0
     fi
-
-    local remote_host="root@proxmox-main"
-    local remote_port=314
-    local base_remote_path="/datadrive/Media/Movies"
-
+    #read .env file for the remote host and port and base remote path if file exists
+    if [[ -f ~/.env ]]; then
+        source ~/.env
+    else
+        echo "Error: ~/.env file not found"
+        read -p "Do you want to create a new ~/.env file? (y/n): " REPLY
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            echo "REMOTE_HOST=username@192.168.1.xxx" >> ~/.env
+            echo "REMOTE_PORT=2220" >> ~/.env
+            echo "REMOTE_BASE_PATH=/path/to/directory" >> ~/.env
+            echo "~/.env file created, please edit the file with the correct remote host, port, and base remote path"
+            return 1
+            
+        else
+            return 1
+        fi
+    fi
+    remote_host=$REMOTE_HOST
+    remote_port=$REMOTE_PORT
+    base_remote_path=$REMOTE_BASE_PATH
+    #check if vars are set
+    if [[ -z "$remote_host" || -z "$remote_port" || -z "$base_remote_path" ]]; then
+        echo "Error: Remote host, port, or base remote path not set in ~/.env file"
+        return 1
+    fi
+    #check if can connect to remote host
     if ! ssh -q -p "$remote_port" "$remote_host" "exit"; then
         echo "Error: Cannot connect to remote host"
         return 1
