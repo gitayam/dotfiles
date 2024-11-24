@@ -38,6 +38,31 @@ HISTFILE=~/.zsh_history
 HISTSIZE=10000
 SAVEHIST=10000
 
+# ----------------------
+# Applications
+# ----------------------
+# check if brew is installed and install it if not
+if ! command -v brew &> /dev/null; then
+  echo "brew is not installed. Installing..."
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+fi
+# Loop through this list checking if the application is installed and if not then install it
+apps=("element" "firefox" "keepassxc" "obsidian" "coreutils" "diceware" "git" "gh")
+for app in "${apps[@]}"; do
+  # Capitalize the first letter of the app name
+  capitalized_app="${app:0:1:u}${app:1}"
+
+  # Check if the app is a GUI application
+  if [ -d "/Applications/$capitalized_app.app" ] || [ -d "/Applications/$app.app" ]; then
+    echo "$app is already installed."
+  # Check if the app is a command-line tool
+  elif command -v "$app" &> /dev/null; then
+    echo "$app is already installed."
+  else
+    echo "$app is not installed. Installing..."
+    brew install "$app" || brew install --cask "$app"
+  fi
+done
 
 # ----------------------
 # Enhanced Prompt with Git Branch and Time
