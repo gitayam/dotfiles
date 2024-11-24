@@ -78,25 +78,36 @@ This repository contains configuration files and scripts for setting up and main
   ```
 
 ### Ansible Playbooks
+You can run the playbooks without doing the initial setup or syncing the dotfiles but you will need to setup the hosts file in the inventory directory.
+```bash
+# copy the hosts-template to hosts and edit the hosts file
+cd ansible
+cp inventory/hosts-template inventory/hosts
+nano inventory/hosts
+```
+
 
 - **Update and Upgrade:**
   - Use the `update_upgrade.yml` playbook to update and upgrade packages on your servers.
 
   ```bash
-  ansible-playbook ansible/update_upgrade.yml
+  # example using update tag
+  sudo ansible-playbook -i inventory/hosts update_upgrade_maintenance.yml --tags=update
   ```
 
 - **Maintenance:**
   - Use the `update_upgrade_maintenance.yml` playbook for comprehensive maintenance, including updating Git repositories and Docker services.
 
   ```bash
-  ansible-playbook ansible/update_upgrade_maintenance.yml
+  # example using all tags which is the same as running the full script
+  sudo ansible-playbook -i inventory/hosts update_upgrade_maintenance.yml --tags=update,upgrade,cleanup,custom,docker,git_update
   ```
 
 ## Additional Information
 
 - **Configurations:** Contains configuration files for community bots and other services.
 - **Ansible Inventory:** Customize the `hosts` file in the `ansible/inventory` directory to specify your target servers.
+#TODO
 - **Cron Configurations:** Use the `cron_config.txt` files to set up scheduled tasks on macOS and Linux.
 
 ## Contributing
