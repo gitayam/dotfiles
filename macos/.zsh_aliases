@@ -125,41 +125,7 @@ alias run-kp="kp --db $1"
 
 #general passphrase with diceware
 #3 words, symbols, numbers
-gen_passphrase() {
-    # Default to 3 words if no argument is provided
-    if [[ -z "$1" ]]; then
-        num_words=3
-    else
-        num_words=$1
-    fi
-
-    # Generate a single random symbol and number
-    symbol=$(gshuf -n1 -e '!' '@' '#' '$' '%' '^' '&' '*')
-    number=$(gshuf -i 0-9 -n 1)
-
-    passphrase=""
-    for i in $(seq 1 $num_words); do
-        # Generate a random word
-        word=$(diceware -n 1 -w en_eff)
-        passphrase+="$word"
-
-        # Add the same symbol and number if not the last word
-        if [[ $i -lt $num_words ]]; then
-            passphrase+="$symbol$number"
-        fi
-    done
-
-    # Copy the passphrase to the clipboard
-    echo "$passphrase" | pbcopy
-
-    # Notify the user
-    echo "Here is your passphrase:" 
-    echo "$passphrase"
-    echo "The passphrase has been copied to your clipboard."
-}
-
-alias gen-passphrase="gen_passphrase"
-
+alias gen-passphrase="diceware -n 3 -w 3 -s 3 -d 3"
 # ----------------------
 # Security Tools Aliases
 # ----------------------
@@ -266,7 +232,7 @@ alias findd='find . -type d -name' # Find directories by name
 #   # Skip if being sourced (zsh-specific check)
 #   if [[ ${zsh_eval_context[-1]} == "file" ]]; then
 #     return 0
-#   fi
+#   }
   
   # Show help menu if -h or --help is passed
 #   if [[ "$1" == "-h" || "$1" == "--help" ]]; then
@@ -663,6 +629,29 @@ matrix_setup_user() {
 # ----------------------
 # File Transfer
 # ----------------------
+
+#wormhole alias
+alias wh="wormhole"
+#transfer file with wormhole many or one file
+wh-transfer() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: wh-transfer path1 path2 ..."
+        return 0
+    fi
+    # check if more than one file is passed create a zip file if needed and send the zip file then remove the zip file
+    if [[ "$#" -gt 1 ]]; then
+        zip_file="./wormhole_$(date +%Y%m%d%H%M%S).zip"
+        zip "$zip_file" "$@"
+        wormhole send "$zip_file"
+        rm "$zip_file"
+    else
+        wormhole send "$@"
+    fi
+    # double check that the zip file was removed including if user exited with ctrl-c
+    if [[ -f "$zip_file" ]]; then
+        rm -rf "$zip_file"
+    fi
+}
 
 transfer_file() {
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
