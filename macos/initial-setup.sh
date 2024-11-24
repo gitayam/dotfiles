@@ -12,8 +12,10 @@ else
 fi
 
 # Loop through this list checking if the application is installed and if not then install it
-terminal_apps=("coreutils" "diceware" "git" "gh" "python" "pip" "ansible" "docker" "kubectl" "gpg" "age" "magic-wormhole" "wireguard-tools")
-for app in "${terminal_apps[@]}"; do
+install_terminal_apps() {
+  terminal_apps=("coreutils" "diceware" "git" "gh" "python" "pip" "ansible" "docker" "kubectl" "gpg" "age" "magic-wormhole" "wireguard-tools")
+
+  for app in "${terminal_apps[@]}"; do
   # Capitalize the first letter of the app name
   capitalized_app="${app:0:1:u}${app:1}"
 
@@ -26,18 +28,22 @@ for app in "${terminal_apps[@]}"; do
   else
     echo "$app is not installed. Installing..."
     brew install "$app" || brew install --cask "$app"
-  fi
-done
+    fi
+  done
+}
 
-gui_apps=("element" "firefox" "keepassxc" "obsidian" "qbittorrent" "simplex" "tailscale")
-for app in "${gui_apps[@]}"; do
-  if [ -d "/Applications/$app.app" ]; then
+install_gui_apps() {
+  gui_apps=("element" "firefox" "keepassxc" "obsidian" "qbittorrent" "simplex" "tailscale")
+
+  for app in "${gui_apps[@]}"; do
+    if [[ -d "/Applications/$app.app" ]]; then
     echo "$app is already installed."
   else
     echo "$app is not installed. Installing..."
     brew install --cask "$app"
-  fi
-done
+    fi
+  done
+}
 
 main() {
     # Check if Homebrew is installed
@@ -54,5 +60,5 @@ main() {
     ./sync_mac_dotfiles.sh
     echo "Initial install complete."
 }
-# Run the main function
+# Run the main function 
 main
