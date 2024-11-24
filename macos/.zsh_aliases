@@ -232,7 +232,7 @@ alias findd='find . -type d -name' # Find directories by name
 #   # Skip if being sourced (zsh-specific check)
 #   if [[ ${zsh_eval_context[-1]} == "file" ]]; then
 #     return 0
-#   }
+#   fi
   
   # Show help menu if -h or --help is passed
 #   if [[ "$1" == "-h" || "$1" == "--help" ]]; then
@@ -627,25 +627,164 @@ matrix_setup_user() {
 }
 
 # ----------------------
+# Cryptography
+# ----------------------
+setup_age() {
+    # setup age directory and keys
+    mkdir -p ~/.age
+    #get username
+    username=$(whoami)
+    #if no argument passed for key name then use username
+    if [[ -z "$1" ]]; then
+        key_name="$username"
+    else
+        key_name="$1"
+    fi
+    
+    #echo guidance on storying and using the age keys
+    echo "Store the following keys in a secure location:"
+    echo "Public key: ~/.age/keys/$key_name.pub"
+    echo "Private key: ~/.age/keys/$key_name.key"
+    echo "You will see a public key output to the screen that you can share with others"
+    echo "For more information on age see https://github.com/FiloSottile/age"
+    sleep 1
+    # generate keys
+    age-keygen -a -o ~/.age/keys/$key_name.key
+    ls -l ~/.age/keys
+}
+
+encrypt_file() {
+    # Check if age is installed, if not, install it
+    if ! command -v age &> /dev/null; then
+        echo "Error: 'age' is not installed."
+        echo -n "Do you want to install 'age'? (y/n):(default:y) "
+        read install_age
+        if [[ $install_age =~ ^[Yy]$ ]]; then
+            brew install age
+        else
+            return 1
+        fi
+    fi
+    # disregard the first argument if it is -e or --encrypt
+    if [[ "$1" == "-e" || "$1" == "--encrypt" ]]; then
+        shift
+    fi
+
+    # Initialize variables
+    recipient=""
+    use_passphrase=true
+    #FIXME: this is not working as expected
+    #grep: : age: No such file or directory
+    # Error: Could not extract public key from /Users/username/.age/keys/username
+    # # Check if ~/.age/keys directory exists
+    # if [[ -d ~/.age/keys ]]; then
+    #     # List the keys
+    #     ls -l ~/.age/keys
+    #     echo "Select a key to use for encryption:"
+    #     select key_name in ~/.age/keys/*; do
+    #         # Extract the public key from the selected key file
+    #         recipient=$(grep ": age" "$key_name" | cut -d " " -f 4)
+    #         if [[ -z "$recipient" ]]; then
+    #             echo "Error: Could not extract public key from $key_name"
+    #             return 1
+    #         fi
+    #         break
+    #     done
+    # else
+    #     # Prompt user to create or use a passphrase
+    #     echo -n "Do you want to use a passphrase for encryption? (y/n):(default:y) "
+    #     read use_passphrase
+    #     if [[ $use_passphrase =~ ^[Yy]$ ]]; then
+    #         use_passphrase=true
+    #     else
+    #         use_passphrase=false
+    #     fi
+    # fi
+
+    # Parse options
+    while getopts "r:" opt; do # r is the recipient key
+        case $opt in
+            r)
+                recipient="$OPTARG"
+                use_passphrase=false
+                ;;
+            *)
+                echo "Usage: encrypt_file [-r recipient] file1 file2 ..."
+                return 1
+                ;;
+        esac
+    done
+    shift $((OPTIND -1)) # shift the arguments to the left to remove the options
+
+    # Check if files are provided
+    if [[ "$#" -eq 0 ]]; then
+        echo "Error: No files provided for encryption."
+        return 1
+    fi
+
+    # If multiple files are passed, zip them and encrypt the zip file
+    if [[ "$#" -gt 1 ]]; then
+        # zip the files
+        zip_file="./$(basename "$1").zip"
+        zip "$zip_file" "$@"
+        files_to_encrypt="$zip_file"
+    else
+        # if only one file is passed then set the file to encrypt
+        files_to_encrypt="$1"
+    fi
+
+    # Encrypt the file(s)
+    if $use_passphrase; then #default is to use a passphrase
+        age -p -o "${files_to_encrypt}.age" "$files_to_encrypt"
+    else
+        age -r "$recipient" -o "${files_to_encrypt}.age" "$files_to_encrypt"
+        echo "Recipient key used for encryption: $recipient"
+    fi
+
+    # Clean up zip file if it was created
+    if [[ -f "$zip_file" ]]; then
+        rm "$zip_file"
+    fi
+
+    # Instructions for decryption
+    echo "To decrypt the file with age, use the following command:"
+    echo "age -d -i ~/.age/keys/$key_name.key -o ${files_to_encrypt%.*} ${files_to_encrypt}.age"
+    echo "or"
+    echo "age --decrypt --output ${files_to_encrypt%.*} ${files_to_encrypt}.age"
+    echo ""
+    echo "There is a graphical app called 'Destiny - Secure File Transfer' that can be used to send and receive files securely with wormhole"
+}
+
+# ----------------------
 # File Transfer
 # ----------------------
+
 
 #wormhole alias
 alias wh="wormhole"
 #transfer file with wormhole many or one file
 wh-transfer() {
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-        echo "Usage: wh-transfer path1 path2 ..."
+        echo "Usage: wh-transfer -e|-encrypt path1 path2 ..."
+        echo "The default is to send the files as is"
+        echo "-e or --encrypt will encrypt the files before sending using age"
         return 0
     fi
-    # check if more than one file is passed create a zip file if needed and send the zip file then remove the zip file
-    if [[ "$#" -gt 1 ]]; then
-        zip_file="./wormhole_$(date +%Y%m%d%H%M%S).zip"
-        zip "$zip_file" "$@"
-        wormhole send "$zip_file"
-        rm "$zip_file"
+    # check if encrypt option is passed 
+    if [[ "$1" == "-e" || "$1" == "--encrypt" ]]; then
+        # encrypt but then transfer the encrypted file using wormhole
+        encrypt_file "$@"
+        wormhole send "${files_to_encrypt%.*}"
     else
-        wormhole send "$@"
+        # check if more than one file is passed create a zip file if needed and send the zip file then remove the zip file
+        if [[ "$#" -gt 1 ]]; then   
+            zip_file="./wormhole_$(date +%Y%m%d%H%M%S).zip"
+            zip "$zip_file" "$@"
+            wormhole send "$zip_file"
+            rm "$zip_file"
+        else
+            wormhole send "$@"
+        fi
     fi
     # double check that the zip file was removed including if user exited with ctrl-c
     if [[ -f "$zip_file" ]]; then
