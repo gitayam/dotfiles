@@ -97,6 +97,13 @@ nano inventory/hosts
 
 - **Maintenance:**
   - Use the `update_upgrade_maintenance.yml` playbook for comprehensive maintenance, including updating Git repositories and Docker services.
+```bash
+  # example using all tags which is the same as running the full script
+  sudo ansible-playbook -i inventory/hosts update_upgrade_maintenance.yml --tags=docker,git_update
+  ```
+
+- **Full Maintenance:**
+  - Use the `update_upgrade_maintenance.yml` playbook for comprehensive maintenance, including updating Git repositories and Docker services.
 
   ```bash
   # example using all tags which is the same as running the full script
