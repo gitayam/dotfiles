@@ -40,7 +40,7 @@
       poll: 1
       no_log: False
       when: inventory_hostname == 'irregularchat-information'
-      tags: cryptpad
+      tags: cryptpad, custom
 
     - name: Update Vaultwarden on proxmox-main
       shell: ./docker-cmd.sh
@@ -50,7 +50,7 @@
       poll: 1
       no_log: False
       when: inventory_hostname == 'proxmox-main'
-      tags: vaultwarden
+      tags: vaultwarden, custom, docker
 
     - name: Update Authentik on irregularchat-information
       shell: |
@@ -63,14 +63,14 @@
       poll: 1
       no_log: False
       when: inventory_hostname == 'irregularchat-information'
-      tags: authentik
+      tags: authentik, custom, docker
 
 ## Git Repositories Update based on the search_path and exclude_path variables at the top of the file
     - name: Recursively find all .git directories, excluding /home/discourse
       shell: "find {{ search_path }} -path {{ exclude_path }} -prune -o -type d -name '.git' -print"
       register: git_dirs
       changed_when: false
-      tags: git_update
+      tags: git_update, git
 
     - name: Update each Git repository
       shell: git pull
@@ -80,7 +80,7 @@
       async: 0
       poll: 1
       no_log: False
-      tags: git_update
+      tags: git_update, git
 
     - name: Pull all Docker images individually
       shell: |
@@ -99,14 +99,14 @@
       async: 0
       poll: 1
       no_log: False
-      tags: docker_pull
+      tags: docker_pull, git, docker
 
 ## Docker Compose Update based on the search_path and exclude_path variables at the top of the file
     - name: Recursively find Docker Compose files, excluding /home/discourse
       shell: "find {{ search_path }} -path {{ exclude_path }} -prune -o -type f \\( -name 'docker-compose.yml' -o -name 'docker-compose.yaml' \\) -print"
       register: docker_compose_files
       changed_when: false
-      tags: docker_compose_update
+      tags: docker_compose_update, docker
 
     - name: Pull and update Docker Compose services
       shell: |
@@ -117,7 +117,7 @@
       async: 0
       poll: 1
       no_log: False
-      tags: docker_compose_update
+      tags: docker_compose_update, docker
 
 ## Maintenance tasks
     - name: Check disk usage and log results
