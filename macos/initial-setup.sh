@@ -12,7 +12,7 @@ else
 fi
 
 # Loop through this list checking if the application is installed and if not then install it
-terminal_apps=("coreutils" "diceware" "git" "gh" "python" "pip"  "ansible" "docker" "kubectl" "gpg" "age")
+terminal_apps=("coreutils" "diceware" "git" "gh" "python" "pip"  "ansible" "docker" "kubectl" "gpg" "age" "magic-wormhole"
 for app in "${terminal_apps[@]}"; do
   # Capitalize the first letter of the app name
   capitalized_app="${app:0:1:u}${app:1}"
@@ -29,7 +29,7 @@ for app in "${terminal_apps[@]}"; do
   fi
 done
 
-gui_apps=("element" "firefox" "keepassxc" "obsidian" "qbittorrent")
+gui_apps=("element" "firefox" "keepassxc" "obsidian" "qbittorrent" "simplex" "tailscale" "wireguard")
 for app in "${gui_apps[@]}"; do
   if [ -d "/Applications/$app.app" ]; then
     echo "$app is already installed."
