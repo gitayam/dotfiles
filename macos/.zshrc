@@ -73,14 +73,16 @@ done
 
 # export PS1="%n@%m %1~ [%D{%L:%M:%S}] ${vcs_info_msg_0_} %# "
 
-# Use Touch ID for sudo for Macs with Touch Bar if user selects yes 
-REPLY="n" # default to no
-echo -n "Do you want to use Touch ID for sudo for Macs with Touch Bar? (y/n):(default:n) "
-read REPLY
-REPLY=${REPLY:-n}
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-  sudo sed -i '' '1s;^;auth       sufficient     pam_tid.so\n;' /etc/pam.d/sudo
-else 
-  echo "Touch ID for sudo not enabled. Passwords will be required for sudo."
-fi
+# Function to enable Touch ID for sudo
+sudotouch() {
+  REPLY="n" # default to no
+  echo -n "Do you want to use Touch ID for sudo for Macs with Touch Bar? (y/n):(default:n) "
+  read REPLY
+  REPLY=${REPLY:-n}
+  if [[ $REPLY =~ ^[Yy]$ ]]; then
+    sudo sed -i '' '1s;^;auth       sufficient     pam_tid.so\n;' /etc/pam.d/sudo
+  else 
+    echo "Touch ID for sudo not enabled. Passwords will be required for sudo."
+  fi
+}
 
