@@ -13,21 +13,21 @@ fi
 
 # Loop through this list checking if the application is installed and if not then install it
 install_terminal_apps() {
-  terminal_apps=("coreutils" "diceware" "git" "gh" "python" "pip" "ansible" "docker" "kubectl" "gpg" "age" "magic-wormhole" "wireguard-tools")
+  terminal_apps=("coreutils" "diceware" "git" "gh" "python" "ansible" "docker" "kubectl" "gpg" "age" "magic-wormhole" "wireguard-tools")
 
   for app in "${terminal_apps[@]}"; do
-  # Capitalize the first letter of the app name
-  capitalized_app="${app:0:1:u}${app:1}"
+    # Capitalize the first letter of the app name
+    capitalized_app="$(echo "${app:0:1}" | tr '[:lower:]' '[:upper:]')${app:1}"
 
-  # Check if the app is a GUI application
-  if [[ -d "/Applications/$capitalized_app.app" ]] || [[ -d "/Applications/$app.app" ]]; then
-    echo "$app is already installed."
-  # Check if the app is a command-line tool
-  elif command -v "$app" &> /dev/null; then
-    echo "$app is already installed."
-  else
-    echo "$app is not installed. Installing..."
-    brew install "$app" || brew install --cask "$app"
+    # Check if the app is a GUI application
+    if [[ -d "/Applications/$capitalized_app.app" ]] || [[ -d "/Applications/$app.app" ]]; then
+      echo "$app is already installed."
+    # Check if the app is a command-line tool
+    elif command -v "$app" &> /dev/null; then
+      echo "$app is already installed."
+    else
+      echo "$app is not installed. Installing..."
+      brew install "$app" || brew install --cask "$app"
     fi
   done
 }
