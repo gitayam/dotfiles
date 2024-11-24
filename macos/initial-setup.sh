@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/bin/bash
 #./initial-install.sh
 # MacOS Install
 # Define OS 
@@ -12,13 +12,13 @@ else
 fi
 
 # Loop through this list checking if the application is installed and if not then install it
-terminal_apps=("coreutils" "diceware" "git" "gh" "python" "pip"  "ansible" "docker" "kubectl" "gpg" "age" "magic-wormhole"
+terminal_apps=("coreutils" "diceware" "git" "gh" "python" "pip" "ansible" "docker" "kubectl" "gpg" "age" "magic-wormhole" "wireguard-tools")
 for app in "${terminal_apps[@]}"; do
   # Capitalize the first letter of the app name
   capitalized_app="${app:0:1:u}${app:1}"
 
   # Check if the app is a GUI application
-  if [ -d "/Applications/$capitalized_app.app" ] || [ -d "/Applications/$app.app" ]; then
+  if [[ -d "/Applications/$capitalized_app.app" ]] || [[ -d "/Applications/$app.app" ]]; then
     echo "$app is already installed."
   # Check if the app is a command-line tool
   elif command -v "$app" &> /dev/null; then
@@ -29,7 +29,7 @@ for app in "${terminal_apps[@]}"; do
   fi
 done
 
-gui_apps=("element" "firefox" "keepassxc" "obsidian" "qbittorrent" "simplex" "tailscale" "wireguard")
+gui_apps=("element" "firefox" "keepassxc" "obsidian" "qbittorrent" "simplex" "tailscale")
 for app in "${gui_apps[@]}"; do
   if [ -d "/Applications/$app.app" ]; then
     echo "$app is already installed."
