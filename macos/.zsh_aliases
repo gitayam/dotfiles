@@ -100,6 +100,66 @@ zipfile() {
     # if no name is passed then zip the file or dir with the name of the file or dir
     # if multiple files or dirs are passed then zip them all with the name of the first file or dir + more + .zip
 }
+
+# ----------------------
+# Applications Aliases
+# ----------------------
+
+run-element() {
+    # usage: run-element
+    # open element desktop in the default browser
+    # if a profile is passed then use it
+    /Applications/Element.app/Contents/MacOS/Element --profile "$1"&
+}
+
+run-firefox() {
+    # usage: run-firefox
+    # open firefox in the default browser
+    # if a profile is passed then use it 
+    /Applications/Firefox.app/Contents/MacOS/firefox --profile "$1" --new-window "https://sso.irregularchat.com"&
+}
+# command line keepassxc
+alias kp="keepassxc"
+# Open database in keepassxc
+alias run-kp="kp --db $1"
+
+#general passphrase with diceware
+#3 words, symbols, numbers
+gen_passphrase() {
+    # Default to 3 words if no argument is provided
+    if [[ -z "$1" ]]; then
+        num_words=3
+    else
+        num_words=$1
+    fi
+
+    # Generate a single random symbol and number
+    symbol=$(gshuf -n1 -e '!' '@' '#' '$' '%' '^' '&' '*')
+    number=$(gshuf -i 0-9 -n 1)
+
+    passphrase=""
+    for i in $(seq 1 $num_words); do
+        # Generate a random word
+        word=$(diceware -n 1 -w en_eff)
+        passphrase+="$word"
+
+        # Add the same symbol and number if not the last word
+        if [[ $i -lt $num_words ]]; then
+            passphrase+="$symbol$number"
+        fi
+    done
+
+    # Copy the passphrase to the clipboard
+    echo "$passphrase" | pbcopy
+
+    # Notify the user
+    echo "Here is your passphrase:" 
+    echo "$passphrase"
+    echo "The passphrase has been copied to your clipboard."
+}
+
+alias gen-passphrase="gen_passphrase"
+
 # ----------------------
 # Security Tools Aliases
 # ----------------------
@@ -206,7 +266,7 @@ alias findd='find . -type d -name' # Find directories by name
 #   # Skip if being sourced (zsh-specific check)
 #   if [[ ${zsh_eval_context[-1]} == "file" ]]; then
 #     return 0
-#   }
+#   fi
   
   # Show help menu if -h or --help is passed
 #   if [[ "$1" == "-h" || "$1" == "--help" ]]; then
