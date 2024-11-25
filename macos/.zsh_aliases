@@ -12,7 +12,7 @@ alias gitlog="git log --oneline --graph --all"
 # ----------------------
 # Git Functions
 # ----------------------
-git_commit() {
+git_commit(){
     if [[ -z "$1" ]]; then
         echo "No commit message provided. Opening editor for interactive commit message."
         git commit
@@ -21,7 +21,7 @@ git_commit() {
     fi
 }
 
-git_add() {
+git_add(){
     if [[ -z "$1" ]]; then
         echo "No files specified. Defaulting to 'git add .'"
         git add .
@@ -30,7 +30,7 @@ git_add() {
     fi
 }
 
-update_git_repos() {
+update_git_repos(){
     # Default variables
     search_path="$HOME/Documents/Git/"  # Default search path
     exclude_paths=()                   # Array to store excluded paths
@@ -88,7 +88,7 @@ alias rmr="rm -rf"
 alias untar="tar -zxvf"
 alias tarx="tar -xvf"
 #TODO: zipfile function
-zipfile() {
+zipfile(){
     # usage: zipfile name file_or_dir1 file_or_dir2 ...
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
         echo "usage: zipfile name file_or_dir1 file_or_dir2 ..."
@@ -104,12 +104,12 @@ zipfile() {
 # ----------------------
 # Applications Aliases
 # ----------------------
-setup_profiles() {
+setup_profiles(){
     mkdir -p $HOME/Profiles
     cd $HOME/Profiles
 }
 
-run-element() {
+run-element(){
     # usage: run-element
     # open element desktop in the default browser
     # if a profile is passed then use it
@@ -118,7 +118,7 @@ run-element() {
     cd - # go back to the previous directory
 }
 
-run-firefox() {
+run-firefox(){
     # usage: run-firefox
     # open firefox in the default browser
     # if a profile is passed then use it 
@@ -127,7 +127,7 @@ run-firefox() {
     cd - # go back to the previous directory
 }
 
-run-discord() {
+run-discord(){
     # usage: run-discord
     # open discord in the default browser
     # if a profile is passed then use it
@@ -150,7 +150,7 @@ alias json="jq ."
 alias http="curl -I"
 alias ports="netstat -tuln"
 
-scan_ports() {
+scan_ports(){
     #usage: scan_ports ip_or_host
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
         echo "usage: scan_ports ip_or_host"
@@ -202,7 +202,7 @@ alias ...="cd ../.."
 alias ....="cd ../../.."
 
 # change dir and List Directory Contents
-cdl() {
+cdl(){
   if [ -n "$1" ]; then
     cd "$1" && ll
   else
@@ -211,7 +211,7 @@ cdl() {
 }
 
 # create backup of a file or directory
-backup() {
+backup(){
   # human readiable date and time with backup
   # check if dir or files exists
   backup_name=".bak_$(date +%Y-%m-%d_%H-%M-%S)"
@@ -245,7 +245,7 @@ alias findf='find . -type f -name' # Find files by name
 alias findd='find . -type d -name' # Find directories by name
 
 #TODO
-# findex() {
+# findex(){
 #   # Skip if being sourced (zsh-specific check)
 #   if [[ ${zsh_eval_context[-1]} == "file" ]]; then
 #     return 0
@@ -279,7 +279,7 @@ alias nanozsh='nano ~/.zshrc'     # Open the bashrc file in nano
 alias reset='reset_file'          # Custom function to erase a file content then open with nano
 
 # Nano Functions
-reset_file() {
+reset_file(){
     # usage: reset_file file1 file2 ...
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
         echo "Usage: reset_file file1 file2 ..."
@@ -390,7 +390,7 @@ alias df='df -h'                # Show free disk space in human-readable format
 
 
 # Menu with all functions in ~/.zsh_aliases and ~/.mac_functions.sh
-helpmenu() {
+helpmenu(){
     echo "Help Menu:"
     echo "----------"
 
@@ -404,7 +404,7 @@ helpmenu() {
 # GitHub Repository Management
 # ----------------------
 
-create_repo() {
+create_repo(){
     # "Usage: create_repo repo_name"
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
         echo "Usage: create_repo repo_name"
@@ -509,12 +509,12 @@ pyserver(){
 # MAC Address Management
 # ----------------------
 
-gen_mac_addr() {
+gen_mac_addr(){
     local mac=$(openssl rand -hex 6 | sed 's/\(..\)/\1:/g; s/.$//')
     echo "$mac"
 }
 
-change_mac_menu() {
+change_mac_menu(){
     echo "Choose an option:"
     echo "1. Set a specific MAC address"
     echo "2. Set a random MAC address"
@@ -549,7 +549,7 @@ change_mac_menu() {
 # Matrix Setup
 # ----------------------
 
-matrix_setup() {
+matrix_setup(){
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
         # show help
         echo "Usage: matrix_setup {full|1|normal|restart} {vars_directory_path}"
@@ -609,7 +609,7 @@ matrix_setup() {
 # Matrix User Setup
 # ----------------------
 
-matrix_setup_user() {
+matrix_setup_user(){
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
         echo "Usage: matrix_setup_user username [password] [admin] [device_id] [hosts_file_path]"
         return 0
@@ -646,7 +646,7 @@ matrix_setup_user() {
 # ----------------------
 # Cryptography
 # ----------------------
-setup_age() {
+setup_age(){
     # setup age directory and keys
     mkdir -p ~/.age
     #get username
@@ -670,7 +670,7 @@ setup_age() {
     ls -l ~/.age/keys
 }
 
-encrypt_file() {
+encrypt_file(){
     # Check if age is installed, if not, install it
     if ! command -v age &> /dev/null; then
         echo "Error: 'age' is not installed."
@@ -780,7 +780,7 @@ encrypt_file() {
 #wormhole alias
 alias wh="wormhole"
 #transfer file with wormhole many or one file
-wh-transfer() {
+wh-transfer(){
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
         echo "Usage: wh-transfer -e|-encrypt path1 path2 ..."
         echo "The default is to send the files as is"
@@ -809,7 +809,74 @@ wh-transfer() {
     fi
 }
 
-transfer_file() {
+upload_to_pcloud(){
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: upload_to_pcloud [-e|-encrypt] source_path [remote_path]"
+        echo "Uploads files or directories to pCloud using rclone."
+        echo "Options:"
+        echo "  -e, --encrypt   Encrypt the file(s) before uploading using 'age'."
+        echo "If remote_path is not provided, files will be uploaded to the root of the remote."
+        return 0
+    fi
+
+    # Default remote name for pCloud
+    local remote="pcloud"
+    # Check for encryption option
+    local encrypt=false
+    if [[ "$1" == "-e" || "$1" == "--encrypt" ]]; then
+        encrypt=true
+        shift
+    fi
+
+    # Check for source_path
+    if [[ -z "$1" ]]; then
+        echo "Error: Source path is required."
+        echo "Use 'upload_to_pcloud -h' for help."
+        return 1
+    fi
+    local source_path="$1"
+    shift
+
+    # Set the remote path or use the root of the remote
+    local remote_path="$1"
+    if [[ -z "$remote_path" ]]; then
+        remote_path="/"
+    fi
+
+    # Debug: Print paths
+    echo "Source path: $source_path"
+    echo "Remote path: $remote_path"
+
+    # Check if the source path exists
+    if [[ ! -e "$source_path" ]]; then
+        echo "Error: Source path '$source_path' does not exist."
+        return 1
+    fi
+
+    # Encrypt the file if requested
+    if [[ "$encrypt" == true ]]; then
+        echo "Encrypting file..."
+        encrypt_file "$source_path"
+        local encrypted_path="${source_path}.age"
+        echo "Uploading encrypted file to pCloud..."
+        rclone copy "$encrypted_path" "$remote:$remote_path" -P || {
+            echo "Error: Failed to upload encrypted file to pCloud."
+            return 1
+        }
+        rm "$encrypted_path" # Clean up encrypted file
+    else
+        # Upload directly
+        echo "Uploading '$source_path' to pCloud..."
+        rclone copy "$source_path" "$remote:$remote_path" -P || {
+            echo "Error: Failed to upload to pCloud."
+            return 1
+        }
+    fi
+
+    echo "Upload to pCloud completed successfully!"
+}
+
+transfer_file(){
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
         echo "Usage: transfer_file path1 path2 ..."
         printf "This command uses rsync to transfer files or directories to a remote host.\n"
