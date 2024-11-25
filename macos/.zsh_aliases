@@ -104,19 +104,36 @@ zipfile() {
 # ----------------------
 # Applications Aliases
 # ----------------------
+setup_profiles() {
+    mkdir -p $HOME/Profiles
+    cd $HOME/Profiles
+}
 
 run-element() {
     # usage: run-element
     # open element desktop in the default browser
     # if a profile is passed then use it
+    setup_profiles
     /Applications/Element.app/Contents/MacOS/Element --profile "$1"&
+    cd - # go back to the previous directory
 }
 
 run-firefox() {
     # usage: run-firefox
     # open firefox in the default browser
     # if a profile is passed then use it 
+    setup_profiles
     /Applications/Firefox.app/Contents/MacOS/firefox --profile "$1" --new-window "https://sso.irregularchat.com"&
+    cd - # go back to the previous directory
+}
+
+run-discord() {
+    # usage: run-discord
+    # open discord in the default browser
+    # if a profile is passed then use it
+    setup_profiles
+    /Applications/Discord.app/Contents/MacOS/Discord --profile "$1"&
+    cd - # go back to the previous directory
 }
 # command line keepassxc
 alias kp="keepassxc"

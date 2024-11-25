@@ -55,8 +55,10 @@
     - name: Update Authentik on irregularchat-information
       shell: |
         # rename the backup file to include the current date
-        mv docker-compose.yml docker-compose.yml.bak.$(date +%Y%m%d); wget -O docker-compose.yml https://goauthentik.io/version/$authentik_version/docker-compose.yml
-        docker compose pull && docker compose up -d
+        mv docker-compose.yml docker-compose.yml.bak.$(date +%Y%m%d)
+        wget -O docker-compose.yml https://goauthentik.io/version/$authentik_version/docker-compose.yml
+        docker compose pull
+        docker compose up -d
       args:
         chdir: /home/authentik/authentik
       async: 0
@@ -64,6 +66,19 @@
       no_log: False
       when: inventory_hostname == 'irregularchat-information'
       tags: authentik, custom, docker
+
+    - name: Update SearxNG on proxmox-main
+      shell: |
+        git pull
+        docker compose pull
+        docker compose up -d
+      args:
+        chdir: /home/searxng/searxng-docker
+      async: 0
+      poll: 1
+      no_log: False
+      when: inventory_hostname == 'irregularchat-information'
+      tags: searxng, custom, docker
 
 ## Git Repositories Update based on the search_path and exclude_path variables at the top of the file
     - name: Recursively find all .git directories, excluding /home/discourse
