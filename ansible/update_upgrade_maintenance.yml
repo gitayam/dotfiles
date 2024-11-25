@@ -72,8 +72,8 @@
       changed_when: false
       tags: git_update, git
 
-    - name: Update each Git repository
-      shell: git pull
+    - name: Update each Git repository stashing changes before pulling
+      shell: git stash && git pull
       args:
         chdir: "{{ item }}"
       loop: "{{ git_dirs.stdout_lines | map('dirname') | list }}"
@@ -99,7 +99,7 @@
       async: 0
       poll: 1
       no_log: False
-      tags: docker_pull, git, docker
+      tags: docker_pull, docker
 
 ## Docker Compose Update based on the search_path and exclude_path variables at the top of the file
     - name: Recursively find Docker Compose files, excluding /home/discourse
