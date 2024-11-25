@@ -395,9 +395,15 @@ helpmenu(){
     echo "----------"
 
     # show all functions in the ~/.zsh_aliases file
-    cat ~/.zsh_aliases | grep -E '^[a-zA-Z_][a-zA-Z0-9_]*(\(\))? *\{' | sed 's/{$//'
+    cat ~/.zsh_aliases|grep "(){"|cut -d '(' -f 1
     echo ""
     echo "To see the help for a specific function, use the show_help function with the function name as the argument."
+}
+
+show_help(){
+    # usage: show_help function_name
+    # show the help for a specific function
+    cat ~/.zsh_aliases|grep "$1()"
 }
 
 # ----------------------
