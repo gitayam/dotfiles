@@ -56,8 +56,15 @@
       shell: |
         # rename the backup file to include the current date
         mv docker-compose.yml docker-compose.yml.bak.$(date +%Y%m%d)
+        # confirm the file was renamed
+        ls -l docker-compose.yml && echo "File renamed"
+        # download the new docker-compose.yml file
         wget -O docker-compose.yml https://goauthentik.io/version/$authentik_version/docker-compose.yml
+        # confirm the file was downloaded
+        ls -l docker-compose.yml && echo "File downloaded"
+        # pull the new images
         docker compose pull
+        # restart the services
         docker compose up -d
       args:
         chdir: /home/authentik/authentik
@@ -69,7 +76,9 @@
 
     - name: Update SearxNG on proxmox-main
       shell: |
+        git stash
         git pull
+        git stash pop
         docker compose pull
         docker compose up -d
       args:
