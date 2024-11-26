@@ -30,6 +30,33 @@
       tags: cleanup
 
 ## Custom tasks for each server
+## Add this task specifically for the researchtools server
+    - name: Manage researchtools server on irregularchat-information
+      shell: |
+        # Navigate to the project directory
+        cd /home/researchtools/Git/researchtools
+        
+        # Ensure all dependencies are installed
+        npm install
+        
+        # Run npm audit fix to address vulnerabilities
+        npm audit fix --force # --force is used to fix vulnerabilities without prompting for confirmation
+        
+        # Start or restart the server using PM2
+        if pm2 list | grep -q researchtools; then
+          pm2 restart researchtools
+          # output to the user that the server was restarted
+          echo "Researchtools server restarted"
+        else
+          pm2 start server.js --name researchtools
+          # output to the user that the server was started
+          echo "Researchtools server started"
+        fi
+      async: 0
+      poll: 1
+      no_log: False
+      when: inventory_hostname == 'irregularchat-information'
+      tags: researchtools, custom, node
     - name: Update Cryptpad on irregularchat-information
       shell: |
         git pull
