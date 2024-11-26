@@ -108,7 +108,8 @@ setup_profiles(){
     mkdir -p $HOME/Profiles
     cd $HOME/Profiles
 }
-
+alias run-matrix="run-element"
+alias run-irregular="run-element irregularchat"
 run-element(){
     # usage: run-element
     # open element desktop in the default browser
