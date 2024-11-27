@@ -42,6 +42,23 @@ install_gui_apps() {
     brew install --cask "$app"
     fi
   done
+  proton_apps=("protonvpn" "proton-mail" "proton-pass" "proton-drive")
+  # ask the user if they want to install the proton apps
+  # default to no
+  install_proton="n"
+  read -p "Do you want to install the Proton apps? (y/n): " install_proton
+  if [[ "$install_proton" == "y" ]]; then
+    for app in "${proton_apps[@]}"; do
+      # check if the app is already installed
+      if [[ -d "/Applications/$app.app" ]]; then
+        echo "$app is already installed."
+      else
+        echo "$app is not installed. Installing..."
+        brew install --cask "$app"
+      fi
+    done
+  fi
+  
 }
 
 main() {
