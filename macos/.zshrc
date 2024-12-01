@@ -1,4 +1,4 @@
-export PATH=$PATH:/Users/sac/.local/bin
+export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
 alias age_pub='/private/tmp/age-py/age.sh'
 # ~/.zshrc
 # Set GPG TTY
