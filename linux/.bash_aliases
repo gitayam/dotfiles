@@ -77,7 +77,7 @@ update_docker_compose() {
         exclude_expr+="! -path \"${path}\" -a "
     done
     # Find and update Docker Compose files
-    find "$search_path" -type f \( -name "docker-compose.yml" -o -name "docker-compose.yaml" \) $exclude>
+    find "$search_path" -type f \( -name "docker-compose.yml" -o -name "docker-compose.yaml" \) $exclude_expr -print | while read -r composefile; do
         compose_dir=$(dirname "$composefile")
         echo "Found docker-compose file in $compose_dir"
 
