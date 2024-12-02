@@ -56,7 +56,22 @@ install_gui_apps() {
 main() {
     echo "Starting initial install..."
     install_terminal_apps
-    install_gui_apps
+    # Detect if desktop environment is running if so ask about installing GUI apps if not skip entirely 
+    if [[ "$OS" == "Ubuntu" || "$OS" == "Debian" ]]; then
+        # check if desktop environment is running
+        if [[ $(pgrep -c -f "gnome-session") -gt 0 ]]; then
+            read -p "Do you want to install GUI apps? (y/n): " install_gui
+            if [[ "$install_gui" == "y" ]]; then
+                install_gui_apps
+            else
+                echo "No GUI apps installed."
+            fi
+        else
+            echo "No GUI apps installed because no desktop environment is running."
+        fi
+    else
+        echo "No GUI apps installed because not on Ubuntu or Debian."
+    fi
     echo "Syncing Linux aliases and functions to ~/.bashrc"
     ./sync_linux_dotfiles.sh
     echo "Initial install complete."
