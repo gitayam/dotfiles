@@ -39,6 +39,60 @@ This repository contains configuration files and scripts for setting up and main
 
 ## Getting Started
 
+Repo can be found at https://github.com/gitayam/dotfiles
+
+### Downloading the Repository
+
+#### Using it without Contributing
+If you just want to use it without contributing to the repo you can clone it and use it as a local repo.
+
+**Download the repo**
+```bash
+# Using the Terminal in the directory you want to clone the repo
+git clone https://github.com/gitayam/dotfiles.git 
+# move into the repo
+cd dotfiles
+```
+**Update the repo**
+```bash
+# move into the repo
+cd dotfiles
+# pull the latest changes
+git pull
+```
+#### Contributing 
+If you want to contribute to the repo you can fork it and use it as a remote repo.
+
+**Fork the repo**
+Click the fork URL and create the fork in your own github account.
+https://github.com/gitayam/dotfiles/fork
+
+Using gh on terminal
+```bash
+gh repo fork gitayam/dotfiles
+```
+
+**Clone the forked repo**
+```bash
+# Using the Terminal in the directory you want to clone the repo
+git clone https://github.com/YOUR_GITHUB_USERNAME/dotfiles.git 
+# move into the repo
+cd dotfiles
+```
+
+**Push changes to the remote repo**
+```bash
+# add all changes
+git add .
+# commit the changes
+git commit -m "commit message"
+# push the changes
+git push
+```
+
+**Create a pull request**
+Go to your forked repo on github and create a pull request. This will notify the maintainer to review and merge the changes.
+
 ### Initial Setup
 
 1. **macOS:**
