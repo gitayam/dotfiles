@@ -891,9 +891,13 @@ transfer_file(){
         printf "An example ~/.env file is provided at $HOME/macos/.env-template\n"
         return 0
     fi
-    #read .env file for the remote host and port and base remote path if file exists
+
+    # Read .env file for the remote host, port, and base remote path if file exists
     if [[ -f ~/.env ]]; then
-        source ~/.env
+        # Use source to load variables directly
+        REMOTE_HOST=$(grep "REMOTE_HOST=" ~/.env | cut -d '=' -f 2)
+        REMOTE_PORT=$(grep "REMOTE_PORT=" ~/.env | cut -d '=' -f 2)
+        REMOTE_BASE_PATH=$(grep "REMOTE_BASE_PATH=" ~/.env | cut -d '=' -f 2)
     else
         echo "Error: ~/.env file not found"
         echo -n "Do you want to create a new ~/.env file? (y/n):(default:n) "
@@ -902,40 +906,39 @@ transfer_file(){
             echo "REMOTE_HOST=username@192.168.1.xxx" >> ~/.env
             echo "REMOTE_PORT=2220" >> ~/.env
             echo "REMOTE_BASE_PATH=/path/to/directory" >> ~/.env
+            echo "source ~/.zshrc" >> ~/.env
             echo "~/.env file created, please edit the file with the correct remote host, port, and base remote path"
             return 1
-            
         else
             return 1
         fi
     fi
-    remote_host=$REMOTE_HOST
-    remote_port=$REMOTE_PORT
-    base_remote_path=$REMOTE_BASE_PATH
-    #check if vars are set
-    if [[ -z "$remote_host" || -z "$remote_port" || -z "$base_remote_path" ]]; then
+
+    # Check if vars are set
+    if [[ -z "$REMOTE_HOST" || -z "$REMOTE_PORT" || -z "$REMOTE_BASE_PATH" ]]; then
         echo "Error: Remote host, port, or base remote path not set in ~/.env file"
         return 1
     fi
-    #check if can connect to remote host
-    if ! ssh -q -p "$remote_port" "$remote_host" "exit"; then
-        echo "Error: Cannot connect to remote host"
-        return 1
-    fi
+
+    # Check if can connect to remote host
+    # if ! command ssh -q -p "$REMOTE_PORT" "$REMOTE_HOST" "exit"; then
+    #     echo "Error: Cannot connect to remote host"
+    #     return 1
+    # fi
 
     for path in "$@"; do
         if [[ ! -e "$path" ]]; then
             echo "Error: '$path' does not exist"
             continue
         fi
-
-        local target_path="$base_remote_path/$(basename "$path")"
+        # Set the target path on the remote host
+        local target_path="$REMOTE_BASE_PATH/$(basename "$path")"
         if [[ -d "$path" ]]; then
-            ssh -p "$remote_port" "$remote_host" "mkdir -p \"$target_path\""
-            rsync -vz --progress -e "ssh -p $remote_port" "$path/"* "$remote_host:$target_path/" || echo "Failed to transfer directory '$path'"
+            command ssh -p "$REMOTE_PORT" "$REMOTE_HOST" "mkdir -p \"$target_path\""
+            /opt/homebrew/bin/rsync -avz --progress -e "ssh -p $REMOTE_PORT" "$path/" "$REMOTE_HOST:$target_path/" || echo "Failed to transfer directory '$path'"
         elif [[ -f "$path" ]]; then
-            ssh -p "$remote_port" "$remote_host" "mkdir -p \"$base_remote_path\""
-            rsync -vz --progress -e "ssh -p $remote_port" "$path" "$remote_host:$target_path" || echo "Failed to transfer file '$path'"
+            command ssh -p "$REMOTE_PORT" "$REMOTE_HOST" "mkdir -p \"$REMOTE_BASE_PATH\""
+            /opt/homebrew/bin/rsync -avz --progress -e "ssh -p $REMOTE_PORT" "$path" "$REMOTE_HOST:$REMOTE_BASE_PATH/" || echo "Failed to transfer file '$path'"
         else
             echo "Error: '$path' is neither a file nor a directory"
         fi
