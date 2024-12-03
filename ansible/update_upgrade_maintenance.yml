@@ -52,15 +52,19 @@
       when: reboot_required.stat.exists and 'reboot' in ansible_run_tags
       tags: reboot
 ## Setup SSH from vars file from the inventory file
-    - name: Setup SSH from vars file from the inventory file
-      copy:
-        content: "{{ lookup('file', 'vars/ssh_keys.yml') }}"
-        dest: /home/{{ inventory_hostname }}/.ssh/authorized_keys
-        owner: "{{ inventory_hostname }}"
-        mode: '0644'
+    - name: Ensure ssh_keys variable is defined
+      assert:
+        that: ssh_keys is defined
+        fail_msg: "The ssh_keys variable is not defined. Please ensure it is set in the inventory."
       tags: ssh
 
-
+    - name: Add SSH keys to authorized_keys
+      authorized_key:
+        user: "{{ user }}"
+        key: "{{ item }}"
+        state: present
+      loop: "{{ ssh_keys }}"
+      tags: ssh
 
 ## Custom tasks for each server
 ## Add this task specifically for the researchtools server
