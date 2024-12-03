@@ -3,12 +3,13 @@
   hosts: all
   become: yes
   vars:
-    ssh_keys: "{{ lookup('file', 'inventory/custom/vars.yaml') }}"
-    log_path: "{{ lookup('file', 'inventory/custom/vars.yaml') }}"
-    search_path: "{{ lookup('file', 'inventory/custom/vars.yaml') }}"
-    exclude_path: "{{ lookup('file', 'inventory/custom/vars.yaml') }}"
-    authentik_version: "{{ lookup('file', 'inventory/custom/vars.yaml') }}"
-    user: "{{ lookup('file', 'inventory/custom/vars.yaml') }}"
+    custom_vars: "{{ lookup('file', 'inventory/custom/vars.yaml') | from_yaml }}"
+    ssh_keys: "{{ custom_vars.ssh_keys }}"
+    log_path: "{{ custom_vars.log_path }}"
+    search_path: "{{ custom_vars.search_path }}"
+    exclude_path: "{{ custom_vars.exclude_path }}"
+    authentik_version: "{{ custom_vars.authentik_version }}"
+    user: "{{ custom_vars.user }}"
   tasks:
     # update apt packages to know 
     - name: Update APT package index
