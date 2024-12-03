@@ -1,0 +1,82 @@
+---
+- name: Fresh Install
+  hosts: localhost
+  become: yes
+  vars:
+    custom_vars: "{{ lookup('file', 'inventory/custom/vars.yaml') | from_yaml }}"
+    ssh_keys: "{{ custom_vars.ssh_keys }}"
+  tasks:
+## Setup SSH from vars file from the inventory file
+    - name: Ensure ssh_keys variable is defined
+      assert:
+        that: ssh_keys is defined
+        fail_msg: "The ssh_keys variable is not defined. Please ensure it is set in the inventory."
+      tags: ssh
+
+    - name: Add SSH keys to authorized_keys
+      authorized_key:
+        user: "{{ user }}"
+        key: "{{ item }}"
+        state: present
+      loop: "{{ ssh_keys }}"
+      tags: ssh
+
+    - name: Install terminal applications
+      package:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - diceware
+        - git
+        - gh
+        - python3
+        - ansible
+        - docker
+        - kubectl
+        - gpg
+        - age
+        - magic-wormhole
+        - wireguard-tools
+      tags: terminal_apps
+
+    - name: Check if GUI environment is running
+      command: pgrep -c -f "gnome-session"
+      register: gnome_session
+      ignore_errors: yes
+
+    - name: Install GUI applications
+      when: gnome_session.rc == 0
+      package:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - element-desktop
+        - firefox
+        - keepassxc
+        - obsidian
+        - qbittorrent
+        - simplex
+        - tailscale
+      tags: gui_apps
+
+    - name: Prompt for Proton apps installation
+      pause:
+        prompt: "Do you want to install the Proton apps? (y/n): "
+      register: proton_install
+      tags: proton_apps
+    - name: Install Proton applications
+      when: proton_install.user_input == "y"
+      package:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - protonvpn
+        - proton-mail
+        - proton-pass
+        - proton-drive
+      tags: proton_apps
+
+    ## Privacy and security Config
+    - name: Install Privacy and security Config
+      command: # TODO
+      tags: privacy_security_config

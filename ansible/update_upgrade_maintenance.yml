@@ -9,7 +9,7 @@
     search_path: "{{ custom_vars.search_path }}"
     exclude_path: "{{ custom_vars.exclude_path }}"
     authentik_version: "{{ custom_vars.authentik_version }}"
-    user: "{{ custom_vars.user }}"
+    user: "root"
   tasks:
     # update apt packages to know 
     - name: Update APT package index
