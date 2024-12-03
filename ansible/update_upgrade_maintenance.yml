@@ -3,11 +3,12 @@
   hosts: all
   become: yes
   vars:
-    log_path: "/var/log/maintenance_log.txt"
-    search_path: "/home/"
-    exclude_path: "/home/discourse"
-    authentik_version: "2024.10" # this is the version of authentik that will be used to download the docker-compose.yml file
-
+    ssh_keys: "{{ lookup('file', 'inventory/custom/vars.yaml') }}"
+    log_path: "{{ lookup('file', 'inventory/custom/vars.yaml') }}"
+    search_path: "{{ lookup('file', 'inventory/custom/vars.yaml') }}"
+    exclude_path: "{{ lookup('file', 'inventory/custom/vars.yaml') }}"
+    authentik_version: "{{ lookup('file', 'inventory/custom/vars.yaml') }}"
+    user: "{{ lookup('file', 'inventory/custom/vars.yaml') }}"
   tasks:
     # update apt packages to know 
     - name: Update APT package index
@@ -50,6 +51,16 @@
         connect_timeout: 5
       when: reboot_required.stat.exists and 'reboot' in ansible_run_tags
       tags: reboot
+## Setup SSH from vars file from the inventory file
+    - name: Setup SSH from vars file from the inventory file
+      copy:
+        content: "{{ lookup('file', 'vars/ssh_keys.yml') }}"
+        dest: /home/{{ inventory_hostname }}/.ssh/authorized_keys
+        owner: "{{ inventory_hostname }}"
+        mode: '0644'
+      tags: ssh
+
+
 
 ## Custom tasks for each server
 ## Add this task specifically for the researchtools server
