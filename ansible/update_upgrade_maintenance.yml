@@ -9,6 +9,7 @@
     authentik_version: "2024.10" # this is the version of authentik that will be used to download the docker-compose.yml file
 
   tasks:
+    # update apt packages to know 
     - name: Update APT package index
       apt:
         update_cache: yes
@@ -88,7 +89,7 @@
       poll: 1
       no_log: False
       when: inventory_hostname == 'irregularchat-information'
-      tags: cryptpad, custom
+      tags: cryptpad, custom, git
 
     - name: Update Vaultwarden on proxmox-main
       shell: ./docker-cmd.sh
@@ -105,9 +106,9 @@
         # rename the backup file to include the current date
         mv docker-compose.yml docker-compose.yml.bak.$(date +%Y%m%d)
         # confirm the file was renamed
-        ls -l docker-compose.yml && echo "File renamed"
+        ls -l docker-compose.yml.bak.$(date +%Y%m%d) && echo "File renamed"
         # download the new docker-compose.yml file
-        wget -O docker-compose.yml https://goauthentik.io/version/$authentik_version/docker-compose.yml
+        wget -O docker-compose.yml https://goauthentik.io/version/{{ authentik_version }}/docker-compose.yml
         # confirm the file was downloaded
         ls -l docker-compose.yml && echo "File downloaded"
         # pull the new images
@@ -191,7 +192,8 @@
       no_log: False
       tags: docker_compose_update, docker
 
-## Maintenance tasks
+#### Maintenance tasks ####
+
     - name: Check disk usage and log results
       shell: "df -h | grep '^/dev/'"
       register: disk_usage
