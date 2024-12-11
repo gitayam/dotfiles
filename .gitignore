@@ -2,3 +2,4 @@ macos/.env
 ansible/inventory/hosts
 *.zip
 *.age
+vars.yaml

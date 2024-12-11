@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: simplelogin-db
+  namespace: simplelogin
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: simplelogin-db
+  template:
+    metadata:
+      labels:
+        app: simplelogin-db
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:13
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: simplelogin
+            - name: POSTGRES_USER
+              value: simplelogin
+            - name: POSTGRES_PASSWORD
+              value: password
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: simplelogin-db
+  namespace: simplelogin
+spec:
+  ports:
+    - protocol: TCP
+      port: 5432
+      targetPort: 5432
+  selector:
+    app: simplelogin-db
+  type: ClusterIP

@@ -101,6 +101,20 @@ zipfile(){
     # if multiple files or dirs are passed then zip them all with the name of the first file or dir + more + .zip
 }
 
+## Make Directory and cd to it if only one arg is passed else just make the dir
+mcd(){
+    if [[ -z "$1" ]]; then
+        echo "No directory name provided"
+        return 1
+    # elif only one arg is passed then make the dir and cd to it
+    elif [[ -n "$1" ]]; then
+        mkdir -p "$1" && cd "$1"
+        pwd # print the current directory
+    #else if multiple args are passed then make the dirs and list them
+    elif [[ -n "$@" ]]; then
+        mkdir -p "$@" && ls -l "$@"
+    fi
+}
 # ----------------------
 # Applications Aliases
 # ----------------------
@@ -325,50 +339,6 @@ reset_file(){
   done
 }
 
-# Python Aliases 
-pyenv(){
-  python3 -m venv env  # Create the virtual environment
-  source env/bin/activate  # Activate the virtual environment (on Linux/Mac)
-}
-
-pyserver(){
-    # usage: pyserver file1 file2 ...
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-        echo "Usage: pyserver file1 file2 ..."
-        return 0
-    fi
-    # check if python3 is installed
-    if ! command -v python3 &> /dev/null; then
-        echo "Error: Python 3 is not installed"
-        return 1
-    fi
-    # set port for the python server
-    local port=8000
-    # create a python server for the passed files or dir
-    #get local ip
-    local_ip=$(hostname -I | awk '{print $1}')
-    # path for the server else use current dir
-    # if multiple files passed in arg then create tmp dir and add those passed files or dir via ln to the temp server dir
-    # if no files passed in arg then use current dir
-    if [ -n "$1" ]; then # if there are files passed in arg
-        # create temp dir
-        mkdir -p /tmp/pyserver
-        # add files or dir to the temp dir
-        for file in "$@"; do
-            ln -s "$file" /tmp/pyserver
-        done
-        # change dir to the temp dir
-        cd /tmp/pyserver
-        # start the python server
-        python3 -m http.server $port
-    else
-        # use current dir
-        cd .
-        # start the python server
-        python3 -m http.server $port
-    fi
-    
-}
 # Docker Aliases
 alias dc="docker compose"
 alias docker-compose="dc" # alias for docker compose instead of docker-compose
@@ -494,23 +464,46 @@ pyenv(){
   pip install -r requirements.txt  # Install dependencies
 }
 
+# Python Aliases 
 pyserver(){
-  #get local ip
-  local_ip=$(hostname -I | awk '{print $1}')
-  # path for the server else use current dir
-  # if multiple files passed in arg then create tmp dir and add those passed files or dir via ln to the temp server dir
-  if [ -n "$1" ]; then
-    # create temp dir
-    mkdir -p /tmp/pyserver
-    # add files or dir to the temp dir
-    #create python server for the dir
-    for file in "$@"; do
-      ln -s "$file" /tmp/pyserver
-    done
-    # change dir to the temp dir
-    cd /tmp/pyserver
-  fi
+    # usage: pyserver file1 file2 ...
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: pyserver file1 file2 ..."
+        return 0
+    fi
+    # check if python3 is installed
+    if ! command -v python3 &> /dev/null; then
+        echo "Error: Python 3 is not installed"
+        return 1
+    fi
+    # set port for the python server
+    local port=8000
+    # create a python server for the passed files or dir
+    #get local ip
+    local_ip=$(hostname -I | awk '{print $1}')
+    # path for the server else use current dir
+    # if multiple files passed in arg then create tmp dir and add those passed files or dir via ln to the temp server dir
+    # if no files passed in arg then use current dir
+    if [ -n "$1" ]; then # if there are files passed in arg
+        # create temp dir
+        mkdir -p /tmp/pyserver
+        # add files or dir to the temp dir
+        for file in "$@"; do
+            ln -s "$file" /tmp/pyserver
+        done
+        # change dir to the temp dir
+        cd /tmp/pyserver
+        # start the python server
+        python3 -m http.server $port
+    else
+        # use current dir
+        cd .
+        # start the python server
+        python3 -m http.server $port
+    fi
+    
 }
+
 
 # ----------------------
 # MAC Address Management
