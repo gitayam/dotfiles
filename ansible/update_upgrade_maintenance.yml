@@ -159,7 +159,7 @@
       shell: "find {{ search_path }} -path {{ exclude_path }} -prune -o -type d -name '.git' -print"
       register: git_dirs
       changed_when: false
-      tags: git_update, git
+      tags: git
 
     - name: Update each Git repository stashing changes before pulling
       shell: git stash && git pull
@@ -169,7 +169,7 @@
       async: 0
       poll: 1
       no_log: False
-      tags: git_update, git
+      tags: git
 
     - name: Pull all Docker images individually
       shell: |
