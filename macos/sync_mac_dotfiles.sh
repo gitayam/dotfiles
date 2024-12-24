@@ -23,23 +23,18 @@ sync_file() {
     if ! diff "$system_file" "$repo_file" &> /dev/null; then
         echo "Differences found for $file_name."
         echo "Select an option:"
-        echo "1. Copy system version ($system_file) to repo"
-        echo "2. Copy repo version ($repo_file) to system"
-        echo "3. Skip this file"
+        echo "1. Copy repo version ($repo_file) to overwrite system ~/zshrc"
+        echo "2. Skip this file"
 
         # Read user choice
         read -p "Enter your choice (1/2/3): " choice
 
         case $choice in
             1)
-                $COPY_CMD "$system_file" "$repo_file"
-                echo "Copied $system_file to $repo_file."
-                ;;
-            2)
                 $COPY_CMD "$repo_file" "$system_file"
                 echo "Copied $repo_file to $system_file."
                 ;;
-            3)
+            2)
                 echo "Skipped $file_name."
                 ;;
             *)
