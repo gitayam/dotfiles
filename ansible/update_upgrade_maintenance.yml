@@ -98,6 +98,10 @@
     - name: Update Cryptpad on irregularchat-information
       shell: |
         git pull
+        cp www/common/application_config_internal.js customize/application_config.js 
+        ./install-onlyoffice.sh
+        npm ci
+        npm run install:components
         pm2 restart cryptpad
       args:
         chdir: /home/cryptpad/cryptpad
@@ -116,7 +120,6 @@
       no_log: False
       when: inventory_hostname == 'proxmox-main'
       tags: vaultwarden, custom, docker
-
     - name: Update Authentik on irregularchat-information
       shell: |
         # rename the backup file to include the current date
