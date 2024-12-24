@@ -77,6 +77,75 @@ update_git_repos(){
         git pull --rebase || echo "Failed to update $repo_dir"
     done
 }
+
+## Git Clone Function
+### Usage: git_clone repo_name or url
+### from any directory will clone the repo to the correct directory in the ~/Documents/Git/ directory
+git_clone(){
+    if [[ -z "$1" ]]; then
+        echo "No repository name or URL provided"
+        return 1
+    fi
+
+    # Determine the repo name from the URL or input
+    if [[ "$1" =~ ^https?:// || "$1" =~ ^git@ ]]; then
+        repo_name=$(basename "$1" .git)
+        repo_url="$1"
+    else
+        repo_name=$(basename "$1")
+        repo_url="https://github.com/your-username/$repo_name.git"
+    fi
+
+    # Check if the repo name is a valid directory name
+    if [[ ! "$repo_name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        echo "Invalid repository name: $repo_name"
+        return 1
+    fi
+
+    # Check if the repo name already exists in the ~/Documents/Git/ directory
+    if [[ -d "$HOME/Documents/Git/$repo_name" ]]; then
+        echo "Repository already exists: $repo_name"
+        return 1
+    fi
+
+    # Clone the repo to the ~/Documents/Git/ directory
+    git clone "$repo_url" "$HOME/Documents/Git/$repo_name" || {
+        echo "Failed to clone repository"
+        return 1
+    }
+
+    # Change to the cloned repository directory
+    cd "$HOME/Documents/Git/$repo_name" || {
+        echo "Failed to access $repo_name directory"
+        return 1
+    }
+    # print the current directory and list the files
+    pwd
+    ls -l
+    #prompt user to open the repo dir (./) in vs code or cursor
+    echo "Do you want to open the repository? (Y/n): "
+    read open_in
+    open_in=${open_in:-y}  # Default to 'y' if no input is provided
+
+    if [[ $open_in =~ ^[Yy]$ ]]; then
+        if command -v code &> /dev/null && command -v cursor &> /dev/null; then
+            echo "Both VS Code and Cursor are available. Open with (v)scode or (c)ursor? (v/c): "
+            read editor_choice
+            editor_choice=${editor_choice:-v}  # Default to 'v' if no input is provided
+            if [[ $editor_choice == "v" ]]; then
+                code .
+            elif [[ $editor_choice == "c" ]]; then
+                cursor .
+            fi
+        elif command -v code &> /dev/null; then
+            code .
+        elif command -v cursor &> /dev/null; then
+            cursor .
+        else
+            echo "Neither VS Code nor Cursor is available."
+        fi
+    fi
+}
 # ----------------------
 # Navigation and File Management Aliases
 # ----------------------
