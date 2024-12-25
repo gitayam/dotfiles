@@ -636,6 +636,8 @@ matrix_setup(){
     local vars_file="${2:-$HOME/Documents/Git/matrix-docker-ansible-deploy/inventory/host_vars/matrix.irregularchat.com/vars.yml}"
     # Fix: Go up three directories from vars file to reach inventory directory
     local hosts_file="$(dirname "$(dirname "$(dirname "$vars_file")")")/hosts"
+    #set the setup.yml file to the directory above the inventory directory
+    local setup_file="${hosts_file%/*/*}/setup.yml"
     # set the matrix repo path to the directory above the inventory directory
     local matrix_repo_path="${hosts_file%/*}/.."
     # check if vars file exists
@@ -654,17 +656,17 @@ matrix_setup(){
             # full will update the repo and make roles then setup and start the services using all the tags
             # git pull && sudo make roles of the matrix repo without moving to the repo dir
             cd "$matrix_repo_path" && git pull && sudo make roles
-            sudo ansible-playbook -i "$hosts_file" setup.yml --tags=install-all,setup-all,ensure-matrix-users-created,start || return 1
+            sudo ansible-playbook -i "$hosts_file" "$setup_file" --tags=install-all,setup-all,ensure-matrix-users-created,start || return 1
             cd - # return to the previous directory
             ;;
         normal)
             # normal will update the repo and make roles then setup and start the services
             cd "$matrix_repo_path" && git pull && sudo make roles
-            sudo ansible-playbook -i "$hosts_file" setup.yml --tags=setup-all,start || return 1
+            sudo ansible-playbook -i "$hosts_file" "$setup_file" --tags=setup-all,start || return 1
             cd - # return to the previous directory
             ;;
         restart)
-            sudo ansible-playbook -i "$hosts_file" setup.yml --tags=restart || return 1
+            sudo ansible-playbook -i "$hosts_file" "$setup_file" --tags=restart || return 1
             cd - # return to the previous directory
             ;;
         *)
