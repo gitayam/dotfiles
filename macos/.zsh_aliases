@@ -184,6 +184,18 @@ mcd(){
         mkdir -p "$@" && ls -l "$@"
     fi
 }
+
+#All updates on macos including brew, macos,git function updates
+update_all(){
+    sudo echo "Updating brew" # using sudo with echo to get user password , sudo used softwareupdate
+    brew update && brew upgrade && brew cleanup && brew doctor
+    echo "Updating macos"
+    sudo softwareupdate --install --all
+    echo "Updating git functions"
+    update_git_repos
+    echo "Clearing cache"
+    clear
+}
 # ----------------------
 # Applications Aliases
 # ----------------------
