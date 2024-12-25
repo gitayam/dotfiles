@@ -619,6 +619,8 @@ change_mac_menu(){
 # ----------------------
 
 matrix_setup(){
+    # for a list of tags see https://github.com/spantaleev/matrix-docker-ansible-deploy/blob/a1efb78bcbc3a9205a59de3364f47192b6232f0f/docs/playbook-tags.md#L4
+    ## Usage: matrix_setup {full|1|normal|restart} {vars_directory_path}
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
         # show help
         echo "Usage: matrix_setup {full|1|normal|restart} {vars_directory_path}"
