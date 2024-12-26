@@ -160,7 +160,7 @@ alias tarx="tar -xvf"
 zipfile(){
     # usage: zipfile name file_or_dir1 file_or_dir2 ...
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-        echo "usage: zipfile name file_or_dir1 file_or_dir2 ..."
+        echo "usage: zipfile name_of_zip_file file_or_dir1 file_or_dir2 ..."
         return 0
     fi
     # check if args are passed
@@ -442,20 +442,32 @@ alias df='df -h'                # Show free disk space in human-readable format
 
 
 # Menu with all functions in ~/.zsh_aliases and ~/.mac_functions.sh
-helpmenu(){
-    echo "Help Menu:"
-    echo "----------"
 
-    # show all functions in the ~/.zsh_aliases file
-    cat ~/.zsh_aliases|grep "(){"|cut -d '(' -f 1
-    echo ""
-    echo "To see the help for a specific function, use the show_help function with the function name as the argument."
+show_func(){
+    # usage: show_help function_name
+    # show the help for a specific function
+    cat ~/.zsh_aliases|grep "$1()"
+}
+alias show_function="show_func"
+show_alias(){
+    # usage: show_alias
+    # show all the aliases in the ~/.zsh_aliases file
+    cat ~/.zsh_aliases | grep -E "^alias " | cut -d '=' -f 1 | sort | uniq
 }
 
 show_help(){
     # usage: show_help function_name
     # show the help for a specific function
-    cat ~/.zsh_aliases|grep "$1()"
+    grep -E "^\s*${1}\s*\(\)|^\s*function\s+${1}" ~/.zsh_aliases
+}
+
+helpmenu(){
+    echo "Help Menu:"
+    echo "----------"
+    echo "See all functions: show_function"
+    echo "See all aliases: show_alias"
+    echo "See help for a function: show_help function_name"
+    echo "See help for an alias: show_help alias_name"
 }
 
 # ----------------------
@@ -555,6 +567,8 @@ pyserver(){
     # check if python3 is installed
     if ! command -v python3 &> /dev/null; then
         echo "Error: Python 3 is not installed"
+        echo "You can install it with:"
+        echo 'brew install python'
         return 1
     fi
     # set port for the python server
