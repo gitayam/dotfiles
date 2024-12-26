@@ -918,11 +918,11 @@ wh-transfer(){
             encrypt_and_send "age" "$@"
         elif command -v gpg &> /dev/null; then
             encrypt_and_send "gpg" "$@"
-    else
+        else
             encrypt_and_send "aes" "$@"
         fi
     else
-        if [[ "$#" -gt 1 ]]; then   
+        if [[ "$#" -gt 1 ]]; then
             local zip_file="./wormhole_$(date +%Y%m%d%H%M%S).zip"
             zip "$zip_file" "$@"
             wormhole send "$zip_file"
@@ -998,6 +998,90 @@ upload_to_pcloud(){
     fi
 
     echo "Upload to pCloud completed successfully!"
+}
+
+# ffsend file transfer including encryption option
+fsend(){
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: fsend [-e|--encrypt] path1 path2 ..."
+        echo "The default is to send the files as is"
+        echo "-e or --encrypt will encrypt the files before sending using age, gpg, or aes"
+        return 0
+    fi
+
+    # Check if ffsend is installed
+    if ! command -v ffsend &> /dev/null; then
+        echo "Error: 'ffsend' is not installed."
+        echo "You can install it with: brew install ffsend"
+        return 1
+    fi
+
+    # Function to encrypt files
+    encrypt_files() {
+        local encrypt_tool="$1"
+        shift
+        local files=("$@")
+        local zip_file="./ffsend_$(date +%Y%m%d%H%M%S).zip"
+        zip "$zip_file" "${files[@]}"
+
+        local encrypted_file="${zip_file}.age"
+        case "$encrypt_tool" in
+            gpg)
+                encrypted_file="${zip_file}.gpg"
+                gpg --output "$encrypted_file" --symmetric "$zip_file"
+                ;;
+            aes)
+                encrypted_file="${zip_file}.aes"
+                openssl enc -aes-256-cbc -salt -in "$zip_file" -out "$encrypted_file"
+                ;;
+            *)
+                age -o "$encrypted_file" -p "$zip_file"
+                ;;
+        esac
+
+        echo "$encrypted_file"
+    }
+
+    # Check for encryption option
+    local encrypt=false
+    if [[ "$1" == "-e" || "$1" == "--encrypt" ]]; then
+        encrypt=true
+        shift
+    fi
+
+    # Handle multiple files
+    local files=("$@")
+    if [[ "${#files[@]}" -gt 1 ]]; then
+        local zip_file="./ffsend_$(date +%Y%m%d%H%M%S).zip"
+        zip "$zip_file" "${files[@]}"
+        files=("$zip_file")
+    fi
+
+    if $encrypt; then
+        local encrypted_file
+        if command -v age &> /dev/null; then
+            encrypted_file=$(encrypt_files "age" "${files[@]}")
+        elif command -v gpg &> /dev/null; then
+            encrypted_file=$(encrypt_files "gpg" "${files[@]}")
+        else
+            encrypted_file=$(encrypt_files "aes" "${files[@]}")
+        fi
+        ffsend send "$encrypted_file"
+        rm -rf "$encrypted_file"
+    else
+        ffsend send "${files[@]}"
+    fi
+
+    # Clean up zip file if it was created
+    [[ -f "$zip_file" ]] && rm -rf "$zip_file"
+
+    # Check if the files were sent successfully
+    if ffsend list | grep -q "$(basename "${files[0]}")"; then
+        echo "Files sent successfully!"
+    else
+        echo "Error: Files were not sent successfully."
+        return 1
+    fi
 }
 
 transfer_file(){
