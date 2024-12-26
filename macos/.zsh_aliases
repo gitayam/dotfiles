@@ -878,33 +878,58 @@ encrypt_file(){
 
 #wormhole alias
 alias wh="wormhole"
+alias wht="wh-transfer"
 #transfer file with wormhole many or one file
 wh-transfer(){
+    trap '[[ -f "$zip_file" ]] && rm -rf "$zip_file"' EXIT INT
+
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-        echo "Usage: wh-transfer -e|-encrypt path1 path2 ..."
+        echo "Usage: wh-transfer [-e|--encrypt] path1 path2 ..."
         echo "The default is to send the files as is"
-        echo "-e or --encrypt will encrypt the files before sending using age"
+        echo "-e or --encrypt will encrypt the files before sending using age, gpg, or aes"
         return 0
     fi
-    # check if encrypt option is passed 
+
+    encrypt_and_send() {
+        local encrypt_tool="$1"
+        shift
+        local files=("$@")
+        local zip_file="./wormhole_$(date +%Y%m%d%H%M%S).zip"
+        zip "$zip_file" "${files[@]}"
+        
+        local encrypted_file="${zip_file}.age"
+        if [[ "$encrypt_tool" == "gpg" ]]; then
+            encrypted_file="${zip_file}.gpg"
+            gpg --output "$encrypted_file" --symmetric "$zip_file"
+        elif [[ "$encrypt_tool" == "aes" ]]; then
+            encrypted_file="${zip_file}.aes"
+            openssl enc -aes-256-cbc -salt -in "$zip_file" -out "$encrypted_file"
+        else
+            age -o "$encrypted_file" -p "$zip_file"
+        fi
+
+        wormhole send "$encrypted_file"
+        rm -rf "$zip_file" "$encrypted_file"
+    }
+
     if [[ "$1" == "-e" || "$1" == "--encrypt" ]]; then
-        # encrypt but then transfer the encrypted file using wormhole
-        encrypt_file "$@"
-        wormhole send "${files_to_encrypt%.*}"
+        shift
+        if command -v age &> /dev/null; then
+            encrypt_and_send "age" "$@"
+        elif command -v gpg &> /dev/null; then
+            encrypt_and_send "gpg" "$@"
     else
-        # check if more than one file is passed create a zip file if needed and send the zip file then remove the zip file
+            encrypt_and_send "aes" "$@"
+        fi
+    else
         if [[ "$#" -gt 1 ]]; then   
-            zip_file="./wormhole_$(date +%Y%m%d%H%M%S).zip"
+            local zip_file="./wormhole_$(date +%Y%m%d%H%M%S).zip"
             zip "$zip_file" "$@"
             wormhole send "$zip_file"
-            rm "$zip_file"
+            rm -rf "$zip_file"
         else
             wormhole send "$@"
         fi
-    fi
-    # double check that the zip file was removed including if user exited with ctrl-c
-    if [[ -f "$zip_file" ]]; then
-        rm -rf "$zip_file"
     fi
 }
 
