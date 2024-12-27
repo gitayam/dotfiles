@@ -601,6 +601,7 @@ pyserver(){
 
 funnel() {
     # usage: funnel file1 file2 dir1 dir2 ...
+    # On MacOS you must be using the open source tailscaled distribution to use the funnel command for files. 
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
         echo "Usage: funnel <target>"
         echo "Funnel enables you to share a local server on the internet using Tailscale."
@@ -624,6 +625,16 @@ funnel() {
         target="$@"
     fi
 
+    # Function to clean up background processes
+    cleanup() {
+        echo "Cleaning up..."
+        kill $server_pid
+        exit 0
+    }
+
+    # Trap SIGINT (Ctrl+C) to run cleanup
+    trap cleanup SIGINT
+
     # if multiple files passed in arg then create tmp dir and add those passed files or dir via ln to the temp server dir
     # if no files passed in arg then use current dir
     if [ -n "$1" ]; then # if there are files passed in arg
@@ -638,6 +649,7 @@ funnel() {
         if $use_python; then
             # start the python server
             python3 -m http.server $port&
+            server_pid=$!
             # start the funnel
             tailscale funnel localhost:$port
         else
@@ -651,6 +663,7 @@ funnel() {
         if $use_python; then
             # start the python server
             python3 -m http.server $port&
+            server_pid=$!
             # start the funnel
             tailscale funnel localhost:$port
         else
