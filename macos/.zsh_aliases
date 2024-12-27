@@ -599,6 +599,69 @@ pyserver(){
     
 }
 
+funnel() {
+    # usage: funnel file1 file2 dir1 dir2 ...
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: funnel <target>"
+        echo "Funnel enables you to share a local server on the internet using Tailscale."
+        return 0
+    fi
+    local port=8080
+    use_python=true
+
+    # Check if tailscale is running
+    if ! tailscale status &> /dev/null; then
+        echo "Error: Tailscale is not running"
+        echo "You can start it with: tailscale start"
+        return 1
+    fi
+
+    # Use current directory if no target is specified
+    if [ -z "$1" ]; then
+        echo "No target specified. Using current directory as target."
+        target="."
+    else
+        target="$@"
+    fi
+
+    # if multiple files passed in arg then create tmp dir and add those passed files or dir via ln to the temp server dir
+    # if no files passed in arg then use current dir
+    if [ -n "$1" ]; then # if there are files passed in arg
+        # create temp dir
+        mkdir -p /tmp/funnel
+        # add files or dir to the temp dir
+        for file in "$@"; do
+            ln -s "$file" /tmp/funnel
+        done
+        # change dir to the temp dir
+        cd /tmp/funnel
+        if $use_python; then
+            # start the python server
+            python3 -m http.server $port&
+            # start the funnel
+            tailscale funnel localhost:$port
+        else
+            # start the funnel
+            tailscale funnel "$target"
+        fi
+        
+    else
+        # use current dir
+        cd .
+        if $use_python; then
+            # start the python server
+            python3 -m http.server $port&
+            # start the funnel
+            tailscale funnel localhost:$port
+        else
+            # start the funnel
+            tailscale funnel "$target"
+        fi
+    fi
+}
+
+alias tsf=funnel
+
 
 # ----------------------
 # MAC Address Management
