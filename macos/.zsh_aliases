@@ -424,7 +424,9 @@ reset_file(){
 alias dc="docker compose"
 alias docker-compose="dc" # alias for docker compose instead of docker-compose
 alias dcu="dc pull && dc up -d" # pull and start the docker compose services
-alias dcr="dc down && dc up -d" # stop and start the docker compose services
+alias dcd="dc down" # stop the docker compose services
+alias dcb="dcu --build" # build the docker compose services
+alias dcr="dcd && dcu" # stop and start the docker compose services
 alias dcp="dc pull" # pull the docker compose services
 alias d="docker" # alias for docker
 alias dps="d ps"
@@ -608,7 +610,7 @@ funnel() {
         return 0
     fi
     local port=8080
-    use_python=true
+    use_python=true #use this with MacOS or as needed
 
     # Check if tailscale is running
     if ! tailscale status &> /dev/null; then

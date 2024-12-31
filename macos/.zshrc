@@ -74,3 +74,4 @@ sudotouch() {
 }
 
 alias initial-install="./initial-setup.sh"
+sudotouch
