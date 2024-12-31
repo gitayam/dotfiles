@@ -54,12 +54,20 @@ SAVEHIST=10000
 
 # Function to enable Touch ID for sudo
 sudotouch() {
+  # Check if Touch ID is already enabled for sudo
+  if grep -q "auth       sufficient     pam_tid.so" /etc/pam.d/sudo; then
+    echo "Touch ID for sudo is already enabled."
+    return
+  fi
+
+  # Prompt to enable Touch ID for sudo
   REPLY="n" # default to no
-  echo -n "Do you want to use Touch ID for sudo for Macs with Touch Bar? (y/n):(default:n) "
+  echo -n "Touch ID for sudo is not enabled. Do you want to enable it for Macs with Touch Bar? (y/n):(default:n) "
   read REPLY
   REPLY=${REPLY:-n}
   if [[ $REPLY =~ ^[Yy]$ ]]; then
     sudo sed -i '' '1s;^;auth       sufficient     pam_tid.so\n;' /etc/pam.d/sudo
+    echo "Touch ID for sudo has been enabled."
   else 
     echo "Touch ID for sudo not enabled. Passwords will be required for sudo."
   fi
