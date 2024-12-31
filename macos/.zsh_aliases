@@ -426,8 +426,12 @@ alias docker-compose="dc" # alias for docker compose instead of docker-compose
 alias dcu="dc pull && dc up -d" # pull and start the docker compose services
 alias dcd="dc down" # stop the docker compose services
 alias dcb="dcu --build" # build the docker compose services
-alias dcr="dcd && dcu" # stop and start the docker compose services
 alias dcp="dc pull" # pull the docker compose services
+alias dcr="dcd && dcu" # stop and start the docker compose services
+#purge docker compose services networks and volumes 
+alias dcnet="docker network prune"
+alias dcvol="docker volume prune"
+alias dcpur="dcd && dcp && dcnet && dcvol" # stop and pull the docker compose services
 alias d="docker" # alias for docker
 alias dps="d ps"
 alias dbash="d exec -it $1 /bin/bash"
