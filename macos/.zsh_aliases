@@ -850,6 +850,27 @@ setup_age(){
     age-keygen -a -o ~/.age/keys/$key_name.key
     ls -l ~/.age/keys
 }
+clean_file(){
+    # Check if a file path is provided
+    if [[ -z "$1" ]]; then
+        echo "Error: No file path provided."
+        return 1
+    fi
+
+    # Use the provided file path
+    local path="$1"
+    # get full path
+    local full_path=$(realpath "$path")
+
+    # Remove spaces and special characters from the file name
+    local clean_file=$(echo "$full_path" | tr -cd '[:alnum:]_.-')
+
+    # Move the file to the new name
+    mv "$full_path" "$clean_file"
+
+    # Return the cleaned file name with full path
+    echo "$clean_file"
+}
 
 encrypt_file(){
     # Check if age is installed, if not, install it
