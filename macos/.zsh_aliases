@@ -811,11 +811,11 @@ matrix_setup_user(){
         echo "Error: Hosts file not found at $hosts_file"
         return 1
     fi
-
+    # run the ansible playbook to register the user
     sudo ansible-playbook -i "$hosts_file" setup.yml \
         --extra-vars="username=${username} password='${password}' admin=${admin}" \
         --tags=register-user
-
+    # login to the matrix server and obtain the access token
     curl -XPOST -d "{
         \"identifier\": { \"type\": \"m.id.user\", \"user\": \"${username}\" },
         \"password\": \"${password}\",
@@ -1250,39 +1250,51 @@ transfer_file(){
         return 0
     fi
 
-    # Read .env file for the remote host, port, and base remote path if file exists
+    # Source the .env file to load variables
     if [[ -f ~/.env ]]; then
-        # Use source to load variables directly
-        REMOTE_HOST=$(grep "REMOTE_HOST=" ~/.env | cut -d '=' -f 2)
-        REMOTE_PORT=$(grep "REMOTE_PORT=" ~/.env | cut -d '=' -f 2)
-        REMOTE_BASE_PATH=$(grep "REMOTE_BASE_PATH=" ~/.env | cut -d '=' -f 2)
+        source ~/.env
     else
         echo "Error: ~/.env file not found"
         echo -n "Do you want to create a new ~/.env file? (y/n):(default:n) "
         read create_env
         if [[ $create_env =~ ^[Yy]$ ]]; then
-            echo "REMOTE_HOST=username@192.168.1.xxx" >> ~/.env
-            echo "REMOTE_PORT=2220" >> ~/.env
-            echo "REMOTE_BASE_PATH=/path/to/directory" >> ~/.env
-            echo "source ~/.zshrc" >> ~/.env
+            echo "REMOTE_HOST=username@192.168.1.xxx" >> $HOME/.env
+            echo "REMOTE_PORT=2220" >> $HOME/.env
+            echo "REMOTE_BASE_PATH=/path/to/directory" >> $HOME/.env
+            echo "source ~/.zshrc" >> $HOME/.env
             echo "~/.env file created, please edit the file with the correct remote host, port, and base remote path"
             return 1
         else
             return 1
         fi
     fi
+    # clean up files and directories before starting. 
+    for path in "$@"; do
+        # remove spaces and special characters from the variables
+        path=$(echo "$path" | tr -cd '[:alnum:]_.-')
+        # ask if the files should be scanned for viruses
+        echo "Do you want to scan the file '$path' for viruses? (y/n):(default:n) "
+        read scan_file
+        if [[ $scan_file =~ ^[Yy]$ ]]; then
+            # scan the file for viruses
+            scan_file "$path"
+        fi
+    done
+     
 
     # Check if vars are set
     if [[ -z "$REMOTE_HOST" || -z "$REMOTE_PORT" || -z "$REMOTE_BASE_PATH" ]]; then
         echo "Error: Remote host, port, or base remote path not set in ~/.env file"
+        echo "Please set the variables in the ~/.env file"
+    # prompt the user for the variables that are missing loop through the variables and prompt the user for the missing ones
+    for var in REMOTE_HOST REMOTE_PORT REMOTE_BASE_PATH; do
+        if [[ -z "${!var}" ]]; then
+            echo "Please enter the value for $var:"
+            read -s "${!var}"
+        fi
+    done
         return 1
     fi
-
-    # Check if can connect to remote host
-    # if ! command ssh -q -p "$REMOTE_PORT" "$REMOTE_HOST" "exit"; then
-    #     echo "Error: Cannot connect to remote host"
-    #     return 1
-    # fi
 
     for path in "$@"; do
         if [[ ! -e "$path" ]]; then
@@ -1291,11 +1303,15 @@ transfer_file(){
         fi
         # Set the target path on the remote host
         local target_path="$REMOTE_BASE_PATH/$(basename "$path")"
-        if [[ -d "$path" ]]; then
+        if [[ -d "$path" ]]; then # if the path is a directory
+            # create the directory on the remote host if it doesn't exist
             command ssh -p "$REMOTE_PORT" "$REMOTE_HOST" "mkdir -p \"$target_path\""
+            # transfer the directory to the remote host
             /opt/homebrew/bin/rsync -avz --progress -e "ssh -p $REMOTE_PORT" "$path/" "$REMOTE_HOST:$target_path/" || echo "Failed to transfer directory '$path'"
-        elif [[ -f "$path" ]]; then
+        elif [[ -f "$path" ]]; then # if the path is a file
+            # create the directory on the remote host if it doesn't exist
             command ssh -p "$REMOTE_PORT" "$REMOTE_HOST" "mkdir -p \"$REMOTE_BASE_PATH\""
+            # transfer the file to the remote host
             /opt/homebrew/bin/rsync -avz --progress -e "ssh -p $REMOTE_PORT" "$path" "$REMOTE_HOST:$REMOTE_BASE_PATH/" || echo "Failed to transfer file '$path'"
         else
             echo "Error: '$path' is neither a file nor a directory"
