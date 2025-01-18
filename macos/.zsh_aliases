@@ -850,6 +850,24 @@ setup_age(){
     age-keygen -a -o ~/.age/keys/$key_name.key
     ls -l ~/.age/keys
 }
+
+scan_file(){
+    # check if clamscan is installed
+    if ! command -v clamscan &> /dev/null; then
+        echo "Error: 'clamscan' is not installed."
+        echo "You can install it with: brew install clamscan"
+        return 1
+    fi
+    # check if the file exists
+    if [[ ! -f "$path" ]]; then
+        echo "Error: File not found at '$path'"
+        return 1
+    fi
+    # update the virus database
+    sudo freshclam
+    # scan the file for viruses
+    clamscan "$path"
+}
 clean_file(){
     # Check if a file path is provided
     if [[ -z "$1" ]]; then
