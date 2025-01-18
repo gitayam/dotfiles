@@ -868,6 +868,42 @@ scan_file(){
     # scan the file for viruses
     clamscan "$path"
 }
+ocr_files(){
+    # Display help if requested
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: ocr_files file1 file2 dir1 dir2 ..."
+        echo "Processes PDF files to add OCR text layer."
+        return 0
+    fi
+
+    # Check if ocrmypdf is installed
+    if ! command -v ocrmypdf &> /dev/null; then
+        echo "Error: 'ocrmypdf' is not installed."
+        echo "You can install it with: brew install ocrmypdf"
+        return 1
+    fi
+
+    # Process each argument
+    for path in "$@"; do
+        if [[ -d "$path" ]]; then
+            # If it's a directory, find all PDF files and process them
+            find "$path" -type f -name "*.pdf" | while read -r file; do
+                base_name=$(basename "$file" .pdf)
+                output_file="${file%.*}-ocr.pdf"
+                echo "Processing $file..."
+                ocrmypdf "$file" "$output_file" || echo "Failed to process $file"
+            done
+        elif [[ -f "$path" && "$path" == *.pdf ]]; then
+            # If it's a file, process it directly
+            base_name=$(basename "$path" .pdf)
+            output_file="${path%.*}-ocr.pdf"
+            echo "Processing $path..."
+            ocrmypdf "$path" "$output_file" || echo "Failed to process $path"
+        else
+            echo "Skipping $path: Not a PDF file or directory."
+        fi
+    done
+}
 clean_file(){
     # Check if a file path is provided
     if [[ -z "$1" ]]; then
