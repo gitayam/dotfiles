@@ -1,10 +1,45 @@
 ---
 - name: Fresh Install
-  hosts: all
+  hosts: "{{ host_ip | default('all') }}"
   become: yes
+  vars_prompt:
+    - name: "host_ip"
+      prompt: "Enter the target host IP address"
+      private: no
+
+    - name: "user"
+      prompt: "Enter the remote user name"
+      private: no
+
+    - name: "become_pass"
+      prompt: "Enter sudo password for remote user"
+      private: yes
+
   vars:
     custom_vars: "{{ lookup('file', 'inventory/custom/vars.yaml') | from_yaml }}"
     ssh_keys: "{{ custom_vars.ssh_keys }}"
+    ansible_become_pass: "{{ become_pass }}"
+    ansible_user: "{{ user }}"
+
+  pre_tasks:
+    - name: Display usage information
+      debug:
+        msg: |
+          Fresh Install Playbook
+          =====================
+          This playbook performs a fresh installation of various applications and configurations.
+          
+          Usage:
+          - Run with: ansible-playbook fresh_install.yml
+          - Use tags to run specific parts: ansible-playbook fresh_install.yml --tags "ssh,terminal_apps"
+          
+          Available tags:
+          - ssh: Configure SSH keys
+          - terminal_apps: Install terminal applications
+          - gui_apps: Install GUI applications
+          - proton_apps: Install Proton suite
+          - privacy_security_config: Configure privacy and security settings
+      when: ansible_play_hosts_all | length == 0
   tasks:
 ## Setup SSH from vars file from the inventory file
     - name: Ensure ssh_keys variable is defined
