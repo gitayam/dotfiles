@@ -1,6 +1,6 @@
 ---
 - name: Fresh Install
-  hosts: localhost
+  hosts: all
   become: yes
   vars:
     custom_vars: "{{ lookup('file', 'inventory/custom/vars.yaml') | from_yaml }}"
