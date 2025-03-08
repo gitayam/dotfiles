@@ -341,35 +341,228 @@ alias grepv='grep -vi --color=auto' # Ignore case, invert match, and colorize ou
 alias findf='find . -type f -name' # Find files by name
 alias findd='find . -type d -name' # Find directories by name
 
-#TODO
-# findex(){
-#   # Skip if being sourced (zsh-specific check)
-#   if [[ ${zsh_eval_context[-1]} == "file" ]]; then
-#     return 0
-#   fi
+# Find files matching a pattern and execute a command on them
+findex(){
+  # Skip if being sourced (zsh-specific check)
+  if [[ ${zsh_eval_context[-1]} == "file" ]]; then
+    return 0
+  fi
   
-  # Show help menu if -h or --help is passed
-#   if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-#     echo "Usage: findex <pattern> <command> [args...]"
-#     echo "Examples:"
-#     echo "  findex '*.txt' ls -l"
-#     echo "  findex '*.php' nano"
-#     echo "  findex '*.sh' chmod 755"
-#     echo "  findex '*.log' grep 'error'"
-#     echo "  findex '*.txt' sed 's/old/new/g'"
-#     return 0
-#   fi
-
-  # Need at least pattern and command
-#   if [[ $# -lt 2 ]]; then
-#     echo "Error: Missing command. See 'findex --help' for usage."
-#     return 1
-#   fi
-
-#   local pattern="$1"
-#   shift # Remove pattern from arguments
-#   find . -iname "$pattern" -exec "$@" \;
-# }
+  # Show help menu if -h or --help is passed or no arguments provided
+  if [[ "$1" == "-h" || "$1" == "--help" || $# -eq 0 ]]; then
+    echo "Usage: findex [OPTIONS] [PATH] PATTERN COMMAND [--shift] [ARGS...]"
+    echo ""
+    echo "Required arguments:"
+    echo "  PATTERN       File pattern to search for (e.g., '*.txt')"
+    echo "  COMMAND       Command to execute on each matching file"
+    echo ""
+    echo "Optional arguments:"
+    echo "  PATH          Directory path to search in (default: current directory)"
+    echo "  -d DEPTH      Maximum directory depth to search (default: unlimited)"
+    echo "  -t TYPE       File type: f (files), d (directories), l (symlinks)"
+    echo "  --shift       Place all arguments after --shift to the right of the file placeholder"
+    echo ""
+    echo "Examples:"
+    echo "  findex '*.txt' ls -l                         # List all text files in current dir"
+    echo "  findex /home '*.pdf' ls -l                   # List all PDF files in /home"
+    echo "  findex -d 2 '*.sh' chmod 755                 # Make shell scripts executable (max depth 2)"
+    echo "  findex -t f /var/log '*.log' grep 'error'    # Search for 'error' in log files"
+    echo "  findex '*.txt' sed -i 's/old/new/g'          # Replace text in all text files"
+    echo "  findex /tmp '*.jpg' 'convert {} -resize 50% {}.resized'  # Resize all JPG files in /tmp"
+    echo "  findex -d 2 ~/Documents '*.pdf' cp --shift /tmp/     # Copy PDFs to /tmp directory"
+    return 0
+  fi
+    
+  local max_depth=""
+  local file_type=""
+  local search_path="."  # Default to current directory
+  local pattern=""
+  local command=""
+  local pre_shift_args=()
+  local post_shift_args=()
+  local shift_mode=false
+  
+  # Check for --shift anywhere in the arguments and remove it
+  for arg in "$@"; do
+    if [[ "$arg" == "--shift" ]]; then
+      shift_mode=true
+      break
+    fi
+  done
+  
+  # Parse options first
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -d)
+        if [[ -z "$2" || "$2" == -* ]]; then
+          echo "Error: -d requires a depth argument"
+          return 1
+        fi
+        max_depth="-maxdepth $2"
+        shift 2
+        ;;
+      -t)
+        if [[ -z "$2" || "$2" == -* ]]; then
+          echo "Error: -t requires a type argument (f, d, or l)"
+          return 1
+        fi
+        file_type="-type $2"
+        shift 2
+        ;;
+      --shift)
+        # Just skip the --shift flag, we already processed it
+        shift
+        ;;
+      -*)
+        echo "Unknown option: $1"
+        echo "Use 'findex --help' for usage information."
+        return 1
+        ;;
+      *)
+        # If pattern is not set yet, check if this is a directory path
+        if [[ -z "$pattern" ]]; then
+          if [[ -d "$1" ]]; then
+            search_path="$1"
+          else
+            pattern="$1"
+          fi
+        elif [[ -z "$command" ]]; then
+          # This is the command
+          command="$1"
+        elif [[ "$shift_mode" == true && "$1" != "--shift" ]]; then
+          # Add to post-shift arguments
+          post_shift_args+=("$1")
+        else
+          # Add to pre-shift arguments
+          pre_shift_args+=("$1")
+        fi
+        shift
+        ;;
+    esac
+  done
+  
+  # Check if we have all required arguments
+  if [[ -z "$pattern" || -z "$command" ]]; then
+    echo "Error: Missing pattern or command. See 'findex --help' for usage."
+    return 1
+  fi
+  
+  # Expand the search path to handle ~ and other shell expansions
+  search_path=$(eval echo "$search_path")
+  
+  # Construct and show the find command that will be executed
+  local find_cmd=""
+  
+  # Special handling for common commands that need specific argument order
+  if [[ ${#post_shift_args[@]} -gt 0 ]]; then
+    # If we have post-shift arguments, construct command with them after the file placeholder
+    find_cmd="find \"$search_path\" $max_depth $file_type -name \"$pattern\" -exec $command"
+    
+    # Add pre-shift arguments if any
+    for arg in "${pre_shift_args[@]}"; do
+      find_cmd+=" \"$arg\""
+    done
+    
+    # Add the file placeholder
+    find_cmd+=" {}"
+    
+    # Add post-shift arguments
+    for arg in "${post_shift_args[@]}"; do
+      find_cmd+=" \"$arg\""
+    done
+    
+    find_cmd+=" \\;"
+  else
+    # Standard execution with all arguments before the file placeholder
+    find_cmd="find \"$search_path\" $max_depth $file_type -name \"$pattern\" -exec $command"
+    
+    # Add all arguments
+    for arg in "${pre_shift_args[@]}"; do
+      find_cmd+=" \"$arg\""
+    done
+    
+    # Add the file placeholder at the end
+    find_cmd+=" {} \\;"
+  fi
+  
+  echo "DEBUG: $find_cmd"
+  
+  # Additional debug: List files in the search path to verify it exists and is accessible
+  echo "DEBUG: Files in search path (first 5):"
+  ls -la "$search_path" | head -5
+  
+  # Get a list of files that will be processed
+  echo "Finding files matching pattern: $pattern in $search_path"
+  # Use 2>/dev/null to suppress permission errors
+  local matching_files=$(find "$search_path" $max_depth $file_type -name "$pattern" 2>/dev/null)
+  
+  if [[ -z "$matching_files" ]]; then
+    echo "No files found matching pattern: $pattern in $search_path"
+    # Try a more direct approach to see if the file exists
+    echo "DEBUG: Checking for files with ls:"
+    
+    # Fix the path pattern to avoid double slashes
+    local search_pattern
+    if [[ "$search_path" == */ ]]; then
+      # If path ends with slash, don't add another one
+      search_pattern="${search_path}${pattern#\*}"
+    else
+      # Otherwise add a slash between path and pattern
+      search_pattern="${search_path}/${pattern#\*}"
+    fi
+    
+    # Try to list matching files
+    local ls_files=$(ls -la "$search_pattern" 2>/dev/null)
+    
+    if [[ -n "$ls_files" ]]; then
+      echo "$ls_files"
+      echo "Files found with ls, proceeding with command execution..."
+      # Execute the command using the find command we constructed earlier
+      eval "$find_cmd"
+    else
+      # If ls with pattern fails, try a direct find command as a last resort
+      echo "Trying direct find command as fallback..."
+      
+      # Run a test find command first to see if any files match
+      local test_files=$(find "$search_path" $max_depth $file_type -name "$pattern" 2>/dev/null)
+      
+      if [[ -n "$test_files" ]]; then
+        echo "Found files with direct find command:"
+        echo "$test_files" | head -10  # Show first 10 files
+        if [[ $(echo "$test_files" | wc -l) -gt 10 ]]; then
+          echo "... and more ($(echo "$test_files" | wc -l | tr -d ' ') files total)"
+        fi
+        
+        echo "Executing command on found files..."
+        if [[ ${#post_shift_args[@]} -gt 0 ]]; then
+          find "$search_path" $max_depth $file_type -name "$pattern" -exec $command "${pre_shift_args[@]}" {} "${post_shift_args[@]}" \; 2>/dev/null
+        else
+          find "$search_path" $max_depth $file_type -name "$pattern" -exec $command "${pre_shift_args[@]}" {} \; 2>/dev/null
+        fi
+        echo "Command execution completed."
+      else
+        echo "No files found with fallback methods either"
+      fi
+    fi
+    return 0
+  fi
+  
+  # Count the number of files
+  local file_count=$(echo "$matching_files" | wc -l | tr -d ' ')
+  echo "Found $file_count file(s) to process:"
+  echo "$matching_files" | sed 's/^/  /'
+  
+  # Execute the command
+  if [[ ${#post_shift_args[@]} -gt 0 ]]; then
+    echo "Executing: $command ${pre_shift_args[*]} [FILES] ${post_shift_args[*]}"
+    find "$search_path" $max_depth $file_type -name "$pattern" -exec $command "${pre_shift_args[@]}" {} "${post_shift_args[@]}" \; 2>/dev/null
+  else
+    echo "Executing: $command ${pre_shift_args[*]} [FILES]"
+    find "$search_path" $max_depth $file_type -name "$pattern" -exec $command "${pre_shift_args[@]}" {} \; 2>/dev/null
+  fi
+  
+  echo "Command execution completed on $file_count file(s)."
+}
 
 # Nano Editor settings
 alias nanozsh='nano ~/.zshrc'     # Open the bashrc file in nano
@@ -1855,8 +2048,8 @@ fsend(){
         *)
             echo "Error: Invalid encryption method '$encrypt_method'. Use age, gpg, or aes."
             [[ -n "$zip_file" && -f "$zip_file" ]] && rm -f "$zip_file"
-            return 1
-            ;;
+        return 1
+        ;;
     esac
         
         # Verify encrypted file exists

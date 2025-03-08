@@ -16,7 +16,7 @@ git_clone() - Clone a repository to the ~/Documents/Git/ directory with options 
 # ----------------------
 
 zipfile() - Create a zip archive of specified files or directories
-mcd() - Create a directory and change to it, or create multiple directories
+mkd() - Create a directory and change to it, or create multiple directories
 update_all() - Update brew packages, macOS software, git repositories, and clear cache
 backup() - Create a backup of files or directories with timestamp
 cdl() - Change to a directory and list its contents
