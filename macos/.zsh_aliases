@@ -171,17 +171,18 @@ zipfile(){
 }
 
 ## Make Directory and cd to it if only one arg is passed else just make the dir
-mcd(){
+mkd(){
     if [[ -z "$1" ]]; then
         echo "No directory name provided"
         return 1
-    # elif only one arg is passed then make the dir and cd to it
-    elif [[ -n "$1" ]]; then
+    # If multiple args are passed then make the dirs and list them
+    elif [[ $# -gt 1 ]]; then
+        mkdir -p "$@" && ls -l "$@"
+    # Otherwise, make the dir and cd to it (single argument case)
+    else
         mkdir -p "$1" && cd "$1"
         pwd # print the current directory
-    #else if multiple args are passed then make the dirs and list them
-    elif [[ -n "$@" ]]; then
-        mkdir -p "$@" && ls -l "$@"
+        lt # list the directory contents 
     fi
 }
 
