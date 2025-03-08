@@ -407,14 +407,8 @@ reset_file(){
       echo -n "Do you want to restore the backup file? (y/n):(default:n) "
       read restore_backup
       if [ "$restore_backup" == "y" ]; then
-        echo "This will delete any changes made to the original file"
-        restore_backup_confirm="n"
-        echo -n "Are you sure you want to restore the backup file? (y/n):(default:n) "
-        read restore_backup_confirm
-        if [ "$restore_backup_confirm" == "y" ]; then
-          mv "$file$backup_name" "$file"
-          echo "Backup file restored."
-        fi
+        mv "$file$backup_name" "$file"
+        echo "Backup file restored."
       fi
     fi
   done
@@ -613,14 +607,22 @@ funnel() {
         echo "Funnel enables you to share a local server on the internet using Tailscale."
         return 0
     fi
-    local port=8080
+    
+    # Default port and allow override with FUNNEL_PORT env variable
+    local port=${FUNNEL_PORT:-8080}
     use_python=true #use this with MacOS or as needed
 
     # Check if tailscale is running
     if ! tailscale status &> /dev/null; then
-        echo "Error: Tailscale is not running"
-        echo "You can start it with: tailscale start"
-        return 1
+        echo "Tailscale is not running. Attempting to start it with 'tailscale up'..."
+        tailscale up
+        
+        # Check again if tailscale is running after attempting to start it
+        if ! tailscale status &> /dev/null; then
+            echo "Error: Failed to start Tailscale. Please start it manually."
+            return 1
+        fi
+        echo "Tailscale started successfully. Continuing..."
     fi
 
     # Use current directory if no target is specified
@@ -631,55 +633,142 @@ funnel() {
         target="$@"
     fi
 
+    # Kill any existing Python HTTP servers on our port
+    local existing_pid=$(lsof -ti:$port)
+    if [[ -n "$existing_pid" ]]; then
+        echo "Killing existing process on port $port (PID: $existing_pid)"
+        kill -9 $existing_pid 2>/dev/null
+        sleep 1
+    fi
+
     # Function to clean up background processes
     cleanup() {
         echo "Cleaning up..."
-        kill $server_pid
-        exit 0
-    }
-
-    # Trap SIGINT (Ctrl+C) to run cleanup
-    trap cleanup SIGINT
-
-    # if multiple files passed in arg then create tmp dir and add those passed files or dir via ln to the temp server dir
-    # if no files passed in arg then use current dir
-    if [ -n "$1" ]; then # if there are files passed in arg
-        # create temp dir
-        mkdir -p /tmp/funnel
-        # add files or dir to the temp dir
-        for file in "$@"; do
-            ln -s "$file" /tmp/funnel
-        done
-        # change dir to the temp dir
-        cd /tmp/funnel
-        if $use_python; then
-            # start the python server
-            python3 -m http.server $port&
-            server_pid=$!
-            # start the funnel
-            tailscale funnel localhost:$port
-        else
-            # start the funnel
-            tailscale funnel "$target"
+        # Find and kill the Python HTTP server process
+        if [[ -n "$server_pid" ]]; then
+            echo "Killing server process (PID: $server_pid)"
+            kill -9 $server_pid 2>/dev/null
+            wait $server_pid 2>/dev/null
         fi
         
-    else
-        # use current dir
-        cd .
+        # Also try to find any process using our port
+        local port_pid=$(lsof -ti:$port)
+        if [[ -n "$port_pid" ]]; then
+            echo "Killing process on port $port (PID: $port_pid)"
+            kill -9 $port_pid 2>/dev/null
+        fi
+        
+        # Clean up temp directory
+        if [[ -d "/tmp/funnel" ]]; then
+            echo "Removing temporary directory"
+            rm -rf /tmp/funnel
+        fi
+        
+        # Return to original directory
+        if [[ -n "$original_dir" ]]; then
+            cd "$original_dir"
+        fi
+        
+        return 0
+    }
+
+    # Save original directory
+    original_dir=$(pwd)
+    
+    # Trap SIGINT (Ctrl+C) to run cleanup
+    trap cleanup INT TERM EXIT
+
+    # if files are passed as arguments
+    if [ -n "$1" ]; then
+        # Clean up any existing temp directory
+        if [[ -d "/tmp/funnel" ]]; then
+            rm -rf /tmp/funnel
+        fi
+        
+        # Create temp dir
+        mkdir -p /tmp/funnel
+        
+        # Copy (not link) the files to the temp dir
+        for file in "$@"; do
+            # Use absolute paths for files
+            local abs_path
+            if [[ "$file" = /* ]]; then
+                abs_path="$file"
+            else
+                abs_path="$original_dir/$file"
+            fi
+            
+            echo "Checking path: $abs_path"
+            
+            if [[ -f "$abs_path" ]]; then
+                cp "$abs_path" "/tmp/funnel/"
+                echo "Copied file: $abs_path"
+            elif [[ -d "$abs_path" ]]; then
+                # For directories, copy the entire directory structure
+                cp -r "$abs_path" "/tmp/funnel/"
+                echo "Copied directory: $abs_path"
+            else
+                echo "Warning: $abs_path does not exist, skipping"
+            fi
+        done
+        
+        # Change dir to the temp dir
+        cd /tmp/funnel
+        
+        # List the contents to verify
+        echo "Files available for sharing:"
+        ls -la
+        
         if $use_python; then
-            # start the python server
-            python3 -m http.server $port&
+            # Start the python server
+            python3 -m http.server $port &
             server_pid=$!
-            # start the funnel
+            
+            # Wait a moment to ensure server starts
+            sleep 1
+            
+            # Check if server started successfully
+            if ! lsof -ti:$port >/dev/null 2>&1; then
+                echo "Error: Failed to start Python HTTP server on port $port"
+                cleanup
+                return 1
+            fi
+            
+            # Start the funnel
             tailscale funnel localhost:$port
         else
-            # start the funnel
+            # Start the funnel
+            tailscale funnel "$target"
+        fi
+    else
+        # Use current dir
+        cd .
+        if $use_python; then
+            # Start the python server
+            python3 -m http.server $port &
+            server_pid=$!
+            
+            # Wait a moment to ensure server starts
+            sleep 1
+            
+            # Check if server started successfully
+            if ! lsof -ti:$port >/dev/null 2>&1; then
+                echo "Error: Failed to start Python HTTP server on port $port"
+                cleanup
+                return 1
+            fi
+            
+            # Start the funnel
+            tailscale funnel localhost:$port
+        else
+            # Start the funnel
             tailscale funnel "$target"
         fi
     fi
 }
 
 alias tsf=funnel
+alias postfile=funnel
 
 
 # ----------------------
@@ -927,67 +1016,110 @@ clean_file(){
 }
 
 encrypt_file(){
-    # Check if age is installed, if not, install it
-    if ! command -v age &> /dev/null; then
-        echo "Error: 'age' is not installed."
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: encrypt_file [-m method] [-r recipient] file1 file2 ..."
+        echo "Options:"
+        echo "  -m method       Encryption method: age (default), gpg, or aes"
+        echo "  -r recipient    Use recipient's public key instead of passphrase (only for age)"
+        echo "  -e, --encrypt   Optional flag (for consistency with other functions)"
+        return 0
+    fi
+
+    # Check if encryption tools are installed
+    local has_age=false
+    local has_gpg=false
+    local has_openssl=false
+    
+    if command -v age &> /dev/null; then
+        has_age=true
+    fi
+    if command -v gpg &> /dev/null; then
+        has_gpg=true
+    fi
+    if command -v openssl &> /dev/null; then
+        has_openssl=true
+    fi
+    
+    # If no encryption tools are available, prompt to install age
+    if ! $has_age && ! $has_gpg && ! $has_openssl; then
+        echo "Error: No encryption tools found (age, gpg, or openssl)."
         echo -n "Do you want to install 'age'? (y/n):(default:y) "
         read install_age
-        if [[ $install_age =~ ^[Yy]$ ]]; then
+        if [[ $install_age =~ ^[Yy]$ || -z "$install_age" ]]; then
             brew install age
+            has_age=true
         else
             return 1
         fi
     fi
-    # disregard the first argument if it is -e or --encrypt
-    if [[ "$1" == "-e" || "$1" == "--encrypt" ]]; then
-        shift
-    fi
 
     # Initialize variables
-    recipient=""
-    use_passphrase=true
-    #FIXME: this is not working as expected
-    #grep: : age: No such file or directory
-    # Error: Could not extract public key from /Users/username/.age/keys/username
-    # # Check if ~/.age/keys directory exists
-    # if [[ -d ~/.age/keys ]]; then
-    #     # List the keys
-    #     ls -l ~/.age/keys
-    #     echo "Select a key to use for encryption:"
-    #     select key_name in ~/.age/keys/*; do
-    #         # Extract the public key from the selected key file
-    #         recipient=$(grep ": age" "$key_name" | cut -d " " -f 4)
-    #         if [[ -z "$recipient" ]]; then
-    #             echo "Error: Could not extract public key from $key_name"
-    #             return 1
-    #         fi
-    #         break
-    #     done
-    # else
-    #     # Prompt user to create or use a passphrase
-    #     echo -n "Do you want to use a passphrase for encryption? (y/n):(default:y) "
-    #     read use_passphrase
-    #     if [[ $use_passphrase =~ ^[Yy]$ ]]; then
-    #         use_passphrase=true
-    #     else
-    #         use_passphrase=false
-    #     fi
-    # fi
-
+    local recipient=""
+    local use_passphrase=true
+    local encrypt_method="age"  # Default encryption method
+    local zip_file=""
+    local password=""
+    
     # Parse options
-    while getopts "r:" opt; do # r is the recipient key
-        case $opt in
-            r)
-                recipient="$OPTARG"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -e|--encrypt)
+                # Just a flag for consistency with other functions
+                shift
+                ;;
+            -m)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: -m requires a method argument (age, gpg, or aes)"
+                    return 1
+                fi
+                encrypt_method="$2"
+                shift 2
+                ;;
+            -r)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: -r requires a recipient argument"
+                    return 1
+                fi
+                recipient="$2"
                 use_passphrase=false
+                shift 2
+                ;;
+            -*)
+                echo "Unknown option: $1"
+                echo "Usage: encrypt_file [-m method] [-r recipient] file1 file2 ..."
+                return 1
                 ;;
             *)
-                echo "Usage: encrypt_file [-r recipient] file1 file2 ..."
-                return 1
+                break
                 ;;
         esac
     done
-    shift $((OPTIND -1)) # shift the arguments to the left to remove the options
+
+    # Validate encryption method
+    case "$encrypt_method" in
+        age)
+            if ! $has_age; then
+                echo "Error: 'age' is not installed but specified as encryption method."
+                return 1
+            fi
+            ;;
+        gpg)
+            if ! $has_gpg; then
+                echo "Error: 'gpg' is not installed but specified as encryption method."
+                return 1
+            fi
+            ;;
+        aes)
+            if ! $has_openssl; then
+                echo "Error: 'openssl' is not installed but specified as encryption method."
+                return 1
+            fi
+            ;;
+        *)
+            echo "Error: Invalid encryption method '$encrypt_method'. Use age, gpg, or aes."
+            return 1
+            ;;
+    esac
 
     # Check if files are provided
     if [[ "$#" -eq 0 ]]; then
@@ -996,36 +1128,106 @@ encrypt_file(){
     fi
 
     # If multiple files are passed, zip them and encrypt the zip file
+    local files_to_encrypt
     if [[ "$#" -gt 1 ]]; then
         # zip the files
-        zip_file="./$(basename "$1").zip"
-        zip "$zip_file" "$@"
+        zip_file="./$(basename "$1")_encrypted_$(date +%Y%m%d%H%M%S).zip"
+        echo "Creating zip file with multiple files..."
+        zip -q "$zip_file" "$@"
         files_to_encrypt="$zip_file"
     else
         # if only one file is passed then set the file to encrypt
         files_to_encrypt="$1"
     fi
 
-    # Encrypt the file(s)
-    if $use_passphrase; then #default is to use a passphrase
-        age -p -o "${files_to_encrypt}.age" "$files_to_encrypt"
-    else
-        age -r "$recipient" -o "${files_to_encrypt}.age" "$files_to_encrypt"
-        echo "Recipient key used for encryption: $recipient"
+    # Encrypt the file(s) based on the selected method
+    local encrypted_file
+    case "$encrypt_method" in
+        age)
+            encrypted_file="${files_to_encrypt}.age"
+            echo "Encrypting with age..."
+            
+            if $use_passphrase; then
+                # Capture the passphrase from age output
+                echo "Using passphrase encryption..."
+                local age_output=$(age -p -o "$encrypted_file" "$files_to_encrypt" 2>&1)
+                # Extract the passphrase from the output
+                password=$(echo "$age_output" | grep -o 'passphrase: "[^"]*"' | cut -d '"' -f 2)
+                if [[ -z "$password" ]]; then
+                    # Try alternate format
+                    password=$(echo "$age_output" | grep -o 'passphrase "[^"]*"' | cut -d '"' -f 2)
+                fi
+                
+                if [[ -n "$password" ]]; then
+                    echo "Generated passphrase: $password"
+                    echo "Save this passphrase securely - you'll need it to decrypt the file."
+                fi
+            else
+                echo "Using recipient key encryption..."
+                age -r "$recipient" -o "$encrypted_file" "$files_to_encrypt"
+                echo "Recipient key used for encryption: $recipient"
+            fi
+            ;;
+            
+        gpg)
+            encrypted_file="${files_to_encrypt}.gpg"
+            echo "Encrypting with GPG..."
+            echo "You will be prompted to enter a passphrase for encryption."
+            gpg --output "$encrypted_file" --symmetric "$files_to_encrypt"
+            echo "File encrypted with GPG. Remember your passphrase for decryption."
+            ;;
+            
+        aes)
+            encrypted_file="${files_to_encrypt}.aes"
+            echo "Encrypting with OpenSSL AES-256-CBC..."
+            echo "You will be prompted to enter a passphrase for encryption."
+            openssl enc -aes-256-cbc -salt -in "$files_to_encrypt" -out "$encrypted_file"
+            echo "File encrypted with AES-256. Remember your passphrase for decryption."
+            ;;
+    esac
+
+    # Verify the encrypted file was created
+    if [[ ! -f "$encrypted_file" ]]; then
+        echo "Error: Encryption failed. Encrypted file not created."
+        # Clean up zip file if it was created
+        [[ -n "$zip_file" && -f "$zip_file" ]] && rm -f "$zip_file"
+        return 1
     fi
 
     # Clean up zip file if it was created
-    if [[ -f "$zip_file" ]]; then
-        rm "$zip_file"
+    if [[ -n "$zip_file" && -f "$zip_file" ]]; then
+        rm -f "$zip_file"
     fi
 
     # Instructions for decryption
-    echo "To decrypt the file with age, use the following command:"
-    echo "age -d -i ~/.age/keys/$key_name.key -o ${files_to_encrypt%.*} ${files_to_encrypt}.age"
-    echo "or"
-    echo "age --decrypt --output ${files_to_encrypt%.*} ${files_to_encrypt}.age"
+    echo "Encrypted file created: $encrypted_file"
     echo ""
-    echo "There is a graphical app called 'Destiny - Secure File Transfer' that can be used to send and receive files securely with wormhole"
+    echo "To decrypt the file:"
+    
+    case "$encrypt_method" in
+        age)
+            if $use_passphrase; then
+                echo "age --decrypt --output ${encrypted_file%.age} $encrypted_file"
+                echo "You will be prompted for the passphrase shown above."
+            else
+                echo "age --decrypt --identity ~/.age/keys/your_private_key.key --output ${encrypted_file%.age} $encrypted_file"
+            fi
+            ;;
+            
+        gpg)
+            echo "gpg --output ${encrypted_file%.gpg} --decrypt $encrypted_file"
+            echo "You will be prompted for the passphrase you entered during encryption."
+            ;;
+            
+        aes)
+            echo "openssl enc -d -aes-256-cbc -in $encrypted_file -out ${encrypted_file%.aes}"
+            echo "You will be prompted for the passphrase you entered during encryption."
+            ;;
+    esac
+    
+    echo ""
+    echo "File successfully encrypted: $encrypted_file"
+    return 0
 }
 
 # ----------------------
@@ -1160,9 +1362,12 @@ upload_to_pcloud(){
 # ffsend file transfer including encryption option
 fsend(){
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-        echo "Usage: fsend [-e|--encrypt] path1 path2 ..."
-        echo "The default is to send the files as is"
-        echo "-e or --encrypt will encrypt the files before sending using age, gpg, or aes"
+        echo "Usage: fsend [-e|--encrypt] [-m method] [-r recipient] [-p password] path1 path2 ..."
+        echo "Options:"
+        echo "  -e, --encrypt    Encrypt the file(s) before sending"
+        echo "  -m method        Encryption method: age (default), gpg, or aes"
+        echo "  -r recipient     Use recipient's public key instead of passphrase (only for age)"
+        echo "  -p password      Specify a password (for gpg and aes methods)"
         return 0
     fi
 
@@ -1173,71 +1378,251 @@ fsend(){
         return 1
     fi
 
-    # Function to encrypt files
-    encrypt_files() {
-        local encrypt_tool="$1"
-        shift
-        local files=("$@")
-        local zip_file="./ffsend_$(date +%Y%m%d%H%M%S).zip"
-        zip "$zip_file" "${files[@]}"
-
-        local encrypted_file="${zip_file}.age"
-        case "$encrypt_tool" in
-            gpg)
-                encrypted_file="${zip_file}.gpg"
-                gpg --output "$encrypted_file" --symmetric "$zip_file"
+    # Define variables at the top level
+    local zip_file=""
+    local encrypt_method="age"  # Default encryption method
+    local password=""
+    local link=""
+    local encrypt=false
+    local recipient=""
+    local use_passphrase=true
+    local user_password=""
+    
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -e|--encrypt)
+                encrypt=true
+                shift
                 ;;
-            aes)
-                encrypted_file="${zip_file}.aes"
-                openssl enc -aes-256-cbc -salt -in "$zip_file" -out "$encrypted_file"
+            -m)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: -m requires a method argument (age, gpg, or aes)"
+                    return 1
+                fi
+                encrypt_method="$2"
+                shift 2
+                ;;
+            -r)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: -r requires a recipient argument"
+                    return 1
+                fi
+                recipient="$2"
+                use_passphrase=false
+                shift 2
+                ;;
+            -p)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: -p requires a password argument"
+                    return 1
+                fi
+                user_password="$2"
+                shift 2
+                ;;
+            -*)
+                echo "Unknown option: $1"
+                return 1
                 ;;
             *)
-                age -o "$encrypted_file" -p "$zip_file"
+                break
                 ;;
         esac
+    done
 
-        echo "$encrypted_file"
-    }
-
-    # Check for encryption option
-    local encrypt=false
-    if [[ "$1" == "-e" || "$1" == "--encrypt" ]]; then
-        encrypt=true
-        shift
+    # Check if any files were provided
+    if [[ $# -eq 0 ]]; then
+        echo "Error: No files specified for upload."
+        echo "Usage: fsend [-e|--encrypt] [-m method] [-r recipient] path1 path2 ..."
+        return 1
     fi
 
+    # Debug: Print the arguments
+    echo "Files to upload: $@"
+    
     # Handle multiple files
     local files=("$@")
+    local upload_file=""
+    
     if [[ "${#files[@]}" -gt 1 ]]; then
-        local zip_file="./ffsend_$(date +%Y%m%d%H%M%S).zip"
-        zip "$zip_file" "${files[@]}"
-        files=("$zip_file")
+        # Set the zip_file variable for the outer scope
+        zip_file="./ffsend_$(date +%Y%m%d%H%M%S).zip"
+        echo "Creating zip file with multiple files..."
+        zip -q "$zip_file" "${files[@]}"
+        upload_file="$zip_file"
+    else
+        # Single file case - use the first argument directly
+        upload_file="$1"
+        echo "Single file mode: $upload_file"
+    fi
+
+    # Verify the file exists before proceeding
+    if [[ ! -f "$upload_file" ]]; then
+        echo "Error: File '$upload_file' does not exist."
+        return 1
     fi
 
     if $encrypt; then
-        local encrypted_file
-        if command -v age &> /dev/null; then
-            encrypted_file=$(encrypt_files "age" "${files[@]}")
-        elif command -v gpg &> /dev/null; then
-            encrypted_file=$(encrypt_files "gpg" "${files[@]}")
-        else
-            encrypted_file=$(encrypt_files "aes" "${files[@]}")
+        if [[ "${#files[@]}" -eq 1 && "$zip_file" == "" ]]; then
+            # For single file encryption, create a temporary zip first
+            zip_file="./ffsend_$(date +%Y%m%d%H%M%S).zip"
+            echo "Creating temporary zip for encryption..."
+            zip -q "$zip_file" "$upload_file"
+            upload_file="$zip_file"
         fi
-        ffsend send "$encrypted_file"
-        rm -rf "$encrypted_file"
+        
+        local encrypted_file=""
+        
+        # Generate a random password if needed for gpg or aes
+        if [[ "$encrypt_method" != "age" && -z "$user_password" ]]; then
+            # Generate a secure random password
+            user_password=$(openssl rand -base64 12)
+            echo "Generated password: $user_password"
+            echo "Save this password securely - you'll need it to decrypt the file."
+        fi
+        
+        # Determine encryption method and encrypt
+        case "$encrypt_method" in
+            age)
+                encrypted_file="${upload_file}.age"
+                echo "Encrypting with age..."
+                
+                if $use_passphrase; then
+                    # Use age with passphrase and capture the output directly
+                    echo "Using passphrase encryption..."
+                    # Run age and save its output to a variable
+                    local age_output=$(age -p -o "$encrypted_file" "$upload_file" 2>&1)
+                    echo "$age_output"  # Display the output to the user
+                    
+                    # Extract the passphrase using a more reliable method
+                    if [[ "$age_output" =~ using\ autogenerated\ passphrase\ \"([^\"]+)\" ]]; then
+                        password="${BASH_REMATCH[1]}"
+                        echo "Captured passphrase: $password"
+                    else
+                        echo "Warning: Could not capture the passphrase automatically."
+                        password="[See the passphrase displayed above]"
+                    fi
+                else
+                    echo "Using recipient key encryption..."
+                    age -r "$recipient" -o "$encrypted_file" "$upload_file"
+                    password="[Encrypted with recipient's public key]"
+                fi
+                ;;
+                
+            gpg)
+                encrypted_file="${upload_file}.gpg"
+                echo "Encrypting with GPG..."
+                
+                if [[ -n "$user_password" ]]; then
+                    # Use the provided or generated password
+                    echo "Using provided/generated password for GPG encryption"
+                    # Create a temporary batch file for GPG
+                    local batch_file=$(mktemp)
+                    echo "%echo Encrypting with GPG
+%no-protection
+%passphrase $user_password
+%no-ask-passphrase
+%no-symkey-cache" > "$batch_file"
+                    
+                    # Use batch mode for GPG
+                    gpg --batch --yes --passphrase "$user_password" --output "$encrypted_file" --symmetric "$upload_file"
+                    rm -f "$batch_file"
+                    password="$user_password"
+                else
+                    echo "Please enter a passphrase for GPG encryption"
+                    gpg --output "$encrypted_file" --symmetric "$upload_file"
+                    password="[Use the password you entered during encryption]"
+                fi
+                ;;
+                
+            aes)
+                encrypted_file="${upload_file}.aes"
+                echo "Encrypting with OpenSSL AES-256-CBC..."
+                
+                if [[ -n "$user_password" ]]; then
+                    # Use the provided or generated password
+                    echo "Using provided/generated password for AES encryption"
+                    # Use echo to provide the password to openssl
+                    echo "$user_password" | openssl enc -aes-256-cbc -salt -in "$upload_file" -out "$encrypted_file" -pass stdin
+                    password="$user_password"
+                else
+                    echo "Please enter a passphrase for AES encryption"
+                    openssl enc -aes-256-cbc -salt -in "$upload_file" -out "$encrypted_file"
+                    password="[Use the password you entered during encryption]"
+                fi
+                ;;
+                
+            *)
+                echo "Error: Invalid encryption method '$encrypt_method'. Use age, gpg, or aes."
+                [[ -n "$zip_file" && -f "$zip_file" ]] && rm -f "$zip_file"
+                return 1
+                ;;
+        esac
+        
+        # Verify encrypted file exists
+        if [[ ! -f "$encrypted_file" ]]; then
+            echo "Error: Encryption failed. Encrypted file not created."
+            # Clean up zip file
+            [[ -n "$zip_file" && -f "$zip_file" ]] && rm -f "$zip_file"
+            return 1
+        fi
+        
+        echo "Uploading encrypted file: $encrypted_file"
+        # Capture the upload output and display it
+        local upload_output=$(ffsend upload "$encrypted_file")
+        echo "$upload_output"
+        
+        # Extract the link using a more reliable method - ffsend typically outputs the URL on its own line
+        link=$(echo "$upload_output" | grep -o 'https://[^ ]*')
+        if [[ -z "$link" ]]; then
+            # Try another pattern that might match
+            link=$(echo "$upload_output" | grep -o 'https://[^ ]*')
+            if [[ -z "$link" ]]; then
+                echo "Warning: Could not capture the download link automatically."
+                link="[See the link displayed above]"
+            fi
+        fi
+        
+        echo "Removing encrypted file..."
+        rm -f "$encrypted_file"
     else
-        ffsend send "${files[@]}"
+        echo "Uploading file without encryption: $upload_file"
+        # Capture the upload output and display it
+        local upload_output=$(ffsend upload "$upload_file")
+        echo "$upload_output"
+        
+        # Extract the link using a more reliable method
+        link=$(echo "$upload_output" | grep -o 'https://[^ ]*')
+        if [[ -z "$link" ]]; then
+            echo "Warning: Could not capture the download link automatically."
+            link="[See the link displayed above]"
+        fi
     fi
 
     # Clean up zip file if it was created
-    [[ -f "$zip_file" ]] && rm -rf "$zip_file"
+    if [[ -n "$zip_file" && -f "$zip_file" ]]; then
+        echo "Cleaning up temporary zip file..."
+        rm -f "$zip_file"
+    fi
 
-    # Check if the files were sent successfully
-    if ffsend list | grep -q "$(basename "${files[0]}")"; then
-        echo "Files sent successfully!"
+    echo "Upload completed. Use 'ffsend ls' to see your uploaded files."
+    
+    # Output sharing information
+    if $encrypt; then
+        echo "Copy and paste the following into your message to the receiver:"
+        echo "Link: $link"
+        echo "Password: $password"
+        echo "Encryption method: $encrypt_method"
+        echo "Command to decrypt the file: "
+        if [[ "$encrypt_method" == "age" ]]; then
+            echo "age -d -o $upload_file $encrypted_file"
+        elif [[ "$encrypt_method" == "gpg" ]]; then
+            echo "gpg --decrypt $encrypted_file"
+        elif [[ "$encrypt_method" == "aes" ]]; then
+            echo "openssl enc -aes-256-cbc -d -in $encrypted_file -out $upload_file -pass pass:$user_password"
+        fi
     else
-        echo "Error: Files were not sent successfully."
-        return 1
+        echo "Share this link with the recipient: $link"
     fi
 }
 
