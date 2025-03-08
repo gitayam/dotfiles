@@ -238,7 +238,7 @@ alias run-kp="kp --db $1"
 
 #general passphrase with diceware
 #3 words, symbols, numbers
-alias gen-passphrase="diceware -n 3 -w 3 -s 3 -d 3"
+alias gen-passphrase="generate_password -p phrases -l 3"
 # ----------------------
 # Security Tools Aliases
 # ----------------------
@@ -1234,11 +1234,15 @@ generate_password(){
     # Generate a random password
     # Default password type is phrases using diceware
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-        echo "Usage: generate_password [-p type] [-l length] [-m]"
+        echo "Usage: generate_password [-p type] [-l length] [-m] [-c] [-s] [-q] [-n]"
         echo "Options:"
-        echo "  -p type       Password type: phrases (default), chars (random characters), or numbers"
+        echo "  -p type       Password type: phrases (default), chars (random characters), numbers, or hex"
         echo "  -l length     Length of the password (default: 6 words for phrases, 22 chars for others)"
         echo "  -m            Manual mode - prompt for password instead of generating"
+        echo "  -c            Copy the generated password to clipboard"
+        echo "  -s            Include special characters (for chars type only)"
+        echo "  -q            Quiet mode - only output the password (useful for scripting)"
+        echo "  -n            No spaces in passphrase (for phrases type only)"
         return 0
     fi
     
@@ -1252,13 +1256,18 @@ generate_password(){
     local length=6  # Default 6 words for phrases
     local char_length=22  # Default 22 chars for character passwords
     local manual_mode=false
+    local copy_to_clipboard=false
+    local include_special=false
+    local quiet_mode=false
+    local no_spaces=false
+    local password=""
     
     # Parse options
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -p)
                 if [[ -z "$2" || "$2" == -* ]]; then
-                    echo "Error: -p requires a type argument (phrases, chars, numbers)"
+                    echo "Error: -p requires a type argument (phrases, chars, numbers, hex)" >&2
                     return 1
                 fi
                 password_type="$2"
@@ -1266,7 +1275,11 @@ generate_password(){
                 ;;
             -l)
                 if [[ -z "$2" || "$2" == -* ]]; then
-                    echo "Error: -l requires a length argument"
+                    echo "Error: -l requires a length argument" >&2
+                    return 1
+                fi
+                if [[ ! "$2" =~ ^[0-9]+$ ]]; then
+                    echo "Error: Length must be a number" >&2
                     return 1
                 fi
                 if [[ "$password_type" == "phrases" ]]; then
@@ -1280,9 +1293,27 @@ generate_password(){
                 manual_mode=true
                 shift
                 ;;
+            -c)
+                copy_to_clipboard=true
+                shift
+                ;;
+            -s)
+                include_special=true
+                shift
+                ;;
+            -q)
+                quiet_mode=true
+                shift
+                ;;
+            -n)
+                no_spaces=true
+                shift
+                ;;
             *)
-                echo "Unknown option: $1"
-                echo "Use 'generate_password -h' for help."
+                if ! $quiet_mode; then
+                    echo "Unknown option: $1" >&2
+                    echo "Use 'generate_password -h' for help." >&2
+                fi
                 return 1
                 ;;
         esac
@@ -1290,68 +1321,164 @@ generate_password(){
     
     # If manual mode, prompt for password
     if $manual_mode; then
-        echo "Enter your password (input will be hidden):"
+        if ! $quiet_mode; then
+            echo "Enter your password (input will be hidden):" >&2
+        fi
         read -s password
-        echo "Confirm your password:"
+        if ! $quiet_mode; then
+            echo "Confirm password:" >&2
+        fi
         read -s password_confirm
         
         if [[ "$password" != "$password_confirm" ]]; then
-            echo "Error: Passwords do not match."
+            if ! $quiet_mode; then
+                echo "Error: Passwords do not match." >&2
+            fi
             return 1
         fi
         
-        echo "Password set manually."
-        return 0
+        if ! $quiet_mode; then
+            echo "Password set manually." >&2
+        fi
+    else
+        # Generate password based on type
+        case "$password_type" in
+            phrases)
+                if ! $has_diceware; then
+                    if ! $quiet_mode; then
+                        echo "Error: 'diceware' is not installed but required for phrase passwords." >&2
+                        echo "You can install it with: brew install diceware" >&2
+                        echo -n "Do you want to install diceware now? (y/n): " >&2
+                    fi
+                    read install_diceware
+                    if [[ "$install_diceware" =~ ^[Yy]$ ]]; then
+                        brew install diceware
+                        has_diceware=true
+                    else
+                        if ! $quiet_mode; then
+                            echo "Falling back to character-based password." >&2
+                        fi
+                        password_type="chars"
+                    fi
+                fi
+                
+                if $has_diceware; then
+                    # Use diceware to generate a phrase password
+                    password=$(diceware -n "$length" -c -s 2)
+                    
+                    # Remove spaces if requested
+                    if $no_spaces; then
+                        password=$(echo "$password" | tr -d ' ')
+                    fi
+                    
+                    if ! $quiet_mode; then
+                        echo "Generated passphrase: $password" >&2
+                    fi
+                else
+                    # Fallback if diceware installation failed
+                    password=$(openssl rand -base64 $(($char_length * 2)) | tr -d '/+=' | cut -c1-"$char_length")
+                    if ! $quiet_mode; then
+                        echo "Generated password: $password" >&2
+                    fi
+                fi
+                ;;
+                
+            chars)
+                # Generate a random character password with letters, numbers, and symbols
+                if $include_special; then
+                    # Include more special characters
+                    password=$(LC_ALL=C tr -dc 'a-zA-Z0-9!@#$%^&*()_+=-' < /dev/urandom | head -c "$char_length")
+                    
+                    # Ensure at least one of each character type for better password strength
+                    if [[ ${#password} -ge 4 ]]; then
+                        # Get one of each type
+                        local lower=$(LC_ALL=C tr -dc 'a-z' < /dev/urandom | head -c 1)
+                        local upper=$(LC_ALL=C tr -dc 'A-Z' < /dev/urandom | head -c 1)
+                        local number=$(LC_ALL=C tr -dc '0-9' < /dev/urandom | head -c 1)
+                        local special=$(LC_ALL=C tr -dc '!@#$%^&*()_+=-' < /dev/urandom | head -c 1)
+                        
+                        # Replace first 4 characters with our guaranteed types
+                        password="${lower}${upper}${number}${special}${password:4}"
+                        
+                        # Shuffle the password to avoid predictable pattern
+                        password=$(echo "$password" | fold -w1 | shuf | tr -d '\n' | head -c "$char_length")
+                    fi
+                else
+                    # Standard character set
+                    password=$(LC_ALL=C tr -dc 'a-zA-Z0-9' < /dev/urandom | head -c "$char_length")
+                    
+                    # Ensure at least one lowercase, one uppercase, and one number
+                    if [[ ${#password} -ge 3 ]]; then
+                        local lower=$(LC_ALL=C tr -dc 'a-z' < /dev/urandom | head -c 1)
+                        local upper=$(LC_ALL=C tr -dc 'A-Z' < /dev/urandom | head -c 1)
+                        local number=$(LC_ALL=C tr -dc '0-9' < /dev/urandom | head -c 1)
+                        
+                        password="${lower}${upper}${number}${password:3}"
+                        password=$(echo "$password" | fold -w1 | shuf | tr -d '\n' | head -c "$char_length")
+                    fi
+                fi
+                
+                if ! $quiet_mode; then
+                    echo "Generated password: $password" >&2
+                fi
+                ;;
+                
+            numbers)
+                # Generate a random numeric password
+                password=$(LC_ALL=C tr -dc '0-9' < /dev/urandom | head -c "$char_length")
+                if ! $quiet_mode; then
+                    echo "Generated numeric password: $password" >&2
+                fi
+                ;;
+                
+            hex)
+                # Generate a random hexadecimal password
+                password=$(LC_ALL=C tr -dc 'a-f0-9' < /dev/urandom | head -c "$char_length")
+                if ! $quiet_mode; then
+                    echo "Generated hex password: $password" >&2
+                fi
+                ;;
+                
+            *)
+                if ! $quiet_mode; then
+                    echo "Error: Invalid password type '$password_type'. Use phrases, chars, numbers, or hex." >&2
+                fi
+                return 1
+                ;;
+        esac
     fi
     
-    # Generate password based on type
-    case "$password_type" in
-        phrases)
-            if ! $has_diceware; then
-                echo "Error: 'diceware' is not installed but required for phrase passwords."
-                echo "You can install it with: brew install diceware"
-                echo -n "Do you want to install diceware now? (y/n): "
-                read install_diceware
-                if [[ "$install_diceware" =~ ^[Yy]$ ]]; then
-                    brew install diceware
-                    has_diceware=true
-                else
-                    echo "Falling back to character-based password."
-                    password_type="chars"
-                fi
+    # Copy to clipboard if requested
+    if $copy_to_clipboard && [[ -n "$password" ]]; then
+        if command -v pbcopy &> /dev/null; then
+            echo -n "$password" | pbcopy
+            if ! $quiet_mode; then
+                echo "Password copied to clipboard." >&2
             fi
-            
-            if $has_diceware; then
-                # Use diceware to generate a phrase password
-                password=$(diceware -n "$length" -c -s 2)
-                echo "Generated passphrase: $password"
-            else
-                # Fallback if diceware installation failed
-                password=$(openssl rand -base64 "$char_length" | tr -d '/+=' | cut -c1-"$char_length")
-                echo "Generated password: $password"
+        elif command -v xclip &> /dev/null; then
+            echo -n "$password" | xclip -selection clipboard
+            if ! $quiet_mode; then
+                echo "Password copied to clipboard." >&2
             fi
-            ;;
-            
-        chars)
-            # Generate a random character password with letters, numbers, and symbols
-            password=$(openssl rand -base64 $(($char_length * 2)) | tr -d '/+=' | cut -c1-"$char_length")
-            echo "Generated password: $password"
-            ;;
-            
-        numbers)
-            # Generate a random numeric password
-            password=$(openssl rand -base64 $(($char_length * 2)) | tr -dc '0-9' | cut -c1-"$char_length")
-            echo "Generated numeric password: $password"
-            ;;
-            
-        *)
-            echo "Error: Invalid password type '$password_type'. Use phrases, chars, or numbers."
-            return 1
-            ;;
-    esac
+        elif command -v wl-copy &> /dev/null; then
+            # Support for Wayland
+            echo -n "$password" | wl-copy
+            if ! $quiet_mode; then
+                echo "Password copied to clipboard." >&2
+            fi
+        else
+            if ! $quiet_mode; then
+                echo "Warning: Could not copy to clipboard. No supported clipboard utility found." >&2
+            fi
+        fi
+    fi
     
-    echo "Save this password securely!"
-    return 0
+    if ! $quiet_mode; then
+        echo "Save this password securely!" >&2
+    fi
+    
+    # Return the password as the function result
+    echo "$password"
 }
 
 # ----------------------
@@ -1364,7 +1491,7 @@ alias wh="wormhole"
 alias wht="wh-transfer"
 #transfer file with wormhole many or one file
 wh-transfer(){
-    trap '[[ -f "$zip_file" ]] && rm -rf "$zip_file"' EXIT INT
+    trap '[[ -f "$zip_file" ]] && rm -rf "$zip_file"' EXIT
 
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
         echo "Usage: wh-transfer [-e|--encrypt] path1 path2 ..."
@@ -1627,11 +1754,11 @@ fsend(){
                 
                 # If user didn't enter a password or auto-generate is true, generate one
                 if [[ -z "$user_password" || "$auto_generate" == true ]]; then
-                    # Generate a secure random password using diceware for better memorability
-                    if command -v diceware &> /dev/null; then
-                        user_password=$(diceware -n 3 -c -s 1)
+                    # Use the generate_password function instead of reimplementing
+                    if [[ "$encrypt_method" == "age" ]]; then
+                        user_password=$(generate_password -p phrases -l 3)
                     else
-                        user_password=$(openssl rand -base64 12)
+                        user_password=$(generate_password -p chars -l 12)
                     fi
                     echo "Generated password: $user_password"
                     echo "Save this password securely - you'll need it to decrypt the file."
@@ -1675,61 +1802,61 @@ fsend(){
                 else
                     echo "Using recipient key encryption..."
                     age -r "$recipient" -o "$encrypted_file" "$upload_file"
-                    password="[Encrypted with recipient's public key]"
-                fi
-                ;;
+        echo "Recipient key used for encryption: $recipient"
+    fi
+            ;;
+            
+        gpg)
+            encrypted_file="${upload_file}.gpg"
+            echo "Encrypting with GPG..."
+            
+            if [[ -n "$user_password" ]]; then
+                # Use the provided or generated password
+                echo "Using provided/generated password for GPG encryption"
+                # Create a temporary batch file for GPG with individual echo commands
+                local batch_file=$(mktemp)
                 
-            gpg)
-                encrypted_file="${upload_file}.gpg"
-                echo "Encrypting with GPG..."
+                # Write each line separately with proper indentation
+                echo "%echo Encrypting with GPG" > "$batch_file"
+                echo "%no-protection" >> "$batch_file"
+                echo "%passphrase $user_password" >> "$batch_file"
+                echo "%no-ask-passphrase" >> "$batch_file"
+                echo "%no-symkey-cache" >> "$batch_file"
                 
-                if [[ -n "$user_password" ]]; then
-                    # Use the provided or generated password
-                    echo "Using provided/generated password for GPG encryption"
-                    # Create a temporary batch file for GPG with individual echo commands
-                    local batch_file=$(mktemp)
-                    
-                    # Write each line separately with proper indentation
-                    echo "%echo Encrypting with GPG" > "$batch_file"
-                    echo "%no-protection" >> "$batch_file"
-                    echo "%passphrase $user_password" >> "$batch_file"
-                    echo "%no-ask-passphrase" >> "$batch_file"
-                    echo "%no-symkey-cache" >> "$batch_file"
-                    
-                    # Use batch mode for GPG
-                    gpg --batch --yes --passphrase "$user_password" --output "$encrypted_file" --symmetric "$upload_file"
-                    rm -f "$batch_file"
-                    password="$user_password"
-                else
-                    echo "Please enter a passphrase for GPG encryption"
-                    gpg --output "$encrypted_file" --symmetric "$upload_file"
-                    password="[Use the password you entered during encryption]"
-                fi
-                ;;
-                
-            aes)
-                encrypted_file="${upload_file}.aes"
-                echo "Encrypting with OpenSSL AES-256-CBC..."
-                
-                if [[ -n "$user_password" ]]; then
-                    # Use the provided or generated password
-                    echo "Using provided/generated password for AES encryption"
-                    # Use echo to provide the password to openssl
-                    echo "$user_password" | openssl enc -aes-256-cbc -salt -in "$upload_file" -out "$encrypted_file" -pass stdin
-                    password="$user_password"
-                else
-                    echo "Please enter a passphrase for AES encryption"
-                    openssl enc -aes-256-cbc -salt -in "$upload_file" -out "$encrypted_file"
-                    password="[Use the password you entered during encryption]"
-                fi
-                ;;
-                
-            *)
-                echo "Error: Invalid encryption method '$encrypt_method'. Use age, gpg, or aes."
-                [[ -n "$zip_file" && -f "$zip_file" ]] && rm -f "$zip_file"
-                return 1
-                ;;
-        esac
+                # Use batch mode for GPG
+                gpg --batch --yes --passphrase "$user_password" --output "$encrypted_file" --symmetric "$upload_file"
+                rm -f "$batch_file"
+                password="$user_password"
+            else
+                echo "Please enter a passphrase for GPG encryption"
+                gpg --output "$encrypted_file" --symmetric "$upload_file"
+                password="[Use the password you entered during encryption]"
+            fi
+            ;;
+            
+        aes)
+            encrypted_file="${upload_file}.aes"
+            echo "Encrypting with OpenSSL AES-256-CBC..."
+            
+            if [[ -n "$user_password" ]]; then
+                # Use the provided or generated password
+                echo "Using provided/generated password for AES encryption"
+                # Use echo to provide the password to openssl
+                echo "$user_password" | openssl enc -aes-256-cbc -salt -in "$upload_file" -out "$encrypted_file" -pass stdin
+                password="$user_password"
+            else
+                echo "Please enter a passphrase for AES encryption"
+                openssl enc -aes-256-cbc -salt -in "$upload_file" -out "$encrypted_file"
+                password="[Use the password you entered during encryption]"
+            fi
+            ;;
+            
+        *)
+            echo "Error: Invalid encryption method '$encrypt_method'. Use age, gpg, or aes."
+            [[ -n "$zip_file" && -f "$zip_file" ]] && rm -f "$zip_file"
+            return 1
+            ;;
+    esac
         
         # Verify encrypted file exists
         if [[ ! -f "$encrypted_file" ]]; then
