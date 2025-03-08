@@ -35,6 +35,7 @@ fi
 
 
 # History settings
+# set history size to 1000 which means 1000 commands will be saved in the history
 HISTSIZE=1000
 HISTFILESIZE=2000
 HISTCONTROL=ignoredups:erasedups  # No duplicate entries
