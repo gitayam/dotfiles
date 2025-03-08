@@ -22,30 +22,43 @@ sync_file() {
     # Check if there is a difference between the system file and the repo copy
     if ! diff "$system_file" "$repo_file" &> /dev/null; then
         echo "Differences found for $file_name."
-        echo "Select an option:"
-        echo "1. Copy repo version ($repo_file) to overwrite system ~/zshrc"
-        echo "2. Skip this file"
-        echo "3. Show diff"
+        
+        while true; do
+            echo "Select an option:"
+            echo "1. Copy repo version ($repo_file) to overwrite system $file_name"
+            echo "2. Skip this file"
+            echo "3. Show diff"
 
-        # Read user choice
-        read -p "Enter your choice (1/2/3): " choice
+            # Read user choice
+            read -p "Enter your choice (1/2/3): " choice
 
-        case $choice in
-            1)
-                $COPY_CMD "$repo_file" "$system_file"
-                echo "Copied $repo_file to $system_file."
-                ;;
-            2)
-                echo "Skipped $file_name."
-                ;;
-            3)
-                diff -u "$system_file" "$repo_file"
-                echo "Differences shown for $file_name."
-                ;;
-            *)
-                echo "Invalid choice. Skipping $file_name."
-                ;;
-        esac
+            case $choice in
+                1)
+                    # Create backup with timestamp
+                    timestamp=$(date +"%Y%m%d_%H%M%S")
+                    backup_file="${system_file}.bak_${timestamp}"
+                    cp "$system_file" "$backup_file"
+                    echo "Created backup at $backup_file"
+                    
+                    # Copy the repo file to system
+                    $COPY_CMD "$repo_file" "$system_file"
+                    echo "Copied $repo_file to $system_file."
+                    break
+                    ;;
+                2)
+                    echo "Skipped $file_name."
+                    break
+                    ;;
+                3)
+                    diff -u "$system_file" "$repo_file"
+                    echo "Differences shown for $file_name."
+                    # Continue the loop to prompt again
+                    ;;
+                *)
+                    echo "Invalid choice. Please try again."
+                    ;;
+            esac
+        done
     else
         echo "No differences found for $file_name. No action taken."
     fi
