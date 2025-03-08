@@ -407,8 +407,8 @@ reset_file(){
       echo -n "Do you want to restore the backup file? (y/n):(default:n) "
       read restore_backup
       if [ "$restore_backup" == "y" ]; then
-        mv "$file$backup_name" "$file"
-        echo "Backup file restored."
+          mv "$file$backup_name" "$file"
+          echo "Backup file restored."
       fi
     fi
   done
@@ -620,7 +620,7 @@ funnel() {
         # Check again if tailscale is running after attempting to start it
         if ! tailscale status &> /dev/null; then
             echo "Error: Failed to start Tailscale. Please start it manually."
-            return 1
+        return 1
         fi
         echo "Tailscale started successfully. Continuing..."
     fi
@@ -674,7 +674,7 @@ funnel() {
 
     # Save original directory
     original_dir=$(pwd)
-    
+
     # Trap SIGINT (Ctrl+C) to run cleanup
     trap cleanup INT TERM EXIT
 
@@ -1059,7 +1059,7 @@ encrypt_file(){
     local encrypt_method="age"  # Default encryption method
     local zip_file=""
     local password=""
-    
+
     # Parse options
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -1165,8 +1165,8 @@ encrypt_file(){
             else
                 echo "Using recipient key encryption..."
                 age -r "$recipient" -o "$encrypted_file" "$files_to_encrypt"
-                echo "Recipient key used for encryption: $recipient"
-            fi
+        echo "Recipient key used for encryption: $recipient"
+    fi
             ;;
             
         gpg)
@@ -1189,7 +1189,7 @@ encrypt_file(){
     # Verify the encrypted file was created
     if [[ ! -f "$encrypted_file" ]]; then
         echo "Error: Encryption failed. Encrypted file not created."
-        # Clean up zip file if it was created
+    # Clean up zip file if it was created
         [[ -n "$zip_file" && -f "$zip_file" ]] && rm -f "$zip_file"
         return 1
     fi
@@ -1227,6 +1227,130 @@ encrypt_file(){
     
     echo ""
     echo "File successfully encrypted: $encrypted_file"
+    return 0
+}
+
+generate_password(){
+    # Generate a random password
+    # Default password type is phrases using diceware
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: generate_password [-p type] [-l length] [-m]"
+        echo "Options:"
+        echo "  -p type       Password type: phrases (default), chars (random characters), or numbers"
+        echo "  -l length     Length of the password (default: 6 words for phrases, 22 chars for others)"
+        echo "  -m            Manual mode - prompt for password instead of generating"
+        return 0
+    fi
+    
+    # Check if diceware is installed for phrase passwords
+    local has_diceware=false
+    if command -v diceware &> /dev/null; then
+        has_diceware=true
+    fi
+    
+    local password_type="phrases"
+    local length=6  # Default 6 words for phrases
+    local char_length=22  # Default 22 chars for character passwords
+    local manual_mode=false
+    
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -p)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: -p requires a type argument (phrases, chars, numbers)"
+                    return 1
+                fi
+                password_type="$2"
+                shift 2
+                ;;
+            -l)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: -l requires a length argument"
+                    return 1
+                fi
+                if [[ "$password_type" == "phrases" ]]; then
+                    length="$2"
+                else
+                    char_length="$2"
+                fi
+                shift 2
+                ;;
+            -m)
+                manual_mode=true
+                shift
+                ;;
+            *)
+                echo "Unknown option: $1"
+                echo "Use 'generate_password -h' for help."
+                return 1
+                ;;
+        esac
+    done
+    
+    # If manual mode, prompt for password
+    if $manual_mode; then
+        echo "Enter your password (input will be hidden):"
+        read -s password
+        echo "Confirm your password:"
+        read -s password_confirm
+        
+        if [[ "$password" != "$password_confirm" ]]; then
+            echo "Error: Passwords do not match."
+            return 1
+        fi
+        
+        echo "Password set manually."
+        return 0
+    fi
+    
+    # Generate password based on type
+    case "$password_type" in
+        phrases)
+            if ! $has_diceware; then
+                echo "Error: 'diceware' is not installed but required for phrase passwords."
+                echo "You can install it with: brew install diceware"
+                echo -n "Do you want to install diceware now? (y/n): "
+                read install_diceware
+                if [[ "$install_diceware" =~ ^[Yy]$ ]]; then
+                    brew install diceware
+                    has_diceware=true
+                else
+                    echo "Falling back to character-based password."
+                    password_type="chars"
+                fi
+            fi
+            
+            if $has_diceware; then
+                # Use diceware to generate a phrase password
+                password=$(diceware -n "$length" -c -s 2)
+                echo "Generated passphrase: $password"
+            else
+                # Fallback if diceware installation failed
+                password=$(openssl rand -base64 "$char_length" | tr -d '/+=' | cut -c1-"$char_length")
+                echo "Generated password: $password"
+            fi
+            ;;
+            
+        chars)
+            # Generate a random character password with letters, numbers, and symbols
+            password=$(openssl rand -base64 $(($char_length * 2)) | tr -d '/+=' | cut -c1-"$char_length")
+            echo "Generated password: $password"
+            ;;
+            
+        numbers)
+            # Generate a random numeric password
+            password=$(openssl rand -base64 $(($char_length * 2)) | tr -dc '0-9' | cut -c1-"$char_length")
+            echo "Generated numeric password: $password"
+            ;;
+            
+        *)
+            echo "Error: Invalid password type '$password_type'. Use phrases, chars, or numbers."
+            return 1
+            ;;
+    esac
+    
+    echo "Save this password securely!"
     return 0
 }
 
@@ -1362,12 +1486,13 @@ upload_to_pcloud(){
 # ffsend file transfer including encryption option
 fsend(){
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-        echo "Usage: fsend [-e|--encrypt] [-m method] [-r recipient] [-p password] path1 path2 ..."
+        echo "Usage: fsend [-e|--encrypt] [-m method] [-r recipient] [-p password] [-g] path1 path2 ..."
         echo "Options:"
         echo "  -e, --encrypt    Encrypt the file(s) before sending"
         echo "  -m method        Encryption method: age (default), gpg, or aes"
         echo "  -r recipient     Use recipient's public key instead of passphrase (only for age)"
         echo "  -p password      Specify a password (for gpg and aes methods)"
+        echo "  -g               Auto-generate password without prompting"
         return 0
     fi
 
@@ -1387,6 +1512,7 @@ fsend(){
     local recipient=""
     local use_passphrase=true
     local user_password=""
+    local auto_generate=false
     
     # Parse options
     while [[ $# -gt 0 ]]; do
@@ -1420,6 +1546,10 @@ fsend(){
                 user_password="$2"
                 shift 2
                 ;;
+            -g)
+                auto_generate=true
+                shift
+                ;;
             -*)
                 echo "Unknown option: $1"
                 return 1
@@ -1439,7 +1569,7 @@ fsend(){
 
     # Debug: Print the arguments
     echo "Files to upload: $@"
-    
+
     # Handle multiple files
     local files=("$@")
     local upload_file=""
@@ -1463,6 +1593,7 @@ fsend(){
     fi
 
     if $encrypt; then
+        # Encryption handling
         if [[ "${#files[@]}" -eq 1 && "$zip_file" == "" ]]; then
             # For single file encryption, create a temporary zip first
             zip_file="./ffsend_$(date +%Y%m%d%H%M%S).zip"
@@ -1473,12 +1604,44 @@ fsend(){
         
         local encrypted_file=""
         
-        # Generate a random password if needed for gpg or aes
-        if [[ "$encrypt_method" != "age" && -z "$user_password" ]]; then
-            # Generate a secure random password
-            user_password=$(openssl rand -base64 12)
-            echo "Generated password: $user_password"
-            echo "Save this password securely - you'll need it to decrypt the file."
+        # Handle password for all encryption methods except when using recipient key
+        if [[ -z "$user_password" && "$use_passphrase" == true ]]; then
+            if [[ "$encrypt_method" != "age" || "$auto_generate" == false ]]; then
+                # For non-age methods or when not auto-generating, prompt for password
+                if [[ "$auto_generate" == false ]]; then
+                    # Prompt for password
+                    echo "Enter password for encryption (leave empty to auto-generate):"
+                    read -s user_password
+                    
+                    if [[ -n "$user_password" ]]; then
+                        echo "Confirm password:"
+                        read -s password_confirm
+                        
+                        if [[ "$user_password" != "$password_confirm" ]]; then
+                            echo "Error: Passwords do not match."
+                            [[ -n "$zip_file" && -f "$zip_file" ]] && rm -f "$zip_file"
+                            return 1
+                        fi
+                    fi
+                fi
+                
+                # If user didn't enter a password or auto-generate is true, generate one
+                if [[ -z "$user_password" || "$auto_generate" == true ]]; then
+                    # Generate a secure random password using diceware for better memorability
+                    if command -v diceware &> /dev/null; then
+                        user_password=$(diceware -n 3 -c -s 1)
+                    else
+                        user_password=$(openssl rand -base64 12)
+                    fi
+                    echo "Generated password: $user_password"
+                    echo "Save this password securely - you'll need it to decrypt the file."
+                fi
+                
+                # For age encryption with manual password, we'll use this later
+                if [[ "$encrypt_method" == "age" ]]; then
+                    password="$user_password"
+                fi
+            fi
         fi
         
         # Determine encryption method and encrypt
@@ -1488,19 +1651,26 @@ fsend(){
                 echo "Encrypting with age..."
                 
                 if $use_passphrase; then
-                    # Use age with passphrase and capture the output directly
+                    # Use age with passphrase
                     echo "Using passphrase encryption..."
-                    # Run age and save its output to a variable
-                    local age_output=$(age -p -o "$encrypted_file" "$upload_file" 2>&1)
-                    echo "$age_output"  # Display the output to the user
                     
-                    # Extract the passphrase using a more reliable method
-                    if [[ "$age_output" =~ using\ autogenerated\ passphrase\ \"([^\"]+)\" ]]; then
-                        password="${BASH_REMATCH[1]}"
-                        echo "Captured passphrase: $password"
+                    if [[ -n "$password" && "$auto_generate" == false ]]; then
+                        # Use the manually entered password
+                        echo "Using manually entered passphrase"
+                        echo "$password" | age --passphrase -o "$encrypted_file" "$upload_file"
                     else
-                        echo "Warning: Could not capture the passphrase automatically."
-                        password="[See the passphrase displayed above]"
+                        # Let age generate a passphrase
+                        local age_output=$(age -p -o "$encrypted_file" "$upload_file" 2>&1)
+                        echo "$age_output"  # Display the output to the user
+                        
+                        # Extract the passphrase using regex
+                        if [[ "$age_output" =~ using\ autogenerated\ passphrase\ \"([^\"]+)\" ]]; then
+                            password="${BASH_REMATCH[1]}"
+                            echo "Captured passphrase: $password"
+                        else
+                            echo "Warning: Could not capture the passphrase automatically."
+                            password="[See the passphrase displayed above]"
+                        fi
                     fi
                 else
                     echo "Using recipient key encryption..."
@@ -1516,13 +1686,15 @@ fsend(){
                 if [[ -n "$user_password" ]]; then
                     # Use the provided or generated password
                     echo "Using provided/generated password for GPG encryption"
-                    # Create a temporary batch file for GPG
+                    # Create a temporary batch file for GPG with individual echo commands
                     local batch_file=$(mktemp)
-                    echo "%echo Encrypting with GPG
-%no-protection
-%passphrase $user_password
-%no-ask-passphrase
-%no-symkey-cache" > "$batch_file"
+                    
+                    # Write each line separately with proper indentation
+                    echo "%echo Encrypting with GPG" > "$batch_file"
+                    echo "%no-protection" >> "$batch_file"
+                    echo "%passphrase $user_password" >> "$batch_file"
+                    echo "%no-ask-passphrase" >> "$batch_file"
+                    echo "%no-symkey-cache" >> "$batch_file"
                     
                     # Use batch mode for GPG
                     gpg --batch --yes --passphrase "$user_password" --output "$encrypted_file" --symmetric "$upload_file"
@@ -1564,7 +1736,7 @@ fsend(){
             echo "Error: Encryption failed. Encrypted file not created."
             # Clean up zip file
             [[ -n "$zip_file" && -f "$zip_file" ]] && rm -f "$zip_file"
-            return 1
+        return 1
         fi
         
         echo "Uploading encrypted file: $encrypted_file"
@@ -1572,28 +1744,27 @@ fsend(){
         local upload_output=$(ffsend upload "$encrypted_file")
         echo "$upload_output"
         
-        # Extract the link using a more reliable method - ffsend typically outputs the URL on its own line
-        link=$(echo "$upload_output" | grep -o 'https://[^ ]*')
-        if [[ -z "$link" ]]; then
-            # Try another pattern that might match
-            link=$(echo "$upload_output" | grep -o 'https://[^ ]*')
-            if [[ -z "$link" ]]; then
-                echo "Warning: Could not capture the download link automatically."
-                link="[See the link displayed above]"
-            fi
+        # Extract the link using a more reliable method
+        if [[ "$upload_output" =~ https://[^[:space:]]+ ]]; then
+            link="${BASH_REMATCH[0]}"
+        else
+            echo "Warning: Could not capture the download link automatically."
+            link="[See the link displayed above]"
         fi
         
         echo "Removing encrypted file..."
         rm -f "$encrypted_file"
     else
+        # Non-encrypted upload
         echo "Uploading file without encryption: $upload_file"
         # Capture the upload output and display it
         local upload_output=$(ffsend upload "$upload_file")
         echo "$upload_output"
         
         # Extract the link using a more reliable method
-        link=$(echo "$upload_output" | grep -o 'https://[^ ]*')
-        if [[ -z "$link" ]]; then
+        if [[ "$upload_output" =~ https://[^[:space:]]+ ]]; then
+            link="${BASH_REMATCH[0]}"
+        else
             echo "Warning: Could not capture the download link automatically."
             link="[See the link displayed above]"
         fi
@@ -1619,7 +1790,7 @@ fsend(){
         elif [[ "$encrypt_method" == "gpg" ]]; then
             echo "gpg --decrypt $encrypted_file"
         elif [[ "$encrypt_method" == "aes" ]]; then
-            echo "openssl enc -aes-256-cbc -d -in $encrypted_file -out $upload_file -pass pass:$user_password"
+            echo "openssl enc -aes-256-cbc -d -in $encrypted_file -out $upload_file -pass pass:$password"
         fi
     else
         echo "Share this link with the recipient: $link"
