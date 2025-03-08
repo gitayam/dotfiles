@@ -1,0 +1,80 @@
+# ZSH Functions Dictionary
+# This file contains a dictionary of all functions defined in .zsh_aliases
+# Organized by category for easy reference
+
+# ----------------------
+# Git Functions
+# ----------------------
+
+git_commit() - Commit changes with a message or open interactive commit editor if no message provided
+git_add() - Add files to git staging area, defaults to all files if none specified
+update_git_repos() - Update all git repositories in a specified directory, with options to exclude paths
+git_clone() - Clone a repository to the ~/Documents/Git/ directory with options to open in VS Code or Cursor
+
+# ----------------------
+# Navigation and File Management
+# ----------------------
+
+zipfile() - Create a zip archive of specified files or directories
+mcd() - Create a directory and change to it, or create multiple directories
+update_all() - Update brew packages, macOS software, git repositories, and clear cache
+backup() - Create a backup of files or directories with timestamp
+cdl() - Change to a directory and list its contents
+reset_file() - Reset a file's content to empty, create a backup, and open in nano editor
+show_func() - Show help for a specific function
+show_function() - Alias for show_func
+show_alias() - Show all aliases defined in the .zsh_aliases file
+show_help() - Show help for a specific function or alias
+helpmenu() - Display a help menu with available commands
+
+# ----------------------
+# Applications
+# ----------------------
+
+setup_profiles() - Create and set up profiles directory
+run-element() - Run Element desktop app with optional profile
+run-firefox() - Run Firefox with optional profile
+run-discord() - Run Discord with optional profile
+
+# ----------------------
+# Security Tools
+# ----------------------
+
+scan_ports() - Scan ports on a specified host using nmap
+setup_age() - Set up age encryption keys
+scan_file() - Scan a file for viruses using ClamAV
+ocr_files() - Process PDF files to add OCR text layer
+clean_file() - Remove spaces and special characters from a filename
+encrypt_file() - Encrypt a file using age encryption
+change_mac_menu() - Menu for changing MAC address
+gen_mac_addr() - Generate a random MAC address
+
+# ----------------------
+# GitHub Repository Management
+# ----------------------
+
+create_repo() - Create a new GitHub repository with various template options
+
+# ----------------------
+# Python Virtual Environment Management
+# ----------------------
+
+pyenv() - Create and activate a Python virtual environment
+pyserver() - Create a Python HTTP server for specified files or current directory
+funnel() - Share a local server on the internet using Tailscale
+
+# ----------------------
+# Matrix Setup
+# ----------------------
+
+matrix_setup() - Set up and manage a Matrix server using ansible
+matrix_setup_user() - Set up a user on a Matrix server
+
+# ----------------------
+# File Transfer
+# ----------------------
+
+wh-transfer() - Transfer files using Magic Wormhole with optional encryption
+upload_to_pcloud() - Upload files to pCloud using rclone
+fsend() - Send files using Firefox Send (ffsend) with optional encryption
+transfer_file() - Transfer files to a remote host using rsync
