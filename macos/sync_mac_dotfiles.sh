@@ -25,6 +25,7 @@ sync_file() {
         echo "Select an option:"
         echo "1. Copy repo version ($repo_file) to overwrite system ~/zshrc"
         echo "2. Skip this file"
+        echo "3. Show diff"
 
         # Read user choice
         read -p "Enter your choice (1/2/3): " choice
@@ -36,6 +37,10 @@ sync_file() {
                 ;;
             2)
                 echo "Skipped $file_name."
+                ;;
+            3)
+                diff -u "$system_file" "$repo_file"
+                echo "Differences shown for $file_name."
                 ;;
             *)
                 echo "Invalid choice. Skipping $file_name."
@@ -52,3 +57,9 @@ sync_file "$SYSTEM_ZSH_ALIASES" "$REPO_ZSH_ALIASES"
 
 echo "Sync process completed."
 source "$SYSTEM_ZSHRC"
+#prompt user to see the zsh_functions file with the functions
+read -p "Do you want to see the zsh_functions file with the functions? (y/n): " choice
+if [[ "$choice" == "y" ]]; then
+    # read the zsh_functions file
+    cat ./zsh_functions.txt
+fi
