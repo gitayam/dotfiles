@@ -42,6 +42,7 @@ install_gui_apps() {
     brew install --cask "$app"
     fi
   done
+  mullvad_apps=("mullvadvpn" "mullvad-browser")
   proton_apps=("protonvpn" "proton-mail" "proton-pass" "proton-drive")
   # ask the user if they want to install the proton apps
   # default to no
@@ -58,7 +59,14 @@ install_gui_apps() {
       fi
     done
   fi
-  
+  install_mullvad="n"
+  read -p "Do you want to install the Mullvad apps? (y/n): " install_mullvad
+  if [[ "$install_mullvad" == "y" ]]; then
+    for app in "${mullvad_apps[@]}"; do
+      echo "$app is not installed. Installing..."
+      brew install --cask "$app"
+    done
+  fi
 }
 
 main() {
