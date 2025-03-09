@@ -30,20 +30,22 @@
       - git
       - htop
       - iotop
+    ansible_ssh_timeout: 30
 
   pre_tasks:
-    - name: Display available tags and their functions
+    - name: Display playbook header
       debug:
         msg: |
-          System Management Playbook
-          =========================
-          
-          This playbook combines system maintenance, updates, and fresh installation tasks.
-          Use tags to run specific operations and limit hosts to target specific servers.
-          
-          Host Selection:
-          --------------
-          
+          ===================================================
+                     System Management Playbook
+          ===================================================
+      tags: always
+
+    - name: Display host selection information
+      debug:
+        msg: |
+          HOST SELECTION
+          -------------
           You can target specific hosts in several ways:
           
           1. Using the prompt at playbook start
@@ -56,55 +58,91 @@
           
           3. Using extra variables
              - ansible-playbook system_management.yml -e "target_hosts=proxmox-main"
-          
-          Available Tags:
-          --------------
-          
-          System Updates and Maintenance:
+      tags: always
+
+    - name: Display system updates tags
+      debug:
+        msg: |
+          SYSTEM UPDATES AND MAINTENANCE
+          -----------------------------
           - update: Update package repositories
           - upgrade: Perform system update and upgrades
           - security: Apply security updates
           - cleanup: Remove unused packages and clean cache
           - maintenance: Run system maintenance tasks (disk checks, logs)
           - reboot: Reboot system if needed (use with caution)
-          
-          Fresh Installation:
+      tags: always
+
+    - name: Display fresh installation tags
+      debug:
+        msg: |
+          FRESH INSTALLATION
+          -----------------
           - fresh_install: Run all fresh installation tasks
           - ssh: Configure SSH keys
           - terminal_apps: Install terminal applications
           - gui_apps: Install GUI applications
           - proton_apps: Install Proton suite
           - privacy_security_config: Configure privacy and security settings
-          
-          Repository Management:
+      tags: always
+
+    - name: Display repository management tags
+      debug:
+        msg: |
+          REPOSITORY MANAGEMENT
+          --------------------
           - git: Update Git repositories
           - docker: Update Docker images
           - docker_compose_update: Update Docker Compose services
-          
-          Service-Specific Updates:
+      tags: always
+
+    - name: Display service-specific update tags
+      debug:
+        msg: |
+          SERVICE-SPECIFIC UPDATES
+          ----------------------
           - researchtools: Update research tools on proxmox-main
           - cryptpad: Update Cryptpad on irregularchat-information
           - vaultwarden: Update Vaultwarden on proxmox-main
           - authentik: Update Authentik on irregularchat-information
           - searxng: Update SearxNG on proxmox-main
-          
-          System Hardening:
+      tags: always
+
+    - name: Display system hardening tags
+      debug:
+        msg: |
+          SYSTEM HARDENING
+          ---------------
           - hardening: Apply system security hardening measures
           - firewall: Configure and update firewall rules
           - ssh_hardening: Secure SSH configuration
-          
-          Monitoring and Logging:
+      tags: always
+
+    - name: Display monitoring and logging tags
+      debug:
+        msg: |
+          MONITORING AND LOGGING
+          --------------------
           - monitoring: Set up or update monitoring tools
           - logging: Configure system logging
           - backup: Set up or run backup procedures
-          
-          Performance Optimization:
+      tags: always
+
+    - name: Display performance optimization tags
+      debug:
+        msg: |
+          PERFORMANCE OPTIMIZATION
+          ----------------------
           - performance: Apply performance tuning
           - swap: Configure swap settings
           - limits: Set system limits
-          
-          Examples:
-          ---------
+      tags: always
+
+    - name: Display usage examples
+      debug:
+        msg: |
+          EXAMPLES
+          --------
           # Run system updates on all hosts:
           ansible-playbook system_management.yml --tags "update,upgrade,cleanup"
           
@@ -128,15 +166,40 @@
     #############################
     # System Updates Section
     #############################
+    - name: Check if dpkg is locked
+      shell: lsof /var/lib/dpkg/lock-frontend
+      register: dpkg_lock_check
+      failed_when: dpkg_lock_check.rc > 1
+      changed_when: dpkg_lock_check.rc == 0
+      retries: 10
+      delay: 30
+      until: dpkg_lock_check.rc != 0
+      ignore_errors: yes
+      tags: [update, upgrade, security]
+
+    - name: Wait for apt lock to be released
+      shell: while lsof /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do sleep 5; done
+      changed_when: false
+      timeout: 60
+      tags: [update, upgrade, security]
+
     - name: Update APT package index
       apt:
         update_cache: yes
+      register: apt_update_result
+      retries: 3
+      delay: 10
+      until: apt_update_result is success
       tags: [update, upgrade, security, fresh_install]
 
     - name: Upgrade all packages to latest version
       apt:
         upgrade: dist
         allow_unauthenticated: no
+      register: apt_upgrade_result
+      retries: 3
+      delay: 30
+      until: apt_upgrade_result is success
       tags: [upgrade, security]
 
     - name: Remove unused packages
@@ -299,14 +362,53 @@
       changed_when: false
       tags: [git]
 
-    - name: Update each Git repository stashing changes before pulling
-      shell: git stash && git pull
+    - name: Fetch updates before pulling
+      shell: git fetch
       args:
         chdir: "{{ item | dirname }}"
       loop: "{{ git_dirs.stdout_lines }}"
+      tags: [git]
+
+    - name: Update each Git repository with proper merge strategy
+      shell: |
+        cd "{{ item | dirname }}"
+        git stash
+        # Try fast-forward pull first
+        if ! git pull --ff-only; then
+          # If that fails, try rebase
+          if ! git pull --rebase; then
+            # If that fails too, try merge
+            git pull --no-rebase
+          fi
+        fi
+      loop: "{{ git_dirs.stdout_lines }}"
+      register: git_update_result
+      changed_when: "'Already up to date' not in git_update_result.stdout"
+      failed_when: false
       async: 0
       poll: 1
       no_log: False
+      tags: [git]
+
+    - name: Report Git update failures
+      debug:
+        msg: "Failed to update Git repository at {{ item.item | dirname }}: {{ item.stderr }}"
+      loop: "{{ git_update_result.results }}"
+      when: item.rc != 0
+      tags: [git]
+
+    - name: Ensure branch has tracking information
+      shell: |
+        BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        if ! git config branch.$BRANCH.remote > /dev/null; then
+          git branch --set-upstream-to=origin/$BRANCH $BRANCH
+        fi
+      args:
+        chdir: "{{ item | dirname }}"
+      loop: "{{ git_dirs.stdout_lines }}"
+      register: tracking_result
+      changed_when: tracking_result.rc == 0
+      failed_when: false
       tags: [git]
 
     #############################
@@ -773,6 +875,19 @@
               - tcpdump
             state: present
       tags: [network, performance, fresh_install]
+
+    - name: Check host connectivity
+      ping:
+      register: ping_result
+      retries: 3
+      delay: 10
+      until: ping_result is success
+      ignore_errors: yes
+
+    - name: Summarize system update status
+      debug:
+        msg: "System updates completed successfully on {{ inventory_hostname }}"
+      tags: [update, upgrade, security]
 
   handlers:
     - name: Restart SSH
