@@ -4,3 +4,4 @@ ansible/inventory/hosts
 *.age
 vars.yaml
 ansible/inventory/*
+!ansible/inventory/network1_ips-template.yml
