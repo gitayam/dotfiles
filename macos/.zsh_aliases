@@ -276,6 +276,197 @@ scan_ports(){
     fi
     sudo nmap -sS -Pn $1
 }
+
+# Virus Scan
+alias scan_file="virus_scan"
+alias scan_dir="virus_scan"
+alias scan_files="virus_scan"
+alias scan_dirs="virus_scan"
+virus_scan() {
+    #usage: virus_scan files_or_dirs
+    # help menu
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "usage: virus_scan files_or_dirs"
+        echo "This will scan the files or directories for viruses using ClamAV"
+        echo "It will also check for config issues and update the virus database"
+        # example usage
+        echo "virus_scan file1 file2 dir1 dir2"
+        echo "virus_scan /Users/username/Documents/file1 /Users/username/Documents/dir1"
+        return 0
+    fi
+    # Handle no arguments
+    if [[ $# -eq 0 ]]; then
+        echo "Usage: virus_scan [file/directory...]"
+        return 1
+    fi
+
+    # Check if clamscan is installed
+    if ! command -v clamscan &> /dev/null; then
+        echo "Error: clamscan is not installed."
+        # Prompt user to install
+        local install_clamav="n"
+        echo -n "Do you want to install ClamAV? (y/n): " 
+        read install_clamav
+        if [[ $install_clamav =~ ^[Yy]$ ]]; then
+            echo "Installing and Configuring ClamAV"
+            clamav_maintenance
+            # Verify installation succeeded
+            if ! command -v clamscan &> /dev/null; then
+                echo "Installation failed. Please install ClamAV manually."
+                return 1
+            fi
+        else
+            return 1
+        fi
+    fi
+
+    # Create log directory if it doesn't exist
+    local log_dir="$HOME/logs/clamscan"
+    mkdir -p "$log_dir"
+    local log_file="$log_dir/scan_$(date +%Y%m%d_%H%M%S).log"
+    
+    # Process each argument
+    local valid_files=0
+    for file in "$@"; do
+        if [[ ! -e "$file" ]]; then
+            echo "Warning: $file does not exist, skipping"
+            continue
+        fi
+        
+        if [[ ! -r "$file" ]]; then
+            echo "Warning: $file is not readable, skipping"
+            continue
+        fi
+        
+        echo "Scanning: $file"
+        ((valid_files++))
+    done
+    
+    # Check if we have any valid files to scan
+    if [[ $valid_files -eq 0 ]]; then
+        echo "No valid files to scan"
+        return 1
+    fi
+    
+    # Run the actual scan with logging
+    echo "Starting scan at $(date)" | tee -a "$log_file"
+    echo "Scan log saved to: $log_file"
+    
+    clamscan --recursive=yes --infected "$@" | tee -a "$log_file"
+    local scan_status=$?
+    
+    # Report results
+    case $scan_status in
+        0) echo "✅ No viruses found" ;;
+        1) echo "⚠️ Viruses found! Check $log_file for details" ;;
+        2) echo "❌ Error occurred during scanning" ;;
+    esac
+    
+    return $scan_status
+}
+
+clamav_maintenance(){
+    CONFIG="/opt/homebrew/etc/clamav/freshclam.conf"
+    DB_DIR="/opt/homebrew/var/lib/clamav"
+    EXPECTED_MIRROR="DatabaseMirror database.clamav.net"
+    # Check if clamav is installed
+
+    echo "=== ClamAV Maintenance ==="
+    # Check if clamav is installed
+    echo "Checking if clamav is installed"
+    if ! command -v clamav &> /dev/null; then
+        echo "Error: clamav is not installed"
+        #prompt to install if yes install and continue else return 1
+        install_clamav="n"
+        echo -n "Do you want to install clamav? (y/n): " 
+        read install_clamav
+        if [[ $install_clamav =~ ^[Yy]$ ]]; then
+            brew install clamav
+            echo "clamav installed, continuing with maintenance"
+        else
+            return 1
+        fi
+    fi
+        # Check if config file exists; if not, search for it.
+    if [ ! -f "$CONFIG" ]; then
+    echo "Error: $CONFIG not found."
+    echo "Searching for freshclam.conf in /opt/homebrew..."
+    new_config=$(find /opt/homebrew -type f -name freshclam.conf 2>/dev/null | head -n 1)
+    if [ -n "$new_config" ]; then
+        echo "Found config file at: $new_config"
+        read -p "Use this config file? (y/n): " use_new_config
+        if [[ "$use_new_config" =~ ^[Yy] ]]; then
+            CONFIG="$new_config"
+            echo "Using config: $CONFIG"
+        else
+            echo "No valid config selected. Exiting."
+            return 1
+        fi
+    else
+        echo "No freshclam.conf found on the system."
+        return 1
+    fi
+    fi
+
+    # Remove the "Example" marker if present.
+    if grep -q "^Example" "$CONFIG"; then
+    echo "Removing 'Example' marker from config file..."
+    sudo sed -i.bak '/^Example/d' "$CONFIG"
+    fi
+
+    # Check the DatabaseMirror setting.
+    current_mirror=$(grep "^DatabaseMirror" "$CONFIG" | head -n1)
+    if [ -z "$current_mirror" ]; then
+    echo "No DatabaseMirror setting found. Appending expected value."
+    echo "$EXPECTED_MIRROR" | sudo tee -a "$CONFIG" >/dev/null
+    elif ! echo "$current_mirror" | grep -qi "database\.clamav\.net"; then
+    echo "Found DatabaseMirror: $current_mirror"
+    echo "Updating to use: $EXPECTED_MIRROR..."
+    sudo sed -i.bak "s|^DatabaseMirror.*|$EXPECTED_MIRROR|" "$CONFIG"
+    else
+    echo "DatabaseMirror is correctly set: $current_mirror"
+    fi
+
+    # Ensure the database directory exists; if not, search or create it.
+    if [ ! -d "$DB_DIR" ]; then
+    echo "Database directory $DB_DIR not found."
+    echo "Searching for a possible ClamAV database directory in /opt/homebrew..."
+    new_db_dir=$(find /opt/homebrew -type d -name clamav 2>/dev/null | head -n 1)
+    if [ -n "$new_db_dir" ]; then
+        echo "Found potential database directory: $new_db_dir"
+        read -p "Use this directory? (y/n): " use_new_db
+        if [[ "$use_new_db" =~ ^[Yy] ]]; then
+            DB_DIR="$new_db_dir"
+            echo "Using database directory: $DB_DIR"
+        else
+            echo "No valid directory selected. Creating default: $DB_DIR..."
+            sudo mkdir -p "$DB_DIR" || { echo "Failed to create directory"; return 1; }
+        fi
+    else
+        echo "No alternate database directory found. Creating default: $DB_DIR..."
+        sudo mkdir -p "$DB_DIR" || { echo "Failed to create directory"; return 1; }
+    fi
+    fi
+
+    # Set ownership of the database directory.
+    echo "Setting ownership of $DB_DIR to _clamav:_clamav..."
+    sudo chown -R _clamav:_clamav "$DB_DIR"
+
+    # Run freshclam update.
+    echo "Running freshclam update..."
+    echo "This ensures the virus database is up to date"
+    echo "This may take a while..."
+    sudo freshclam
+    if [ $? -eq 0 ]; then
+    echo "ClamAV database updated successfully."
+    else
+    echo "ClamAV update encountered errors. Please review the output above."
+    fi
+
+    echo "=== ClamAV Maintenance Completed ==="
+}
+
+
 # ----------------------
 # Helper Functions
 # ----------------------
@@ -1134,23 +1325,7 @@ setup_age(){
     ls -l ~/.age/keys
 }
 
-scan_file(){
-    # check if clamscan is installed
-    if ! command -v clamscan &> /dev/null; then
-        echo "Error: 'clamscan' is not installed."
-        echo "You can install it with: brew install clamscan"
-        return 1
-    fi
-    # check if the file exists
-    if [[ ! -f "$path" ]]; then
-        echo "Error: File not found at '$path'"
-        return 1
-    fi
-    # update the virus database
-    sudo freshclam
-    # scan the file for viruses
-    clamscan "$path"
-}
+
 # ----------------------
 # OCR
 # ----------------------

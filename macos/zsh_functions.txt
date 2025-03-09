@@ -48,7 +48,7 @@ clean_file() - Remove spaces and special characters from a filename
 encrypt_file() - Encrypt a file using age encryption
 change_mac_menu() - Menu for changing MAC address
 gen_mac_addr() - Generate a random MAC address
-
+clamav_maintenance() - Set up ClamAV virus scanning and check for config issues and update
 # ----------------------
 # GitHub Repository Management
 # ----------------------
