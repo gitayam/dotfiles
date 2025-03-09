@@ -283,23 +283,31 @@ alias scan_dir="virus_scan"
 alias scan_files="virus_scan"
 alias scan_dirs="virus_scan"
 virus_scan() {
-    #usage: virus_scan files_or_dirs
-    # help menu
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-        echo "usage: virus_scan files_or_dirs"
-        echo "This will scan the files or directories for viruses using ClamAV"
-        echo "It will also check for config issues and update the virus database"
-        # example usage
-        echo "virus_scan file1 file2 dir1 dir2"
-        echo "virus_scan /Users/username/Documents/file1 /Users/username/Documents/dir1"
-        return 0
-    fi
-    # Handle no arguments
-    if [[ $# -eq 0 ]]; then
+    local files=()
+    
+    # Check if receiving input from pipe or arguments
+    if [[ -p /dev/stdin ]]; then
+        # Read from pipe (e.g., findex output)
+        while IFS= read -r line; do
+            files+=("$line")
+        done
+    elif [[ $# -gt 0 ]]; then
+        # Read from arguments
+        files=("$@")
+    else
+        # No input provided
         echo "Usage: virus_scan [file/directory...]"
+        echo "   function from dotfiles or: findex \"*.pdf\" | virus_scan"
+        echo "   or: virus_scan \$(findex \"*.pdf\")"
+        echo ""
+        echo "Examples:"
+        echo "  virus_scan ~/Downloads"
+        echo "  virus_scan document.pdf image.jpg"
+        echo "  findex \"*.pdf\" | virus_scan"
+        echo "  virus_scan \$(findex \"*.pdf\")"
         return 1
     fi
-
+    
     # Check if clamscan is installed
     if ! command -v clamscan &> /dev/null; then
         echo "Error: clamscan is not installed."
@@ -325,9 +333,9 @@ virus_scan() {
     mkdir -p "$log_dir"
     local log_file="$log_dir/scan_$(date +%Y%m%d_%H%M%S).log"
     
-    # Process each argument
+    # Process each file
     local valid_files=0
-    for file in "$@"; do
+    for file in "${files[@]}"; do
         if [[ ! -e "$file" ]]; then
             echo "Warning: $file does not exist, skipping"
             continue
@@ -352,7 +360,7 @@ virus_scan() {
     echo "Starting scan at $(date)" | tee -a "$log_file"
     echo "Scan log saved to: $log_file"
     
-    clamscan --recursive=yes --infected "$@" | tee -a "$log_file"
+    clamscan --recursive=yes --infected "${files[@]}" | tee -a "$log_file"
     local scan_status=$?
     
     # Report results
