@@ -8,7 +8,15 @@
 #TODO: Add cron job to check for open ports and close them
 #TODO: Add cron job to check for rootkits
 
+# Security Jobs
+# Check for suspicious cron jobs daily at 2am
+0 2 * * * find /etc/cron.d -type f -mtime -1 | grep -v "$(whoami)" | mail -s "Suspicious cron jobs" $(whoami)
 
+# Check for open ports weekly on Sunday at 3am
+0 3 * * 0 lsof -i -P | grep LISTEN | mail -s "Open ports report" $(whoami)
+
+# Run rkhunter weekly to check for rootkits
+0 4 * * 0 /usr/local/bin/rkhunter --check --skip-keypress --report-warnings-only
 
 ###### Maintenance ######
 #TODO: Add cron job to check for updates and install them
@@ -16,3 +24,16 @@
 #TODO: Add cron job to check for duplicate files and delete them
 #TODO: Add cron job to check for and kill processes that shouldn't be running
 #TODO: Keep git repos updated with the latest code
+
+# Maintenance Jobs
+# Check for and install updates weekly
+0 1 * * 0 softwareupdate -i -a
+
+# Clean old files (older than 30 days) from Downloads folder
+0 3 * * * find ~/Downloads -type f -mtime +30 -delete
+
+# Update git repositories weekly
+0 5 * * 0 find ~/Projects -name ".git" -type d | xargs -I{} sh -c 'cd "{}/.." && git pull'
+
+# Check for processes using high CPU and log them
+*/10 * * * * ps aux | sort -nrk 3,3 | head -n 5 >> ~/logs/high_cpu_processes.log
