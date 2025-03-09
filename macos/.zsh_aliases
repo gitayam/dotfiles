@@ -1160,6 +1160,7 @@ ocr_files(){
         echo "Usage: ocr_files file1 file2 dir1 dir2 ..."
         echo "Processes PDF files to add OCR text layer."
         #examples of single, directory, and multiple files
+        echo "Examples:"
         echo "ocr_files file1.pdf"
         echo "ocr_files dir1/ dir2/"
         echo "ocr_files file1.pdf file2.pdf dir1/ dir2/"
