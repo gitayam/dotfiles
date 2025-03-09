@@ -923,3 +923,215 @@ funnel() {
 
     echo "Files shared successfully via Tailscale."
 }
+
+# Grep aliases and functions
+alias grep='grep -i --color=auto'  # Ignore case and colorize output
+alias grepv='grep -vi --color=auto' # Ignore case, invert match, and colorize output
+
+# Find aliases and functions
+alias findf='find . -type f -name' # Find files by name
+alias findd='find . -type d -name' # Find directories by name
+
+# Navigation Function
+# Fast directory navigation
+alias ..="cd .."
+alias ...="cd ../.."
+alias ....="cd ../../.."
+
+# change dir and List Directory Contents
+cdl() {
+  if [ -n "$1" ]; then
+    cd "$1" && ls -l
+  else
+    cd ~ && ls -l
+  fi
+}
+
+# Make Directory and cd to it if only one arg is passed else just make the dir
+mkd() {
+    if [[ -z "$1" ]]; then
+        echo "No directory name provided"
+        return 1
+    # If multiple args are passed then make the dirs and list them
+    elif [[ $# -gt 1 ]]; then
+        mkdir -p "$@" && ls -l "$@"
+    # Otherwise, make the dir and cd to it (single argument case)
+    else
+        mkdir -p "$1" && cd "$1"
+        pwd # print the current directory
+        ls -la # list the directory contents 
+    fi
+}
+
+# create backup of a file or directory
+backup() {
+  # human readable date and time with backup
+  backup_name=".bak_$(date +%Y-%m-%d_%H-%M-%S)"
+  # check if rsync is installed if not set copy command to cp
+  if command -v rsync &> /dev/null; then
+    COPY_CMD="rsync"
+  else
+    COPY_CMD="cp"
+  fi
+  
+  # take files, dictionaries as arguments get full path as needed many args possible
+  for file in "$@"; do
+    if [ -f "$file" ]; then
+      $COPY_CMD "$file" "$file$backup_name"
+      echo "Backup of $file created as $file$backup_name"
+    elif [ -d "$file" ]; then
+      $COPY_CMD -r "$file" "$file$backup_name"
+      echo "Backup of $file created as $file$backup_name"
+    else
+      echo "$file does not exist"
+    fi
+  done
+}
+
+# Reset file content and open in editor
+reset_file() {
+    # usage: reset_file file1 file2 ...
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: reset_file file1 file2 ..."
+        return 0
+    fi
+  # Reset the file content to an empty string
+  # use the backup function to create a backup of the file before erasing
+  for file in "$@"; do
+    backup "$file"
+    echo "" > "$file"
+    echo "File content backed up and erased."
+    echo "Opening $file in editor"
+    #echo >> the filename to the file with a # at the beginning
+    echo "# $file" >> "$file"
+    #sleep half a second
+    sleep 0.5
+    ${EDITOR:-nano} "$file"
+    # prompt user to restore backup or delete
+    ls $file$backup_name
+    # default to no
+    see_diff="n"
+    echo -n "Do you want to see the difference between the original and backup file? (y/n):(default:n) "
+    read see_diff
+    if [ "$see_diff" == "y" ]; then
+      diff "$file" "$file$backup_name"
+      restore_backup="n"
+      echo -n "Do you want to restore the backup file? (y/n):(default:n) "
+      read restore_backup
+      if [ "$restore_backup" == "y" ]; then
+          mv "$file$backup_name" "$file"
+          echo "Backup file restored."
+      fi
+    fi
+  done
+}
+
+# Wormhole file transfer
+alias wh="wormhole"
+alias wht="wh-transfer"
+# Transfer file with wormhole many or one file
+wh-transfer() {
+    trap '[[ -f "$zip_file" ]] && rm -rf "$zip_file"' EXIT
+
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: wh-transfer [-e|--encrypt] path1 path2 ..."
+        echo "The default is to send the files as is"
+        echo "-e or --encrypt will encrypt the files before sending using age, gpg, or aes"
+        return 0
+    fi
+
+    encrypt_and_send() {
+        local encrypt_tool="$1"
+        shift
+        local files=("$@")
+        local zip_file="./wormhole_$(date +%Y%m%d%H%M%S).zip"
+        zip "$zip_file" "${files[@]}"
+        
+        local encrypted_file="${zip_file}.age"
+        if [[ "$encrypt_tool" == "gpg" ]]; then
+            encrypted_file="${zip_file}.gpg"
+            gpg --output "$encrypted_file" --symmetric "$zip_file"
+        elif [[ "$encrypt_tool" == "aes" ]]; then
+            encrypted_file="${zip_file}.aes"
+            openssl enc -aes-256-cbc -salt -in "$zip_file" -out "$encrypted_file"
+        else
+            age -o "$encrypted_file" -p "$zip_file"
+        fi
+
+        wormhole send "$encrypted_file"
+        rm -rf "$zip_file" "$encrypted_file"
+    }
+
+    if [[ "$1" == "-e" || "$1" == "--encrypt" ]]; then
+        shift
+        if command -v age &> /dev/null; then
+            encrypt_and_send "age" "$@"
+        elif command -v gpg &> /dev/null; then
+            encrypt_and_send "gpg" "$@"
+        else
+            encrypt_and_send "aes" "$@"
+        fi
+    else
+        if [[ "$#" -gt 1 ]]; then
+            local zip_file="./wormhole_$(date +%Y%m%d%H%M%S).zip"
+            zip "$zip_file" "$@"
+            wormhole send "$zip_file"
+            rm -rf "$zip_file"
+        else
+            wormhole send "$@"
+        fi
+    fi
+}
+
+# Menu with all functions in ~/.bash_aliases
+show_func() {
+    # usage: show_help function_name
+    # show the help for a specific function
+    cat ~/.bash_aliases | grep "$1()"
+}
+alias show_function="show_func"
+
+show_alias() {
+    # usage: show_alias
+    # show all the aliases in the ~/.bash_aliases file
+    cat ~/.bash_aliases | grep -E "^alias " | cut -d '=' -f 1 | sort | uniq
+}
+
+show_help() {
+    # usage: show_help function_name
+    # show the help for a specific function
+    grep -E "^\s*${1}\s*\(\)|^\s*function\s+${1}" ~/.bash_aliases
+}
+
+helpmenu() {
+    echo "Help Menu:"
+    echo "----------"
+    echo "See all functions: show_function"
+    echo "See all aliases: show_alias"
+    echo "See help for a function: show_help function_name"
+    echo "See help for an alias: show_help alias_name"
+}
+privateip() {
+    # usage: privateip
+    # show the private ip address
+    if command -v ip &> /dev/null; then
+        ip a | grep "inet " | grep -v "127.0.0.1" | awk '{print $2}'
+    elif command -v ifconfig &> /dev/null; then
+        ifconfig | grep "inet " | grep -v "127.0.0.1" | awk '{print $2}'
+    else
+        echo "ip command not found"
+    fi
+}
+
+# Networking shortcuts
+alias ports='netstat -tulanp'  # List open ports
+alias mypublicip='curl ifconfig.me'  # Check external IP address
+alias myprivateip='privateip'  # Check private IP address
+# Disk usage shortcuts
+alias du='du -h --max-depth=1'  # Show disk usage in human-readable format
+alias df='df -h'                # Show free disk space in human-readable format
+
+# Safe aliases to prevent accidental file overwrites or deletions
+alias rm='rm -i'
+alias cp='cp -i'
+alias mv='mv -i'
