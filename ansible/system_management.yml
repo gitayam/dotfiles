@@ -1,0 +1,791 @@
+---
+- name: System Management Playbook
+  hosts: "{{ host_ip | default('all') }}"
+  become: yes
+  vars_prompt:
+    - name: "host_ip"
+      prompt: "Enter the target host IP address (leave empty for all hosts)"
+      private: no
+      default: "all"
+
+    - name: "user"
+      prompt: "Enter the remote user name"
+      private: no
+      default: "root"
+
+    - name: "become_pass"
+      prompt: "Enter sudo password for remote user (leave empty for root)"
+      private: yes
+
+  vars:
+    custom_vars: "{{ lookup('file', 'inventory/custom/vars.yaml') | from_yaml }}"
+    ssh_keys: "{{ custom_vars.ssh_keys }}"
+    log_path: "{{ custom_vars.log_path | default('/var/log/ansible_maintenance.log') }}"
+    search_path: "{{ custom_vars.search_path | default('/home') }}"
+    exclude_path: "{{ custom_vars.exclude_path | default('/home/discourse') }}"
+    authentik_version: "{{ custom_vars.authentik_version | default('latest') }}"
+    ansible_become_pass: "{{ become_pass if user != 'root' else omit }}"
+    ansible_user: "{{ user }}"
+    required_packages:
+      - git
+      - htop
+      - iotop
+
+  pre_tasks:
+    - name: Display available tags and their functions
+      debug:
+        msg: |
+          System Management Playbook
+          =========================
+          
+          This playbook combines system maintenance, updates, and fresh installation tasks.
+          Use tags to run specific operations and limit hosts to target specific servers.
+          
+          Host Selection:
+          --------------
+          
+          You can target specific hosts in several ways:
+          
+          1. Using the prompt at playbook start
+             - Enter a hostname, IP, group name, or 'all'
+          
+          2. Using command line options
+             - For a single host: ansible-playbook system_management.yml -l proxmox-main
+             - For multiple hosts: ansible-playbook system_management.yml -l "proxmox-main,irregularchat-information"
+             - For a group: ansible-playbook system_management.yml -l my_servers
+          
+          3. Using extra variables
+             - ansible-playbook system_management.yml -e "target_hosts=proxmox-main"
+          
+          Available Tags:
+          --------------
+          
+          System Updates and Maintenance:
+          - update: Update package repositories
+          - upgrade: Perform system update and upgrades
+          - security: Apply security updates
+          - cleanup: Remove unused packages and clean cache
+          - maintenance: Run system maintenance tasks (disk checks, logs)
+          - reboot: Reboot system if needed (use with caution)
+          
+          Fresh Installation:
+          - fresh_install: Run all fresh installation tasks
+          - ssh: Configure SSH keys
+          - terminal_apps: Install terminal applications
+          - gui_apps: Install GUI applications
+          - proton_apps: Install Proton suite
+          - privacy_security_config: Configure privacy and security settings
+          
+          Repository Management:
+          - git: Update Git repositories
+          - docker: Update Docker images
+          - docker_compose_update: Update Docker Compose services
+          
+          Service-Specific Updates:
+          - researchtools: Update research tools on proxmox-main
+          - cryptpad: Update Cryptpad on irregularchat-information
+          - vaultwarden: Update Vaultwarden on proxmox-main
+          - authentik: Update Authentik on irregularchat-information
+          - searxng: Update SearxNG on proxmox-main
+          
+          System Hardening:
+          - hardening: Apply system security hardening measures
+          - firewall: Configure and update firewall rules
+          - ssh_hardening: Secure SSH configuration
+          
+          Monitoring and Logging:
+          - monitoring: Set up or update monitoring tools
+          - logging: Configure system logging
+          - backup: Set up or run backup procedures
+          
+          Performance Optimization:
+          - performance: Apply performance tuning
+          - swap: Configure swap settings
+          - limits: Set system limits
+          
+          Examples:
+          ---------
+          # Run system updates on all hosts:
+          ansible-playbook system_management.yml --tags "update,upgrade,cleanup"
+          
+          # Perform a fresh installation on a single host:
+          ansible-playbook system_management.yml -l proxmox-main --tags "fresh_install"
+          
+          # Update Docker services on a specific group:
+          ansible-playbook system_management.yml -l my_servers --tags "docker,docker_compose_update"
+          
+          # Apply security hardening to multiple specific hosts:
+          ansible-playbook system_management.yml -l "proxmox-main,irregularchat-information" --tags "hardening,firewall,ssh_hardening"
+          
+          # Check mode (dry run) for upgrades on a single host:
+          ansible-playbook system_management.yml -l matrix_server --check --tags "upgrade,security"
+          
+          # Run monitoring setup on all hosts except one:
+          ansible-playbook system_management.yml -l "all:!prod_matrix_server" --tags "monitoring"
+      tags: always
+
+  tasks:
+    #############################
+    # System Updates Section
+    #############################
+    - name: Update APT package index
+      apt:
+        update_cache: yes
+      tags: [update, upgrade, security, fresh_install]
+
+    - name: Upgrade all packages to latest version
+      apt:
+        upgrade: dist
+        allow_unauthenticated: no
+      tags: [upgrade, security]
+
+    - name: Remove unused packages
+      apt:
+        autoremove: yes
+      tags: [cleanup, upgrade, security]
+
+    - name: Clean up APT cache
+      apt:
+        autoclean: yes
+      tags: [cleanup, upgrade, security]
+
+    - name: Ensure all security updates are applied
+      apt:
+        upgrade: full
+        allow_unauthenticated: no
+      tags: [security, upgrade]
+
+    - name: Check if a reboot is required
+      stat:
+        path: /var/run/reboot-required
+      register: reboot_required
+      tags: [maintenance, reboot]
+
+    - name: Reboot the server if a reboot is needed
+      reboot:
+        msg: "Reboot initiated by Ansible for maintenance"
+        connect_timeout: 5
+      when: reboot_required.stat.exists
+      tags: [reboot]
+
+    #############################
+    # Fresh Installation Section
+    #############################
+    - name: Ensure ssh_keys variable is defined
+      assert:
+        that: ssh_keys is defined
+        fail_msg: "The ssh_keys variable is not defined. Please ensure it is set in the inventory."
+      tags: [ssh, fresh_install]
+
+    - name: Add SSH keys to authorized_keys
+      authorized_key:
+        user: "{{ user }}"
+        key: "{{ item }}"
+        state: present
+      loop: "{{ ssh_keys }}"
+      tags: [ssh, fresh_install]
+
+    - name: Install terminal applications
+      package:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - diceware
+        - git
+        - gh
+        - python3
+        - ansible
+        - docker
+        - kubectl
+        - gpg
+        - age
+        - magic-wormhole
+        - wireguard-tools
+      tags: [terminal_apps, fresh_install]
+
+    - name: Check if GUI environment is running
+      command: pgrep -c -f "gnome-session"
+      register: gnome_session
+      ignore_errors: yes
+      tags: [gui_apps, fresh_install]
+
+    - name: Install GUI applications
+      when: gnome_session.rc == 0
+      package:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - element-desktop
+        - firefox
+        - keepassxc
+        - obsidian
+        - qbittorrent
+        - simplex
+        - tailscale
+      tags: [gui_apps, fresh_install]
+
+    - name: Prompt for Proton apps installation
+      pause:
+        prompt: "Do you want to install the Proton apps? (y/n): "
+      register: proton_install
+      tags: [proton_apps, fresh_install]
+
+    - name: Install Proton applications
+      when: proton_install.user_input == "y"
+      package:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - protonvpn
+        - proton-mail
+        - proton-pass
+        - proton-drive
+      tags: [proton_apps, fresh_install]
+
+    - name: Configure privacy and security settings
+      block:
+        - name: Set up UFW firewall
+          ufw:
+            state: enabled
+            policy: deny
+            rule: allow
+            port: "{{ item }}"
+          loop:
+            - "22"
+            - "80"
+            - "443"
+          
+        - name: Install security packages
+          package:
+            name:
+              - fail2ban
+              - unattended-upgrades
+              - apparmor
+            state: present
+            
+        - name: Enable automatic security updates
+          lineinfile:
+            path: /etc/apt/apt.conf.d/20auto-upgrades
+            line: 'APT::Periodic::Unattended-Upgrade "1";'
+            create: yes
+      tags: [privacy_security_config, fresh_install]
+
+    - name: Manage system users
+      block:
+        - name: Create system users
+          user:
+            name: "{{ item.name }}"
+            shell: "{{ item.shell | default('/bin/bash') }}"
+            groups: "{{ item.groups | default(omit) }}"
+            append: "{{ item.append | default(yes) }}"
+            state: present
+          loop: "{{ system_users | default([]) }}"
+          
+        - name: Set up SSH authorized keys for users
+          authorized_key:
+            user: "{{ item.0.name }}"
+            key: "{{ item.1 }}"
+            state: present
+          loop: "{{ system_users | default([]) | product(ssh_keys | default([])) | list }}"
+          when: system_users is defined and ssh_keys is defined
+      tags: [users, security, fresh_install]
+
+    #############################
+    # Git Repositories Section
+    #############################
+    - name: Recursively find all .git directories, excluding specified paths
+      shell: "find {{ search_path }} -path {{ exclude_path }} -prune -o -type d -name '.git' -print"
+      register: git_dirs
+      changed_when: false
+      tags: [git]
+
+    - name: Update each Git repository stashing changes before pulling
+      shell: git stash && git pull
+      args:
+        chdir: "{{ item | dirname }}"
+      loop: "{{ git_dirs.stdout_lines }}"
+      async: 0
+      poll: 1
+      no_log: False
+      tags: [git]
+
+    #############################
+    # Docker Section
+    #############################
+    - name: Pull all Docker images individually
+      shell: |
+        update_docker_images() {
+            images=$(docker images --format '{{"{{"}}.Repository{{"}}"}}' | grep -v '<none>')
+
+            for image in $images; do
+                echo "Pulling image $image"
+                docker pull "$image"
+            done
+        }
+
+        update_docker_images
+      args:
+        executable: /bin/bash
+      async: 0
+      poll: 1
+      no_log: False
+      tags: [docker_pull, docker]
+
+    - name: Recursively find Docker Compose files, excluding specified paths
+      shell: "find {{ search_path }} -path {{ exclude_path }} -prune -o -type f \\( -name 'docker-compose.yml' -o -name 'docker-compose.yaml' \\) -print"
+      register: docker_compose_files
+      changed_when: false
+      tags: [docker_compose_update, docker]
+
+    - name: Pull and update Docker Compose services
+      shell: |
+        docker compose pull && docker compose up -d
+      args:
+        chdir: "{{ item | dirname }}"
+      loop: "{{ docker_compose_files.stdout_lines }}"
+      async: 0
+      poll: 1
+      no_log: False
+      tags: [docker_compose_update, docker]
+
+    #############################
+    # Service-Specific Updates
+    #############################
+    - name: Update researchtools server on proxmox-main
+      shell: |
+        # Navigate to the project directory
+        cd /home/researchtoolspy
+        git pull
+        docker compose pull
+        docker compose up -d --build
+      when: inventory_hostname == 'proxmox-main'
+      tags: [researchtools, custom, docker]
+
+    - name: Update Cryptpad on irregularchat-information
+      shell: |
+        git pull
+        cp www/common/application_config_internal.js customize/application_config.js 
+        ./install-onlyoffice.sh
+        npm ci
+        npm run install:components
+        pm2 restart cryptpad
+      args:
+        chdir: /home/cryptpad/cryptpad
+      async: 0
+      poll: 1
+      no_log: False
+      when: inventory_hostname == 'irregularchat-information'
+      tags: [cryptpad, custom, git]
+
+    - name: Update Vaultwarden on proxmox-main
+      shell: ./docker-cmd.sh
+      args:
+        chdir: /home/vaultwarden
+      async: 0
+      poll: 1
+      no_log: False
+      when: inventory_hostname == 'proxmox-main'
+      tags: [vaultwarden, custom, docker]
+
+    - name: Update Authentik on irregularchat-information
+      shell: |
+        # rename the backup file to include the current date
+        mv docker-compose.yml docker-compose.yml.bak.$(date +%Y%m%d)
+        # confirm the file was renamed
+        ls -l docker-compose.yml.bak.$(date +%Y%m%d) && echo "File renamed"
+        # download the new docker-compose.yml file
+        wget -O docker-compose.yml https://goauthentik.io/version/{{ authentik_version }}/docker-compose.yml
+        # confirm the file was downloaded
+        ls -l docker-compose.yml && echo "File downloaded"
+        # pull the new images
+        docker compose pull
+        # restart the services
+        docker compose up -d
+      args:
+        chdir: /home/authentik/authentik
+      async: 0
+      poll: 1
+      no_log: False
+      when: inventory_hostname == 'irregularchat-information'
+      tags: [authentik, custom, docker]
+
+    - name: Update SearxNG on proxmox-main
+      shell: |
+        git stash
+        git pull
+        git stash pop
+        docker compose pull
+        docker compose up -d
+      args:
+        chdir: /home/searxng/searxng-docker
+      async: 0
+      poll: 1
+      no_log: False
+      when: inventory_hostname == 'irregularchat-information'
+      tags: [searxng, custom, docker]
+
+    #############################
+    # Maintenance Tasks
+    #############################
+    - name: Check disk usage and log results
+      shell: "df -h | grep '^/dev/'"
+      register: disk_usage
+      tags: [maintenance]
+
+    - name: Write disk usage to log
+      copy:
+        content: "{{ disk_usage.stdout }}"
+        dest: "{{ log_path }}"
+        owner: root
+        mode: '0644'
+      tags: [maintenance]
+
+    - name: Check for server uptime and log results
+      command: uptime
+      register: uptime_info
+      tags: [maintenance]
+
+    - name: Append uptime to log file
+      lineinfile:
+        path: "{{ log_path }}"
+        line: "{{ uptime_info.stdout }}"
+        create: yes
+      tags: [maintenance]
+
+    - name: Display the last 10 lines of the log file
+      shell: tail -n 10 "{{ log_path }}"
+      register: log_tail
+      tags: [maintenance]
+
+    - name: Show log tail
+      debug:
+        var: log_tail.stdout
+      tags: [maintenance]
+
+    #############################
+    # System Hardening Section
+    #############################
+    - name: Configure SSH hardening
+      block:
+        - name: Ensure SSH configuration is secure
+          lineinfile:
+            path: /etc/ssh/sshd_config
+            regexp: "{{ item.regexp }}"
+            line: "{{ item.line }}"
+            state: present
+          loop:
+            - { regexp: '^#?PermitRootLogin', line: 'PermitRootLogin no' }
+            - { regexp: '^#?PasswordAuthentication', line: 'PasswordAuthentication no' }
+            - { regexp: '^#?X11Forwarding', line: 'X11Forwarding no' }
+            - { regexp: '^#?MaxAuthTries', line: 'MaxAuthTries 3' }
+            - { regexp: '^#?AllowTcpForwarding', line: 'AllowTcpForwarding no' }
+            - { regexp: '^#?ClientAliveInterval', line: 'ClientAliveInterval 300' }
+            - { regexp: '^#?ClientAliveCountMax', line: 'ClientAliveCountMax 2' }
+          notify: Restart SSH
+      tags: [ssh_hardening, hardening, security]
+
+    - name: Set up fail2ban
+      block:
+        - name: Install fail2ban
+          package:
+            name: fail2ban
+            state: present
+            
+        - name: Configure fail2ban for SSH
+          copy:
+            dest: /etc/fail2ban/jail.local
+            content: |
+              [sshd]
+              enabled = true
+              port = ssh
+              filter = sshd
+              logpath = /var/log/auth.log
+              maxretry = 3
+              bantime = 3600
+          notify: Restart fail2ban
+      tags: [hardening, security]
+      
+    - name: Configure system limits
+      block:
+        - name: Set system limits in limits.conf
+          lineinfile:
+            path: /etc/security/limits.conf
+            line: "{{ item }}"
+            state: present
+          loop:
+            - "* soft nofile 65536"
+            - "* hard nofile 65536"
+            - "* soft nproc 4096"
+            - "* hard nproc 4096"
+            
+        - name: Set kernel parameters for performance and security
+          sysctl:
+            name: "{{ item.key }}"
+            value: "{{ item.value }}"
+            state: present
+            reload: yes
+          loop:
+            - { key: "net.ipv4.tcp_fin_timeout", value: "20" }
+            - { key: "net.ipv4.tcp_keepalive_time", value: "1200" }
+            - { key: "net.ipv4.tcp_max_syn_backlog", value: "2048" }
+            - { key: "net.ipv4.tcp_syncookies", value: "1" }
+            - { key: "net.ipv4.conf.all.accept_redirects", value: "0" }
+            - { key: "net.ipv4.conf.all.send_redirects", value: "0" }
+            - { key: "net.ipv4.conf.all.accept_source_route", value: "0" }
+            - { key: "net.ipv4.conf.all.log_martians", value: "1" }
+      tags: [performance, hardening, limits]
+
+    - name: Configure swap settings
+      block:
+        - name: Check if swap file exists
+          stat:
+            path: /swapfile
+          register: swap_file_check
+          
+        - name: Create swap file if it doesn't exist
+          command: dd if=/dev/zero of=/swapfile bs=1M count=2048
+          when: not swap_file_check.stat.exists
+          
+        - name: Set swap file permissions
+          file:
+            path: /swapfile
+            mode: '0600'
+          when: not swap_file_check.stat.exists
+          
+        - name: Set up swap area
+          command: mkswap /swapfile
+          when: not swap_file_check.stat.exists
+          
+        - name: Enable swap
+          command: swapon /swapfile
+          when: not swap_file_check.stat.exists
+          
+        - name: Add swap to fstab
+          lineinfile:
+            path: /etc/fstab
+            line: "/swapfile none swap sw 0 0"
+            state: present
+          when: not swap_file_check.stat.exists
+          
+        - name: Configure swappiness
+          sysctl:
+            name: vm.swappiness
+            value: '10'
+            state: present
+      tags: [swap, performance]
+
+    - name: Set up monitoring tools
+      block:
+        - name: Install monitoring packages
+          package:
+            name:
+              - htop
+              - iotop
+              - sysstat
+              - glances
+              - ncdu
+            state: present
+            
+        - name: Enable sysstat collection
+          lineinfile:
+            path: /etc/default/sysstat
+            regexp: '^ENABLED='
+            line: 'ENABLED="true"'
+          notify: Restart sysstat
+      tags: [monitoring, maintenance]
+
+    - name: Configure logrotate
+      block:
+        - name: Ensure logrotate is installed
+          package:
+            name: logrotate
+            state: present
+            
+        - name: Configure logrotate for system logs
+          copy:
+            dest: /etc/logrotate.d/custom-logs
+            content: |
+              /var/log/syslog
+              /var/log/auth.log
+              /var/log/kern.log
+              /var/log/mail.log
+              {
+                  rotate 7
+                  daily
+                  missingok
+                  notifempty
+                  delaycompress
+                  compress
+                  postrotate
+                      /usr/lib/rsyslog/rsyslog-rotate
+                  endscript
+              }
+      tags: [logging, maintenance]
+
+    - name: Set up backup procedures
+      block:
+        - name: Install backup tools
+          package:
+            name: rsync
+            state: present
+            
+        - name: Create backup script
+          copy:
+            dest: /usr/local/bin/system-backup.sh
+            mode: '0755'
+            content: |
+              #!/bin/bash
+              # Simple backup script
+              BACKUP_DIR="/var/backups/system"
+              DATE=$(date +%Y%m%d)
+              mkdir -p $BACKUP_DIR
+              
+              # Backup important configuration files
+              tar -czf $BACKUP_DIR/etc-backup-$DATE.tar.gz /etc
+              
+              # Backup databases if MySQL/MariaDB is installed
+              if command -v mysqldump &> /dev/null; then
+                  mysqldump --all-databases > $BACKUP_DIR/all-databases-$DATE.sql
+              fi
+              
+              # Cleanup old backups (keep last 7 days)
+              find $BACKUP_DIR -type f -mtime +7 -delete
+            
+        - name: Set up backup cron job
+          cron:
+            name: "Daily system backup"
+            hour: "2"
+            minute: "0"
+            job: "/usr/local/bin/system-backup.sh"
+      tags: [backup, maintenance]
+
+    - name: Configure automatic updates
+      block:
+        - name: Install unattended-upgrades
+          package:
+            name: unattended-upgrades
+            state: present
+            
+        - name: Configure unattended-upgrades
+          copy:
+            dest: /etc/apt/apt.conf.d/50unattended-upgrades
+            content: |
+              Unattended-Upgrade::Allowed-Origins {
+                  "${distro_id}:${distro_codename}";
+                  "${distro_id}:${distro_codename}-security";
+                  "${distro_id}ESMApps:${distro_codename}-apps-security";
+                  "${distro_id}ESM:${distro_codename}-infra-security";
+              };
+              Unattended-Upgrade::Package-Blacklist {
+              };
+              Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+              Unattended-Upgrade::MinimalSteps "true";
+              Unattended-Upgrade::InstallOnShutdown "false";
+              Unattended-Upgrade::Mail "root";
+              Unattended-Upgrade::MailReport "on-change";
+              Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+              Unattended-Upgrade::Remove-Unused-Dependencies "true";
+              Unattended-Upgrade::Automatic-Reboot "false";
+              
+        - name: Enable automatic updates
+          copy:
+            dest: /etc/apt/apt.conf.d/20auto-upgrades
+            content: |
+              APT::Periodic::Update-Package-Lists "1";
+              APT::Periodic::Download-Upgradeable-Packages "1";
+              APT::Periodic::AutocleanInterval "7";
+              APT::Periodic::Unattended-Upgrade "1";
+      tags: [security, update, maintenance]
+
+    - name: Optimize disk performance
+      block:
+        - name: Install disk utilities
+          package:
+            name:
+              - hdparm
+              - util-linux
+            state: present
+            
+        - name: Set noatime on filesystems
+          mount:
+            path: "{{ item }}"
+            src: "{{ ansible_mounts | selectattr('mount', 'equalto', item) | map(attribute='device') | first }}"
+            fstype: "{{ ansible_mounts | selectattr('mount', 'equalto', item) | map(attribute='fstype') | first }}"
+            opts: "defaults,noatime"
+            state: mounted
+          loop:
+            - /
+            - /home
+          when: ansible_mounts | selectattr('mount', 'equalto', item) | list | length > 0
+          ignore_errors: yes
+      tags: [performance]
+
+    - name: Install required packages
+      package:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ required_packages }}"
+
+    - name: Manage SSL certificates
+      block:
+        - name: Check for expiring certificates
+          shell: find /etc/ssl/certs -name "*.pem" -exec openssl x509 -enddate -noout -in {} \; | grep "notAfter" | sort
+          register: cert_expiry
+          changed_when: false
+          
+        - name: Log certificates expiring in 30 days
+          shell: |
+            for cert in $(find /etc/ssl/certs -name "*.pem"); do
+              end_date=$(openssl x509 -enddate -noout -in $cert | cut -d= -f2)
+              end_epoch=$(date -d "$end_date" +%s)
+              now_epoch=$(date +%s)
+              diff_days=$(( (end_epoch - now_epoch) / 86400 ))
+              if [ $diff_days -lt 30 ]; then
+                echo "$cert expires in $diff_days days"
+              fi
+            done
+          register: expiring_certs
+          changed_when: false
+      tags: [certificates, security]
+
+    - name: Optimize network settings
+      block:
+        - name: Configure TCP/IP stack optimization
+          sysctl:
+            name: "{{ item.key }}"
+            value: "{{ item.value }}"
+            state: present
+            reload: yes
+          loop:
+            - { key: "net.ipv4.tcp_window_scaling", value: "1" }
+            - { key: "net.ipv4.tcp_timestamps", value: "1" }
+            - { key: "net.ipv4.tcp_sack", value: "1" }
+            - { key: "net.core.netdev_max_backlog", value: "5000" }
+            - { key: "net.core.rmem_max", value: "16777216" }
+            - { key: "net.core.wmem_max", value: "16777216" }
+        
+        - name: Install network monitoring tools
+          package:
+            name:
+              - iftop
+              - nload
+              - nethogs
+              - tcpdump
+            state: present
+      tags: [network, performance, fresh_install]
+
+  handlers:
+    - name: Restart SSH
+      service:
+        name: sshd
+        state: restarted
+        
+    - name: Restart fail2ban
+      service:
+        name: fail2ban
+        state: restarted
+        
+    - name: Restart sysstat
+      service:
+        name: sysstat
+        state: restarted 
