@@ -4,10 +4,6 @@
 #The cron jobs are executed with the root user
 
 ###### Security ######
-#TODO: Add cron job to check for suspicious cron jobs and remove them
-#TODO: Add cron job to check for open ports and close them
-#TODO: Add cron job to check for rootkits
-
 # Security Jobs
 # Check for suspicious cron jobs daily at 2am
 0 2 * * * find /etc/cron.d -type f -mtime -1 | grep -v "$(whoami)" | mail -s "Suspicious cron jobs" $(whoami)
@@ -19,11 +15,6 @@
 0 4 * * 0 /usr/local/bin/rkhunter --check --skip-keypress --report-warnings-only
 
 ###### Maintenance ######
-#TODO: Add cron job to check for updates and install them
-#TODO: Add cron job to check for disk space and delete old files
-#TODO: Add cron job to check for duplicate files and delete them
-#TODO: Add cron job to check for and kill processes that shouldn't be running
-#TODO: Keep git repos updated with the latest code
 
 # Maintenance Jobs
 # Check for and install updates weekly
