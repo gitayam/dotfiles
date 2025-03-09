@@ -542,39 +542,59 @@
     #############################
     # Maintenance Tasks
     #############################
-    - name: Check disk usage and log results
-      shell: "df -h | grep '^/dev/'"
-      register: disk_usage
-      tags: [maintenance]
-
-    - name: Write disk usage to log
-      copy:
-        content: "{{ disk_usage.stdout }}"
-        dest: "{{ log_path }}"
-        owner: root
-        mode: '0644'
-      tags: [maintenance]
-
-    - name: Check for server uptime and log results
-      command: uptime
-      register: uptime_info
-      tags: [maintenance]
-
-    - name: Append uptime to log file
-      lineinfile:
-        path: "{{ log_path }}"
-        line: "{{ uptime_info.stdout }}"
-        create: yes
-      tags: [maintenance]
-
-    - name: Display the last 10 lines of the log file
-      shell: tail -n 10 "{{ log_path }}"
-      register: log_tail
-      tags: [maintenance]
-
-    - name: Show log tail
-      debug:
-        var: log_tail.stdout
+    - name: Perform maintenance tasks with error handling
+      block:
+        - name: Check disk usage and log results
+          shell: "df -h | grep '^/dev/'"
+          register: disk_usage
+          failed_when: false
+          
+        - name: Create log directory if it doesn't exist
+          file:
+            path: "{{ log_path | dirname }}"
+            state: directory
+            mode: '0755'
+          when: log_path is defined
+          
+        - name: Write disk usage to log
+          copy:
+            content: "{{ disk_usage.stdout | default('No disk usage information available') }}"
+            dest: "{{ log_path }}"
+            owner: root
+            mode: '0644'
+          when: log_path is defined
+          
+        - name: Check for server uptime and log results
+          command: uptime
+          register: uptime_info
+          failed_when: false
+          
+        - name: Append uptime to log file
+          lineinfile:
+            path: "{{ log_path }}"
+            line: "{{ uptime_info.stdout | default('No uptime information available') }}"
+            create: yes
+          when: log_path is defined
+          
+        - name: Append timestamp to log file
+          lineinfile:
+            path: "{{ log_path }}"
+            line: "Maintenance check performed on {{ ansible_date_time.iso8601 }}"
+            create: yes
+          when: log_path is defined
+          
+        - name: Display the last 10 lines of the log file
+          shell: "if [ -f {{ log_path }} ]; then tail -n 10 {{ log_path }}; else echo 'Log file not found'; fi"
+          register: log_tail
+          changed_when: false
+          
+        - name: Show log tail
+          debug:
+            var: log_tail.stdout
+      rescue:
+        - name: Report maintenance task failure
+          debug:
+            msg: "Some maintenance tasks failed. Check the server manually."
       tags: [maintenance]
 
     #############################
@@ -691,22 +711,76 @@
 
     - name: Set up monitoring tools
       block:
-        - name: Install monitoring packages
-          package:
-            name:
-              - htop
-              - iotop
-              - sysstat
-              - glances
-              - ncdu
-            state: present
-            
-        - name: Enable sysstat collection
+        - name: Install monitoring packages with error handling
+          block:
+            - name: Check if apt-listbugs is installed
+              command: which apt-listbugs
+              register: apt_listbugs_check
+              failed_when: false
+              changed_when: false
+              
+            - name: Temporarily disable apt-listbugs if installed
+              shell: |
+                if [ -f /etc/apt/apt.conf.d/10apt-listbugs ]; then
+                  mv /etc/apt/apt.conf.d/10apt-listbugs /etc/apt/apt.conf.d/10apt-listbugs.disabled
+                  echo "Disabled apt-listbugs temporarily"
+                fi
+              register: disable_apt_listbugs
+              changed_when: "'Disabled apt-listbugs' in disable_apt_listbugs.stdout"
+              when: apt_listbugs_check.rc == 0
+              
+            - name: Install core monitoring packages
+              package:
+                name:
+                  - htop
+                  - iotop
+                  - sysstat
+                state: present
+                
+            - name: Install additional monitoring packages if available
+              package:
+                name: "{{ item }}"
+                state: present
+              loop:
+                - glances
+                - ncdu
+              ignore_errors: yes
+              
+            - name: Restore apt-listbugs configuration
+              shell: |
+                if [ -f /etc/apt/apt.conf.d/10apt-listbugs.disabled ]; then
+                  mv /etc/apt/apt.conf.d/10apt-listbugs.disabled /etc/apt/apt.conf.d/10apt-listbugs
+                  echo "Restored apt-listbugs"
+                fi
+              register: restore_apt_listbugs
+              changed_when: "'Restored apt-listbugs' in restore_apt_listbugs.stdout"
+              when: apt_listbugs_check.rc == 0 and disable_apt_listbugs.changed
+              
+          rescue:
+            - name: Install minimal monitoring tools on failure
+              package:
+                name:
+                  - htop
+                state: present
+              ignore_errors: yes
+              
+            - name: Restore apt-listbugs configuration after failure
+              shell: |
+                if [ -f /etc/apt/apt.conf.d/10apt-listbugs.disabled ]; then
+                  mv /etc/apt/apt.conf.d/10apt-listbugs.disabled /etc/apt/apt.conf.d/10apt-listbugs
+                  echo "Restored apt-listbugs after failure"
+                fi
+              register: restore_apt_listbugs_failure
+              changed_when: "'Restored apt-listbugs' in restore_apt_listbugs_failure.stdout"
+              when: apt_listbugs_check.rc == 0 and disable_apt_listbugs.changed
+              
+        - name: Enable sysstat collection if installed
           lineinfile:
             path: /etc/default/sysstat
             regexp: '^ENABLED='
             line: 'ENABLED="true"'
           notify: Restart sysstat
+          ignore_errors: yes
       tags: [monitoring, maintenance]
 
     - name: Configure logrotate
