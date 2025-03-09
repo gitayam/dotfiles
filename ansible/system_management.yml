@@ -1,6 +1,6 @@
 ---
 - name: System Management Playbook
-  hosts: "{{ host_ip | default('all') }}"
+  hosts: "{{ lookup('vars', service_tag_host_map[ansible_run_tags | intersect(service_tags) | first] | default(target_hosts, true)) if ansible_run_tags | intersect(service_tags) else target_hosts | default('all') }}"
   become: yes
   vars_prompt:
     - name: "host_ip"
@@ -31,6 +31,19 @@
       - htop
       - iotop
     ansible_ssh_timeout: 30
+    service_tags:
+      - authentik
+      - researchtools
+      - cryptpad
+      - vaultwarden
+      - searxng
+    service_tag_host_map:
+      authentik: "irregularchat-information"
+      researchtools: "proxmox-main"
+      cryptpad: "irregularchat-information"
+      vaultwarden: "proxmox-main"
+      searxng: "proxmox-main"
+    target_hosts: "{{ host_ip | default('all') }}"
 
   pre_tasks:
     - name: Display playbook header
