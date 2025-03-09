@@ -276,6 +276,382 @@ scan_ports(){
     fi
     sudo nmap -sS -Pn $1
 }
+# PDF Handling
+#using ghost script to convert pdfs to text that are still ocr
+# gs -dSAFER -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -sOutputFile=same_name_with_no_spaces_and_no_special_chars.pdf original.pdf
+handle_pdf() {
+    # Show help if no arguments or help option provided
+    if [[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "📄 PDF Handler"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "Usage: handle_pdf [options] file.pdf [file2.pdf file3.pdf ...]"
+        echo ""
+        echo "Options:"
+        echo "  -c, --compress       Compress the PDF file"
+        echo "  -o, --ocr            Apply OCR to make text searchable"
+        echo "  -t, --text           Extract text from PDF"
+        echo "  -s, --sanitize       Sanitize filename (remove spaces and special chars)"
+        echo "  -m, --metadata       Display PDF metadata"
+        echo "  -r, --rotate [90|180|270]  Rotate PDF by specified degrees"
+        echo "  -q, --quiet          Suppress verbose output"
+        echo "  -h, --help           Show this help message"
+        echo ""
+        echo "Examples:"
+        echo "  handle_pdf document.pdf                  # Process a single PDF"
+        echo "  handle_pdf -c large_file.pdf             # Compress PDF"
+        echo "  handle_pdf -s *.pdf                      # Process all PDFs in current dir"
+        echo "  handle_pdf -o scan1.pdf scan2.pdf        # OCR multiple specific PDFs"
+        echo "  handle_pdf -t document.pdf > text.txt    # Extract text to file"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        return 0
+    fi
+
+    # Parse options
+    local compress=false
+    local ocr=false
+    local extract_text=false
+    local sanitize=false
+    local show_metadata=false
+    local rotate=false
+    local rotate_degrees=0
+    local quiet_mode=false
+    local files=()
+    
+    # Parse all options first
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -c|--compress)
+                compress=true
+                shift
+                ;;
+            -o|--ocr)
+                ocr=true
+                shift
+                ;;
+            -t|--text)
+                extract_text=true
+                shift
+                ;;
+            -s|--sanitize)
+                sanitize=true
+                shift
+                ;;
+            -m|--metadata)
+                show_metadata=true
+                shift
+                ;;
+            -r|--rotate)
+                rotate=true
+                shift
+                if [[ "$1" =~ ^(90|180|270)$ ]]; then
+                    rotate_degrees="$1"
+                    shift
+                else
+                    echo "❌ Error: Rotation must be 90, 180, or 270 degrees"
+                    return 1
+                fi
+                ;;
+            -q|--quiet)
+                quiet_mode=true
+                shift
+                ;;
+            -h|--help)
+                # Show help and exit
+                handle_pdf
+                return 0
+                ;;
+            -*)
+                echo "❌ Unknown option: $1"
+                echo "Use 'handle_pdf --help' to see available options"
+                return 1
+                ;;
+            *)
+                # Add to files array
+                files+=("$1")
+                shift
+                ;;
+        esac
+    done
+    
+    # Check if we have any files to process
+    if [[ ${#files[@]} -eq 0 ]]; then
+        echo "❌ Error: No input files specified"
+        return 1
+    fi
+    
+    # Process each file
+    local file_count=0
+    local success_count=0
+    
+    for input_file in "${files[@]}"; do
+        # Skip non-PDF files
+        if [[ ! "$input_file" =~ \.pdf$ ]]; then
+            echo "⚠️ Skipping non-PDF file: $input_file"
+            continue
+        fi
+        
+        # Validate input file
+        if [[ ! -f "$input_file" ]]; then
+            echo "❌ Error: File '$input_file' does not exist, skipping"
+            continue
+        fi
+        
+        ((file_count++))
+        
+        # Set default output file
+        local output_file=""
+        
+        # If sanitize is true, create sanitized filename
+        if [[ "$sanitize" == true ]]; then
+            local dirname=$(dirname "$input_file")
+            local basename=$(basename "$input_file" .pdf)
+            # Remove spaces and special characters
+            local sanitized_name=$(echo "$basename" | tr -cd '[:alnum:]._-')
+            output_file="${dirname}/${sanitized_name}.pdf"
+            
+            # Don't overwrite input file
+            if [[ "$output_file" == "$input_file" ]]; then
+                output_file="${dirname}/${sanitized_name}_clean.pdf"
+            fi
+        else
+            # Default output adds _processed suffix
+            output_file="${input_file%.pdf}_processed.pdf"
+        fi
+        
+        # Create a temporary directory for processing
+        local temp_dir=$(mktemp -d)
+        local temp_file="${temp_dir}/input.pdf"
+        cp "$input_file" "$temp_file"
+        local current_file="$temp_file"
+        
+        # Set up trap to clean temporary files on exit
+        trap "rm -rf '$temp_dir'" EXIT
+        
+        # Process the PDF
+        echo "🔄 Processing '$input_file'..."
+        
+        # Check for required tools and prompt for installation
+        if [[ "$compress" == true || "$sanitize" == true || "$rotate" == true ]]; then
+            if ! command -v gs &> /dev/null; then
+                echo "❌ Error: Ghostscript (gs) is required but not installed"
+                echo -n "Do you want to install Ghostscript now? (y/n): "
+                read install_gs
+                if [[ "$install_gs" =~ ^[Yy]$ ]]; then
+                    echo "📦 Installing Ghostscript..."
+                    brew install ghostscript
+                    if ! command -v gs &> /dev/null; then
+                        echo "❌ Installation failed. Please install Ghostscript manually."
+                        continue
+                    fi
+                    echo "✅ Ghostscript installed successfully"
+                else
+                    continue
+                fi
+            fi
+        fi
+        
+        if [[ "$ocr" == true ]]; then
+            # Check if we have the ocr_files function available
+            if ! typeset -f ocr_files > /dev/null; then
+                # Check for OCR tools
+                if ! command -v ocrmypdf &> /dev/null; then
+                    echo "❌ Error: ocrmypdf is required for OCR but not installed"
+                    echo -n "Do you want to install ocrmypdf now? (y/n): "
+                    read install_ocrmypdf
+                    if [[ "$install_ocrmypdf" =~ ^[Yy]$ ]]; then
+                        echo "📦 Installing ocrmypdf..."
+                        pip install ocrmypdf
+                        if ! command -v ocrmypdf &> /dev/null; then
+                            echo "❌ Installation failed. Please install ocrmypdf manually."
+                            continue
+                        fi
+                        echo "✅ ocrmypdf installed successfully"
+                    else
+                        continue
+                    fi
+                fi
+            fi
+        fi
+        
+        # Show metadata if requested
+        if [[ "$show_metadata" == true ]]; then
+            if ! command -v pdfinfo &> /dev/null; then
+                echo "❌ Error: pdfinfo is required but not installed"
+                echo -n "Do you want to install poppler (includes pdfinfo) now? (y/n): "
+                read install_poppler
+                if [[ "$install_poppler" =~ ^[Yy]$ ]]; then
+                    echo "📦 Installing poppler..."
+                    brew install poppler
+                    if ! command -v pdfinfo &> /dev/null; then
+                        echo "❌ Installation failed. Please install poppler manually."
+                        continue
+                    fi
+                    echo "✅ poppler installed successfully"
+                else
+                    continue
+                fi
+            fi
+            
+            echo "📋 PDF Metadata for '$input_file':"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            pdfinfo "$input_file"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            # If only showing metadata, continue to next file
+            if [[ "$compress" == false && "$ocr" == false && "$extract_text" == false && "$sanitize" == false && "$rotate" == false ]]; then
+                ((success_count++))
+                continue
+            fi
+        fi
+        
+        # Extract text if requested
+        if [[ "$extract_text" == true ]]; then
+            if ! command -v pdftotext &> /dev/null; then
+                echo "❌ Error: pdftotext is required but not installed"
+                echo -n "Do you want to install poppler (includes pdftotext) now? (y/n): "
+                read install_poppler
+                if [[ "$install_poppler" =~ ^[Yy]$ ]]; then
+                    echo "📦 Installing poppler..."
+                    brew install poppler
+                    if ! command -v pdftotext &> /dev/null; then
+                        echo "❌ Installation failed. Please install poppler manually."
+                        continue
+                    fi
+                    echo "✅ poppler installed successfully"
+                else
+                    continue
+                fi
+            fi
+            
+            echo "📄 Extracting text from '$input_file'..."
+            pdftotext "$input_file" -
+            ((success_count++))
+            continue
+        fi
+        
+        # Sanitize/compress/rotate with Ghostscript
+        if [[ "$compress" == true || "$sanitize" == true || "$rotate" == true ]]; then
+            local next_file="${temp_dir}/gs_output.pdf"
+            
+            if [[ "$quiet_mode" != true ]]; then
+                echo "🔄 Running Ghostscript..."
+            fi
+            
+            # Run Ghostscript with appropriate options
+            if [[ "$quiet_mode" == true ]]; then
+                gs -q -dSAFER -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -sOutputFile="$next_file" \
+                   $([[ "$compress" == true ]] && echo "-dPDFSETTINGS=/ebook") \
+                   $([[ "$rotate" == true ]] && echo "-dAutoRotatePages=/None -c \"<</Orientation $rotate_degrees>> setpagedevice\"") \
+                   "$current_file" 2>/dev/null
+            else
+                gs -dSAFER -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -sOutputFile="$next_file" \
+                   $([[ "$compress" == true ]] && echo "-dPDFSETTINGS=/ebook") \
+                   $([[ "$rotate" == true ]] && echo "-dAutoRotatePages=/None -c \"<</Orientation $rotate_degrees>> setpagedevice\"") \
+                   "$current_file"
+            fi
+            
+            # Check if successful
+            if [[ $? -ne 0 ]]; then
+                echo "❌ Error: Ghostscript processing failed for '$input_file'"
+                continue
+            fi
+            
+            current_file="$next_file"
+        fi
+        
+        # Apply OCR if requested
+        if [[ "$ocr" == true ]]; then
+            echo "🔄 Applying OCR to make text searchable..."
+            local next_file="${temp_dir}/ocr_output.pdf"
+            
+            # Check for and use existing OCR functions in order of preference
+            if typeset -f ocr_files > /dev/null; then
+                echo "🔄 Using existing ocr_files function for OCR processing"
+                ocr_files "$current_file" "$next_file"
+            elif typeset -f ocrmyfile > /dev/null; then
+                echo "🔄 Using existing ocrmyfile function for OCR processing"
+                ocrmyfile "$current_file" "$next_file"
+            elif typeset -f ocr_pdf > /dev/null; then
+                echo "🔄 Using existing ocr_pdf function for OCR processing"
+                ocr_pdf "$current_file" "$next_file"
+            else
+                ocrmypdf --skip-text "$current_file" "$next_file"
+            fi
+            
+            # Check if successful
+            if [[ $? -ne 0 ]]; then
+                echo "❌ Error: OCR processing failed for '$input_file'"
+                continue
+            fi
+            
+            current_file="$next_file"
+        fi
+        
+        # Check if output file already exists and prompt for overwrite
+        if [[ -f "$output_file" && "$output_file" != "$input_file" ]]; then
+            echo -n "⚠️ File '$output_file' already exists. Overwrite? (y/n): "
+            read overwrite
+            if [[ ! "$overwrite" =~ ^[Yy]$ ]]; then
+                echo "Operation cancelled for '$input_file'. Processed file not saved."
+                continue
+            fi
+        fi
+        
+        # Move the processed file to the final destination
+        cp "$current_file" "$output_file"
+        
+        echo "✅ Processing complete: '$output_file'"
+        
+        # Show file size comparison
+        if [[ "$input_file" != "$output_file" ]]; then
+            # Use macOS compatible file size commands
+            local original_size=$(stat -f "%z" "$input_file" | awk '{ suffix="BKMGTPEZY"; for(i=0; $1>1024 && i < length(suffix); i++) $1/=1024; printf "%.1f%s", $1, substr(suffix, i+1, 1); }')
+            local new_size=$(stat -f "%z" "$output_file" | awk '{ suffix="BKMGTPEZY"; for(i=0; $1>1024 && i < length(suffix); i++) $1/=1024; printf "%.1f%s", $1, substr(suffix, i+1, 1); }')
+            echo "📊 Original size: $original_size, New size: $new_size"
+            
+            # Calculate percentage change
+            local original_bytes=$(stat -f "%z" "$input_file")
+            local new_bytes=$(stat -f "%z" "$output_file")
+            if [[ $original_bytes -gt 0 ]]; then
+                if command -v bc &> /dev/null; then
+                    local percent_change=$(echo "scale=1; ($new_bytes - $original_bytes) * 100 / $original_bytes" | bc 2>/dev/null)
+                    if [[ $? -eq 0 ]]; then
+                        if [[ $(echo "$percent_change < 0" | bc) -eq 1 ]]; then
+                            echo "🔽 Reduced by $(echo $percent_change | tr -d '-')% from original"
+                        elif [[ $(echo "$percent_change > 0" | bc) -eq 1 ]]; then
+                            echo "🔼 Increased by $percent_change% from original"
+                        else
+                            echo "📊 File size unchanged"
+                        fi
+                    fi
+                fi
+            fi
+            
+            # Ask if user wants to delete the original
+            echo -n "❓ Do you want to delete the original file '$input_file'? (y/n): "
+            read delete_original
+            if [[ "$delete_original" =~ ^[Yy]$ ]]; then
+                rm -f "$input_file"
+                echo "🗑️ Original file deleted."
+            else
+                echo "💾 Original file kept."
+            fi
+        fi
+        
+        ((success_count++))
+        
+        # Add a separator between files if processing multiple
+        if [[ ${#files[@]} -gt 1 && file_count < ${#files[@]} ]]; then
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        fi
+    done
+    
+    # Summary if multiple files were processed
+    if [[ $file_count -gt 1 ]]; then
+        echo "📋 Summary: Successfully processed $success_count of $file_count PDF files"
+    fi
+    
+    return 0
+}
 
 # Virus Scan
 alias scan_file="virus_scan"
@@ -283,6 +659,13 @@ alias scan_dir="virus_scan"
 alias scan_files="virus_scan"
 alias scan_dirs="virus_scan"
 virus_scan() {
+    # help menu with -h or --help and usage
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: virus_scan [file/directory...]"
+        echo "   function from dotfiles or: findex \"*.pdf\" | virus_scan"
+        echo "   or: virus_scan \$(findex \"*.pdf\")"
+        return 0
+    fi
     local files=()
     
     # Check if receiving input from pipe or arguments
