@@ -295,6 +295,7 @@ handle_pdf() {
         echo ""
         echo "Options:"
         echo "  -c, --compress       Compress the PDF file"
+        echo "  -e, --epub           Convert PDF to EPUB, if epub then convert to pdf"
         echo "  -o, --ocr            Apply OCR to make text searchable"
         echo "  -t, --text           Extract text from PDF"
         echo "  -s, --sanitize       Sanitize filename (remove spaces and special chars)"
@@ -321,6 +322,7 @@ handle_pdf() {
 
     # Parse options
     local compress=false
+    local epub=false
     local ocr=false
     local extract_text=false
     local sanitize=false
@@ -342,6 +344,10 @@ handle_pdf() {
                 compress=true
                 shift
                 ;;
+            -e|--epub)
+                epub=true
+                shift
+                ;;
             -o|--ocr)
                 ocr=true
                 shift
@@ -359,6 +365,7 @@ handle_pdf() {
                 shift
                 ;;
             -r|--rotate)
+                #rotate the pdf
                 rotate=true
                 shift
                 if [[ "$1" =~ ^(90|180|270)$ ]]; then
@@ -370,33 +377,39 @@ handle_pdf() {
                 fi
                 ;;
             -q|--quiet)
+                #quiet mode
                 quiet_mode=true
                 shift
                 ;;
             -k|--keep)
+                #keep the original file
                 keep_originals=true
                 shift
                 ;;
             -p|--prompt)
+                #prompt the user before overwriting or deleting the file
                 prompt_user=true
                 force_overwrite=false  # Disable force overwrite when prompt is enabled
                 shift
                 ;;
             -f|--force)
+                #force overwrite of the file
                 force_overwrite=true
                 prompt_user=false  # Disable prompting when force is enabled
                 shift
                 ;;
             -h|--help)
-                # Show help and exit
+                #show help and exit
                 handle_pdf
                 return 0
                 ;;
-            -R|--recursive)     # New option for recursive processing
+            -R|--recursive)     
+                #recursive processing of pdfs in a directory
                 recursive=true
                 shift
                 ;;
             -n|--rename)
+                #rename the file to the sanitized name
                 rename_file=true
                 shift
                 ;;
@@ -462,6 +475,7 @@ handle_pdf() {
                 
                 # Add all the option flags
                 $compress && pdf_args+=("-c")
+                $epub && pdf_args+=("-e")
                 $ocr && pdf_args+=("-o")
                 $extract_text && pdf_args+=("-t")
                 $sanitize && pdf_args+=("-s")
@@ -590,7 +604,31 @@ handle_pdf() {
                         processing_done=true
                     fi
                 fi
-                
+                if $epub; then
+                    if [[ "$quiet_mode" != true ]]; then
+                        echo "🔄 Converting PDF to EPUB..."
+                    fi
+                    
+                    local epub_output="${dirname}/${sanitized_name}.epub"
+                    
+                    # Check if calibre's ebook-convert is installed
+                    if command -v ebook-convert &> /dev/null; then
+                        ebook-convert "$temp_output" "$epub_output"
+                        
+                        if [[ -f "$epub_output" ]]; then
+                            if [[ "$quiet_mode" != true ]]; then
+                                echo "✅ EPUB conversion complete: '$epub_output'"
+                            fi
+                            processing_done=true
+                        else
+                            echo "❌ EPUB conversion failed"
+                        fi
+                    else
+                        echo "❌ Error: ebook-convert (Calibre) is required for EPUB conversion but not installed"
+                        echo "Please install Calibre: brew install --cask calibre"
+                        return 1
+                    fi
+                fi
                 if $ocr; then
                     if [[ "$quiet_mode" != true ]]; then
                         echo "🔄 Applying OCR..."
