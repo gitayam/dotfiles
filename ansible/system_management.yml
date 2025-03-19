@@ -1,7 +1,6 @@
 ---
 - name: System Management Playbook
-  hosts: "{{ lookup('vars', service_tag_host_map[ansible_run_tags | intersect(service_tags) | first] | default(target_hosts, true)) if ansible_run_tags | intersect(service_tags) else target_hosts | default('all') }}"
-  become: yes
+  hosts: "all"
   vars_prompt:
     - name: "host_ip"
       prompt: "Enter the target host IP address (leave empty for all hosts)"
@@ -46,6 +45,15 @@
     target_hosts: "{{ host_ip | default('all') }}"
 
   pre_tasks:
+    - name: Debug host selection
+      debug:
+        msg: >
+          Selected hosts: {{
+            service_tag_host_map[ansible_run_tags | intersect(service_tags) | first]
+            if ansible_run_tags | intersect(service_tags) | first is defined else target_hosts
+          }}
+      tags: always
+
     - name: Display playbook header
       debug:
         msg: |
@@ -80,6 +88,7 @@
           -----------------------------
           - update: Update package repositories
           - upgrade: Perform system update and upgrades
+          - restart: Restart services
           - security: Apply security updates
           - cleanup: Remove unused packages and clean cache
           - maintenance: Run system maintenance tasks (disk checks, logs)
@@ -243,6 +252,33 @@
         connect_timeout: 5
       when: reboot_required.stat.exists
       tags: [reboot]
+
+    # Check for failed services by running systemctl status
+    # Return code 3 is normal for systemctl status when services are inactive
+    - name: Identify failed services
+      command: systemctl status
+      register: service_status
+      failed_when: service_status.rc != 0 and service_status.rc != 3
+      tags: [restart]
+
+    # Restart services that are currently running
+    - name: Restart services
+      command: systemctl restart {{ item }}
+      loop:
+        - docker
+        - nginx
+        - php-fpm
+        - redis
+      tags: [restart]
+      
+    # Service-specific restart tasks
+    # Allows targeting specific services with tags like 'restart_researchtools'
+    - name: Restart research tools service
+      shell: |
+        cd /home/researchtoolspy
+        docker compose restart
+      when: inventory_hostname == 'proxmox-main'
+      tags: [restart_researchtools]
 
     #############################
     # Fresh Installation Section
@@ -536,7 +572,7 @@
       async: 0
       poll: 1
       no_log: False
-      when: inventory_hostname == 'irregularchat-information'
+      when: inventory_hostname == 'proxmox-main'
       tags: [searxng, custom, docker]
 
     #############################
