@@ -1,6 +1,77 @@
 # ----------------------
 # General Shell Functions
 # ----------------------
+# Video and Audio Manipulation
+# These functions are used to trim videos and audio files as well as convert them to different formats
+function trim_vid() {
+  local file=""
+  local start=""
+  local end=""
+
+  # Normalize time to hh:mm:ss.
+  # If only seconds are provided (e.g. "10"), prepend "00:00:".
+  # If minutes and seconds are provided (e.g. "01:00"), prepend "00:".
+  normalize_time() {
+    local input="$1"
+    if [[ "$input" =~ ^[0-9]+$ ]]; then
+      printf "00:00:%02d" "$input"
+    elif [[ "$input" =~ ^[0-9]+:[0-9]+$ ]]; then
+      printf "00:%s" "$input"
+    else
+      echo "$input"
+    fi
+  }
+
+  # Parse arguments.
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --start|-ss)
+        shift
+        start=$(normalize_time "$1")
+        ;;
+      --end|-to)
+        shift
+        end=$(normalize_time "$1")
+        ;;
+      *)
+        # Assume the first non-option is the filename.
+        if [[ -z "$file" ]]; then
+          file="$1"
+        fi
+        ;;
+    esac
+    shift
+  done
+
+  if [[ -z "$file" ]]; then
+    echo "❌ No valid input file provided."
+    return 1
+  fi
+
+  if [[ ! -f "$file" ]]; then
+    echo "❌ File not found: $file"
+    return 1
+  fi
+
+  # Generate output filename by replacing spaces and special characters with underscores.
+  local filename="${file##*/}"
+  local basename="${filename%.*}"
+  local extension="${filename##*.}"
+  local cleanname
+  cleanname="$(echo "$basename" | tr -cs '[:alnum:]' '_')_trimmed.$extension"
+
+  # Build and run ffmpeg command.
+  local cmd=(ffmpeg)
+  [[ -n "$start" ]] && cmd+=(-ss "$start")
+  cmd+=(-i "$file")
+  [[ -n "$end" ]] && cmd+=(-to "$end")
+  cmd+=(-c:v libx264 -c:a aac "$cleanname")
+
+  echo "🎬 Trimming: $file"
+  echo "➡️ Output:   $cleanname"
+  echo "Running: ${cmd[*]}"
+  "${cmd[@]}"
+}
 
 # PDF Handling
 #using ghost script to convert pdfs to text that are still ocr
