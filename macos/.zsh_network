@@ -1,0 +1,289 @@
+# ----------------------
+# Network Functions and Aliases
+# ----------------------
+
+# Network diagnostics
+alias ports='netstat -tulanp'  # List open ports
+alias myip='curl ifconfig.me'  # Check external IP address
+alias http="curl -I"           # Check HTTP headers
+
+# Scan network ports
+scan_ports(){
+    #usage: scan_ports ip_or_host
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "usage: scan_ports ip_or_host"
+        return 0
+    fi
+    # if no ip_or_host is passed then use the router ip 
+    if [[ -z "$1" ]]; then
+        local_ip=$(ifconfig | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -n 1)
+        ip_or_host=$local_ip
+    else
+        ip_or_host=$1
+    fi
+    #check if package is installed
+    if ! command -v nmap &> /dev/null; then
+        echo "Error: nmap is not installed"
+        #prompt to install if yes install and continue else return 1
+        install_nmap="n"
+        echo -n "Do you want to install nmap? (y/n): " 
+        read install_nmap
+        if [[ $install_nmap =~ ^[Yy]$ ]]; then
+            brew install nmap
+            echo "nmap installed, continuing with scan"
+        else
+            return 1
+        fi
+    fi
+    sudo nmap -sS -Pn $1
+}
+
+# Python HTTP server
+pyserver(){
+    # usage: pyserver file1 file2 ...
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: pyserver file1 file2 ..."
+        return 0
+    fi
+    # check if python3 is installed
+    if ! command -v python3 &> /dev/null; then
+        echo "Error: Python 3 is not installed"
+        echo "You can install it with:"
+        echo 'brew install python'
+        return 1
+    fi
+    # set port for the python server
+    local port=8000
+    # create a python server for the passed files or dir
+    #get local ip
+    local_ip=$(hostname -I | awk '{print $1}')
+    # path for the server else use current dir
+    # if multiple files passed in arg then create tmp dir and add those passed files or dir via ln to the temp server dir
+    # if no files passed in arg then use current dir
+    if [ -n "$1" ]; then # if there are files passed in arg
+        # create temp dir
+        mkdir -p /tmp/pyserver
+        # add files or dir to the temp dir
+        for file in "$@"; do
+            ln -s "$file" /tmp/pyserver
+        done
+        # change dir to the temp dir
+        cd /tmp/pyserver
+        # start the python server
+        python3 -m http.server $port
+    else
+        # use current dir
+        cd .
+        # start the python server
+        python3 -m http.server $port
+    fi
+}
+
+# Tailscale funnel for sharing files
+funnel() {
+    # usage: funnel file1 file2 dir1 dir2 ...
+    # On MacOS you must be using the open source tailscaled distribution to use the funnel command for files. 
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: funnel <target>"
+        echo "Funnel enables you to share a local server on the internet using Tailscale."
+        return 0
+    fi
+    
+    # Default port and allow override with FUNNEL_PORT env variable
+    local port=${FUNNEL_PORT:-8080}
+    use_python=true #use this with MacOS or as needed
+
+    # Check if tailscale is running
+    if ! tailscale status &> /dev/null; then
+        echo "Tailscale is not running. Attempting to start it with 'tailscale up'..."
+        tailscale up
+        
+        # Check again if tailscale is running after attempting to start it
+        if ! tailscale status &> /dev/null; then
+            echo "Error: Failed to start Tailscale. Please start it manually."
+        return 1
+        fi
+        echo "Tailscale started successfully. Continuing..."
+    fi
+
+    # Use current directory if no target is specified
+    if [ -z "$1" ]; then
+        echo "No target specified. Using current directory as target."
+        target="."
+    else
+        target="$@"
+    fi
+
+    # Kill any existing Python HTTP servers on our port
+    local existing_pid=$(lsof -ti:$port)
+    if [[ -n "$existing_pid" ]]; then
+        echo "Killing existing process on port $port (PID: $existing_pid)"
+        kill -9 $existing_pid 2>/dev/null
+        sleep 1
+    fi
+
+    # Function to clean up background processes
+    cleanup() {
+        echo "Cleaning up..."
+        # Find and kill the Python HTTP server process
+        if [[ -n "$server_pid" ]]; then
+            echo "Killing server process (PID: $server_pid)"
+            kill -9 $server_pid 2>/dev/null
+            wait $server_pid 2>/dev/null
+        fi
+        
+        # Also try to find any process using our port
+        local port_pid=$(lsof -ti:$port)
+        if [[ -n "$port_pid" ]]; then
+            echo "Killing process on port $port (PID: $port_pid)"
+            kill -9 $port_pid 2>/dev/null
+        fi
+        
+        # Clean up temp directory
+        if [[ -d "/tmp/funnel" ]]; then
+            echo "Removing temporary directory"
+            rm -rf /tmp/funnel
+        fi
+        
+        # Return to original directory
+        if [[ -n "$original_dir" ]]; then
+            cd "$original_dir"
+        fi
+        
+        return 0
+    }
+
+    # Save original directory
+    original_dir=$(pwd)
+
+    # Trap SIGINT (Ctrl+C) to run cleanup
+    trap cleanup INT TERM EXIT
+
+    # if files are passed as arguments
+    if [ -n "$1" ]; then
+        # Clean up any existing temp directory
+        if [[ -d "/tmp/funnel" ]]; then
+            rm -rf /tmp/funnel
+        fi
+        
+        # Create temp dir
+        mkdir -p /tmp/funnel
+        
+        # Copy (not link) the files to the temp dir
+        for file in "$@"; do
+            # Use absolute paths for files
+            local abs_path
+            if [[ "$file" = /* ]]; then
+                abs_path="$file"
+            else
+                abs_path="$original_dir/$file"
+            fi
+            
+            echo "Checking path: $abs_path"
+            
+            if [[ -f "$abs_path" ]]; then
+                cp "$abs_path" "/tmp/funnel/"
+                echo "Copied file: $abs_path"
+            elif [[ -d "$abs_path" ]]; then
+                # For directories, copy the entire directory structure
+                cp -r "$abs_path" "/tmp/funnel/"
+                echo "Copied directory: $abs_path"
+            else
+                echo "Warning: $abs_path does not exist, skipping"
+            fi
+        done
+        
+        # Change dir to the temp dir
+        cd /tmp/funnel
+        
+        # List the contents to verify
+        echo "Files available for sharing:"
+        ls -la
+        
+        if $use_python; then
+            # Start the python server
+            python3 -m http.server $port &
+            server_pid=$!
+            
+            # Wait a moment to ensure server starts
+            sleep 1
+            
+            # Check if server started successfully
+            if ! lsof -ti:$port >/dev/null 2>&1; then
+                echo "Error: Failed to start Python HTTP server on port $port"
+                cleanup
+                return 1
+            fi
+            
+            # Start the funnel
+            tailscale funnel localhost:$port
+        else
+            # Start the funnel
+            tailscale funnel "$target"
+        fi
+    else
+        # Use current dir
+        cd .
+        if $use_python; then
+            # Start the python server
+            python3 -m http.server $port &
+            server_pid=$!
+            
+            # Wait a moment to ensure server starts
+            sleep 1
+            
+            # Check if server started successfully
+            if ! lsof -ti:$port >/dev/null 2>&1; then
+                echo "Error: Failed to start Python HTTP server on port $port"
+                cleanup
+                return 1
+            fi
+            
+            # Start the funnel
+            tailscale funnel localhost:$port
+        else
+            # Start the funnel
+            tailscale funnel "$target"
+        fi
+    fi
+}
+
+alias tsf=funnel
+alias postfile=funnel
+
+# MAC address management
+gen_mac_addr(){
+    local mac=$(openssl rand -hex 6 | sed 's/\(..\)/\1:/g; s/.$//')
+    echo "$mac"
+}
+
+change_mac_menu(){
+    echo "Choose an option:"
+    echo "1. Set a specific MAC address"
+    echo "2. Set a random MAC address"
+    echo "3. Restore original MAC address"
+    echo -n "Enter your choice (1/2/3): "
+    read choice
+
+    case $choice in
+        1)
+            echo -n "Enter the new MAC address (e.g., E6:B8:BA:D2:41:07): "
+            read mac_address
+            echo -n "Enter the name of the new network location: "
+            read location_name
+            change_mac_address "$mac_address" "$location_name"
+            ;;
+        2)
+            echo -n "Enter the name of the new network location: "
+            read location_name
+            mac_address=$(gen_mac_addr)
+            change_mac_address "$mac_address" "$location_name"
+            ;;
+        3)
+            restore_original_mac
+            ;;
+        *)
+            echo "Invalid choice. Exiting."
+            ;;
+    esac
+} 

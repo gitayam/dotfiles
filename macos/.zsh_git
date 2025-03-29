@@ -1,0 +1,227 @@
+# ----------------------
+# Git Aliases
+# ----------------------
+alias gita="git_add"
+alias gitcg="git_commit"
+alias gitp="git push"
+alias gitpl="git pull"
+alias gitco="git checkout"
+alias gitcb="git checkout -b"
+alias gitlog="git log --oneline --graph --all"
+alias gitup="update_git_repos"
+alias gitcl="git_clone"
+alias gitcr="create_repo"
+# ----------------------
+# Git Functions
+# ----------------------
+git_commit(){
+    if [[ -z "$1" ]]; then
+        echo "No commit message provided. Opening editor for interactive commit message."
+        git commit
+    else
+        git commit -m "$1"
+    fi
+}
+
+git_add(){
+    if [[ -z "$1" ]]; then
+        echo "No files specified. Defaulting to 'git add .'"
+        git add .
+    else
+        git add "$@"
+    fi
+}
+
+update_git_repos(){
+    # Default variables
+    search_path="$HOME/Documents/Git/"  # Default search path
+    exclude_paths=()                   # Array to store excluded paths
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --search-path)
+                search_path="$2"
+                shift 2
+                ;;
+            --exclude)
+                exclude_paths+=("$2")
+                shift 2
+                ;;
+            *)
+                echo "Unknown argument: $1"
+                return 1
+                ;;
+        esac
+    done
+
+    # Build the find command
+    find_cmd="find \"$search_path\" -type d -name \".git\""
+
+    for exclude in "${exclude_paths[@]}"; do
+        find_cmd+=" ! -path \"$exclude/*\""
+    done
+
+    find_cmd+=" -print"
+
+    # Execute the find command and update repositories
+    eval "$find_cmd" | while IFS= read -r gitdir; do
+        repo_dir=$(dirname "$gitdir")
+
+        # Ensure the directory is marked safe for Git operations
+        git config --global --add safe.directory "$repo_dir"
+
+        echo "Updating repository in $repo_dir"
+        cd "$repo_dir" || {
+            echo "Failed to access $repo_dir"
+            continue
+        }
+        git pull --rebase || echo "Failed to update $repo_dir"
+    done
+}
+
+## Git Clone Function
+### Usage: git_clone repo_name or url
+alias clone_repo="git_clone"
+### from any directory will clone the repo to the correct directory in the ~/Documents/Git/ directory
+git_clone(){
+    if [[ -z "$1" ]]; then
+        echo "No repository name or URL provided"
+        return 1
+    fi
+
+    # Determine the repo name from the URL or input
+    if [[ "$1" =~ ^https?:// || "$1" =~ ^git@ ]]; then
+        repo_name=$(basename "$1" .git)
+        repo_url="$1"
+    else
+        repo_name=$(basename "$1")
+        repo_url="https://github.com/your-username/$repo_name.git"
+    fi
+
+    # Check if the repo name is a valid directory name
+    if [[ ! "$repo_name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        echo "Invalid repository name: $repo_name"
+        return 1
+    fi
+
+    # Check if the repo name already exists in the ~/Documents/Git/ directory
+    if [[ -d "$HOME/Documents/Git/$repo_name" ]]; then
+        echo "Repository already exists: $repo_name"
+        return 1
+    fi
+
+    # Clone the repo to the ~/Documents/Git/ directory
+    git clone "$repo_url" "$HOME/Documents/Git/$repo_name" || {
+        echo "Failed to clone repository"
+        return 1
+    }
+
+    # Change to the cloned repository directory
+    cd "$HOME/Documents/Git/$repo_name" || {
+        echo "Failed to access $repo_name directory"
+        return 1
+    }
+    # print the current directory and list the files
+    pwd
+    ls -l
+    #prompt user to open the repo dir (./) in vs code or cursor
+    echo "Do you want to open the repository? (Y/n): "
+    read open_in
+    open_in=${open_in:-y}  # Default to 'y' if no input is provided
+
+    if [[ $open_in =~ ^[Yy]$ ]]; then
+        if command -v code &> /dev/null && command -v cursor &> /dev/null; then
+            echo "Both VS Code and Cursor are available. Open with (v)scode or (c)ursor? (v/c): "
+            read editor_choice
+            editor_choice=${editor_choice:-v}  # Default to 'v' if no input is provided
+            if [[ $editor_choice == "v" ]]; then
+                code .
+            elif [[ $editor_choice == "c" ]]; then
+                cursor .
+            fi
+        elif command -v code &> /dev/null; then
+            code .
+        elif command -v cursor &> /dev/null; then
+            cursor .
+        else
+            echo "Neither VS Code nor Cursor is available."
+        fi
+    fi
+}
+
+# ----------------------
+# GitHub Repository Management
+# ----------------------
+
+create_repo(){
+    # "Usage: create_repo repo_name"
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: create_repo repo_name"
+        return 0
+    fi
+    
+    if ! command -v gh &> /dev/null; then
+        echo "Error: GitHub CLI 'gh' is not installed."
+        install_gh="y"
+        echo -n "Do you want to install GitHub CLI? (y/n):(default:y) "
+        read install_gh
+        if [[ $install_gh =~ ^[Yy]$ ]]; then
+            brew install gh
+            echo "GitHub CLI installed, continuing with repo creation"
+        else
+            echo "GitHub CLI not installed, you can install it with 'brew install gh' before running this function again"
+            return 1
+        fi
+    fi
+
+    repo_name=$(echo "$@" | tr ' ' '_')
+    local base_dir="$HOME/Documents/Git"
+    mkdir -p "$base_dir"
+
+    use_gitignore="n"
+    echo -n "Do you want to use a special .gitignore file? (y/n):(default:n) "
+    read use_gitignore
+
+    if [[ $use_gitignore =~ ^[Yy]$ ]]; then
+        echo "Available gitignore templates:"
+        echo "1) Python"
+        echo "2) Node/JavaScript"
+        echo "3) Markdown"
+        echo "4) Shell"
+        echo "5) None (basic repo setup)"
+        
+        echo -n "Select a template (1-5): "
+        read template_choice
+
+        case $template_choice in
+            1)
+                gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Python || return 1
+                ;;
+            2)
+                gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Node || return 1
+                ;;
+            3)
+                gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Markdown || return 1
+                ;;
+            4)
+                gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Shell || return 1
+                ;;
+            *)
+                gh repo create --add-readme "$repo_name" --private --license=mit || return 1
+                ;;
+        esac
+    else
+        gh repo create --add-readme "$repo_name" --private --license=mit || return 1
+    fi
+
+    git clone "https://github.com/$(gh api user | jq -r '.login')/$repo_name.git" "$base_dir/$repo_name" || return 1
+    cd "$base_dir/$repo_name" || return 1
+    echo "# $repo_name" >> README.md
+    git add README.md
+    git commit -m "Initial commit"
+    git branch -M main
+    git push -u origin main
+
+    echo "Repository $repo_name created and initialized successfully in $base_dir."
+} 

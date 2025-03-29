@@ -1,0 +1,166 @@
+# ----------------------
+# File Transfer Functions
+# ----------------------
+
+# Transfer files to a remote host using rsync
+transfer_file() {
+    # usage: transfer_file /path/to/file user@host:/path/on/remote
+    # or: transfer_file /path/to/file /path/to/file2 user@host:/path/on/remote
+    # transfers files to a remote host using rsync
+    
+    # Default remote settings (can be overridden by environment variables)
+    local REMOTE_HOST=${TRANSFER_REMOTE_HOST:-"user@example.com"}
+    local REMOTE_PORT=${TRANSFER_REMOTE_PORT:-22}
+    local REMOTE_BASE_PATH=${TRANSFER_REMOTE_PATH:-"/home/user/uploads"}
+    
+    # Help text
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: transfer_file [file1] [file2] ..."
+        echo "Transfer files to a remote host using rsync."
+        echo ""
+        echo "Environment variables:"
+        echo "  TRANSFER_REMOTE_HOST - Remote host to connect to (default: $REMOTE_HOST)"
+        echo "  TRANSFER_REMOTE_PORT - SSH port to use (default: $REMOTE_PORT)"
+        echo "  TRANSFER_REMOTE_PATH - Base path on remote host (default: $REMOTE_BASE_PATH)"
+        return 0
+    fi
+    
+    # Check if any arguments were provided
+    if [[ $# -eq 0 ]]; then
+        echo "Error: No files specified"
+        echo "Use -h or --help for usage information"
+        return 1
+    fi
+    
+    # Iterate through all paths provided
+    for path in "$@"; do
+        if [[ ! -e "$path" ]]; then
+            echo "Error: '$path' does not exist"
+            continue
+        fi
+        # Set the target path on the remote host
+        local target_path="$REMOTE_BASE_PATH/$(basename "$path")"
+        if [[ -d "$path" ]]; then # if the path is a directory
+            # create the directory on the remote host if it doesn't exist
+            command ssh -p "$REMOTE_PORT" "$REMOTE_HOST" "mkdir -p \"$target_path\""
+            # transfer the directory to the remote host
+            /opt/homebrew/bin/rsync -avz --progress -e "ssh -p $REMOTE_PORT" "$path/" "$REMOTE_HOST:$target_path/" || echo "Failed to transfer directory '$path'"
+        elif [[ -f "$path" ]]; then # if the path is a file
+            # create the directory on the remote host if it doesn't exist
+            command ssh -p "$REMOTE_PORT" "$REMOTE_HOST" "mkdir -p \"$REMOTE_BASE_PATH\""
+            # transfer the file to the remote host
+            /opt/homebrew/bin/rsync -avz --progress -e "ssh -p $REMOTE_PORT" "$path" "$REMOTE_HOST:$REMOTE_BASE_PATH/" || echo "Failed to transfer file '$path'"
+        else
+            echo "Error: '$path' is neither a file nor a directory"
+        fi
+    done
+}
+
+# Transfer using wormhole
+wh-transfer() {
+    # Check if wormhole is installed
+    if ! command -v wormhole &> /dev/null; then
+        echo "Error: wormhole is not installed"
+        echo "Install it with: brew install magic-wormhole"
+        return 1
+    fi
+    
+    # Show help if requested
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: wh-transfer [file/directory]"
+        echo "Securely transfer files using Magic Wormhole"
+        return 0
+    fi
+    
+    # Check if a path was provided
+    if [[ -z "$1" ]]; then
+        echo "Error: No file or directory specified"
+        return 1
+    fi
+    
+    # Send the file or directory
+    if [[ -d "$1" ]]; then
+        # For directories, create a zip first
+        local zip_file="/tmp/$(basename "$1").zip"
+        echo "Creating zip archive of directory..."
+        zip -r "$zip_file" "$1"
+        echo "Sending zip archive via wormhole..."
+        wormhole send "$zip_file"
+        echo "Cleaning up temporary zip file..."
+        rm "$zip_file"
+    else
+        # For regular files, send directly
+        wormhole send "$1"
+    fi
+}
+
+# Upload to pCloud
+upload_to_pcloud() {
+    # Check if rclone is installed
+    if ! command -v rclone &> /dev/null; then
+        echo "Error: rclone is not installed"
+        echo "Install it with: brew install rclone"
+        return 1
+    fi
+    
+    # Show help if requested
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: upload_to_pcloud [file/directory]"
+        echo "Upload files to pCloud using rclone"
+        return 0
+    fi
+    
+    # Check if a path was provided
+    if [[ -z "$1" ]]; then
+        echo "Error: No file or directory specified"
+        return 1
+    fi
+    
+    # Check if pCloud remote is configured
+    if ! rclone listremotes | grep -q "pcloud:"; then
+        echo "Error: pCloud remote not configured in rclone"
+        echo "Run 'rclone config' to set up pCloud"
+        return 1
+    fi
+    
+    # Upload the file or directory
+    rclone copy "$1" pcloud:uploads/ -P
+}
+
+# Firefox Send alternative
+fsend() {
+    # Check if ffsend is installed
+    if ! command -v ffsend &> /dev/null; then
+        echo "Error: ffsend is not installed"
+        echo "Install it with: brew install ffsend"
+        return 1
+    fi
+    
+    # Show help if requested
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: fsend [file/directory]"
+        echo "Send files using Firefox Send (ffsend)"
+        return 0
+    fi
+    
+    # Check if a path was provided
+    if [[ -z "$1" ]]; then
+        echo "Error: No file or directory specified"
+        return 1
+    fi
+    
+    # Upload with Firefox Send
+    if [[ -d "$1" ]]; then
+        # For directories, create a zip first
+        local zip_file="/tmp/$(basename "$1").zip"
+        echo "Creating zip archive of directory..."
+        zip -r "$zip_file" "$1"
+        echo "Sending zip archive via Firefox Send..."
+        ffsend upload "$zip_file" --copy
+        echo "Cleaning up temporary zip file..."
+        rm "$zip_file"
+    else
+        # For regular files, send directly
+        ffsend upload "$1" --copy
+    fi
+} 

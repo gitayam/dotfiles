@@ -12,10 +12,12 @@ export PS1="%n@%m %1~ %# "
 # # Enable command auto-suggestions
 # autoload -U compinit && compinit
 
-# Load aliases from ~/.zsh_aliases
-if [ -f ~/.zsh_aliases ]; then
-  source ~/.zsh_aliases
-fi
+# Load zsh configuration files
+for config_file in ~/.zsh_{aliases,functions,git,apps,network,transfer,security,utils,docker}; do
+  if [ -f "$config_file" ]; then
+    source "$config_file"
+  fi
+done
 
 # Define OS 
 if [ -f /etc/os-release ]; then
@@ -72,6 +74,10 @@ sudotouch() {
     echo "Touch ID for sudo not enabled. Passwords will be required for sudo."
   fi
 }
-
+# alias for initial-setup.sh
 alias initial-install="./initial-setup.sh"
+# call sudotouch to enable Touch ID for sudo if not already enabled
 sudotouch
+
+# Add local bin to PATH
+export PATH=$PATH:$HOME/.local/bin
