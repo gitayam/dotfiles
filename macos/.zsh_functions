@@ -274,6 +274,7 @@ handle_pdf() {
         echo ""
         echo "Options:"
         echo "  -c, --compress       Compress the PDF file"
+        echo "  -j, --combine        Combine multiple PDFs into one"
         echo "  -e, --epub           Convert PDF to EPUB, if epub then convert to pdf"
         echo "  -o, --ocr            Apply OCR to make text searchable"
         echo "  -t, --text           Extract text from PDF"
@@ -290,6 +291,7 @@ handle_pdf() {
         echo "Examples:"
         echo "  handle_pdf document.pdf                  # Process and replace original"
         echo "  handle_pdf -c large_file.pdf             # Compress PDF"
+        echo "  handle_pdf -j file1.pdf file2.pdf        # Combine multiple PDFs into one"
         echo "  handle_pdf -o scan.pdf                   # Make PDF searchable with OCR"
         echo "  handle_pdf -t document.pdf > text.txt    # Extract text to file"
         echo "  handle_pdf -c -o -s document.pdf         # Compress, OCR, and sanitize"
@@ -301,6 +303,7 @@ handle_pdf() {
 
     # Parse options
     local compress=false
+    local combine=false
     local epub=false
     local ocr=false
     local extract_text=false
@@ -321,6 +324,10 @@ handle_pdf() {
         case "$1" in
             -c|--compress)
                 compress=true
+                shift
+                ;;
+            -j|--combine)
+                combine=true
                 shift
                 ;;
             -e|--epub)
@@ -415,7 +422,7 @@ handle_pdf() {
     local processed_count=0
     local sanitized_count=0
     local failed_count=0
-    
+    local combined_count=0
     for item in "${files[@]}"; do
         # Check if item is a directory
         if [[ -d "$item" ]]; then
@@ -464,7 +471,7 @@ handle_pdf() {
                 $keep_originals && pdf_args+=("-k")
                 $prompt_user && pdf_args+=("-p")
                 $force_overwrite && pdf_args+=("-f")
-                
+                $combine && pdf_args+=("-j")
                 # Add the PDF file
                 pdf_args+=("$pdf")
                 
@@ -724,6 +731,27 @@ handle_pdf() {
         if [[ $failed_count -gt 0 ]]; then
             echo "  - $failed_count file(s) failed to process"
         fi
+    fi
+    
+    if [[ "$combine" == true ]]; then
+        # Check if at least two PDF files are provided
+        if [[ ${#files[@]} -lt 2 ]]; then
+            echo "❌ Error: At least two PDF files are required to combine."
+            return 1
+        fi      
+        # Generate a unique name for the combined PDF
+        local combined_output="combined_$(date +%Y%m%d_%H%M%S).pdf"  # Use a timestamp for uniqueness
+        echo "📦 Combining PDFs into: $combined_output"
+        
+        # Use Ghostscript to combine the PDFs
+        gs -q -dSAFER -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -sOutputFile="$combined_output" "${files[@]}" || {
+            echo "❌ Failed to combine PDFs."
+            return 1
+        }
+
+        ((combined_count++))
+        echo "✅ Combined $combined_count PDF(s) successfully."
+        return 0
     fi
     
     return 0
