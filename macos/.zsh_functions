@@ -18,6 +18,187 @@
 
 # Video and Audio Manipulation
 # These functions are used to trim videos and audio files as well as convert them to different formats
+download_video() {
+  # Usage: download_video url [options]
+  # Options:
+  #   --output/-o FILENAME    Output filename (default: auto-generated from title)
+  #   --start/-s TIME         Start time (format: HH:MM:SS or seconds)
+  #   --end/-e TIME           End time (format: HH:MM:SS or seconds)
+  #   --quality/-q QUALITY    Video quality (best, 1080p, 720p, 480p, 360p, worst)
+  #   --format/-f FORMAT      Format (mp4, webm, mp3, etc.)
+  #   --subtitles/-sub        Download subtitles if available (default: false, default language: en)
+  #   --language/-l LANGUAGE  Language (default: en)
+  #   --audio-only/-a         Download audio only
+  #   --help/-h               Show this help message
+
+  # Show help if requested or no arguments provided
+  if [[ "$1" == "--help" || "$1" == "-h" || -z "$1" ]]; then
+    echo "Usage: download_video url [options]"
+    echo "Options:"
+    echo "  --output, -o FILENAME    Output filename (default: auto-generated from title)"
+    echo "  --start, -s TIME         Start time (format: HH:MM:SS or seconds)"
+    echo "  --end, -e TIME           End time (format: HH:MM:SS or seconds)"
+    echo "  --quality, -q QUALITY    Video quality (best, 1080p, 720p, 480p, 360p, worst)"
+    echo "  --format, -f FORMAT      Format (mp4, webm, mp3, etc.)"
+    echo "  --subtitles, -sub        Download subtitles if available (default: false, default language: en)"
+    echo "  --language, -l LANGUAGE  Language (default: en)"
+    echo "  --audio-only, -a         Download audio only"
+    echo "  --help, -h               Show this help message"
+    return 0
+  fi
+
+  # Check if youtube-dl is installed
+  if ! command -v youtube-dl &> /dev/null; then
+    echo "youtube-dl could not be found"
+    # Prompt the user to install youtube-dl
+    read -p "Do you want to install youtube-dl? (y/n) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+      brew install youtube-dl
+    else
+      return 1
+    fi
+  fi
+
+  # Parse arguments
+  local url="$1"
+  local output_filename=""
+  local start_time=""
+  local end_time=""
+  local quality="best"
+  local format=""
+  local subtitles=false
+  local language="en"
+  local audio_only=false
+  local ytdl_args=()
+  
+  shift # Skip the URL arg
+
+  # Validate the URL
+  if [[ ! "$url" =~ ^https?:// ]]; then
+    echo "❌ Invalid URL: $url"
+    echo "URL must start with http:// or https://"
+    return 1
+  fi
+
+  # Parse options
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --output|-o)
+        shift
+        output_filename="$1"
+        ;;
+      --start|-s)
+        shift
+        start_time=$(normalize_time "$1")
+        ;;
+      --end|-e)
+        shift
+        end_time=$(normalize_time "$1")
+        ;;
+      --quality|-q)
+        shift
+        quality="$1"
+        ;;
+      --format|-f)
+        shift
+        format="$1"
+        ;;
+      --subtitles|-sub)
+        subtitles=true
+        ;;
+      --language|-l)
+        shift
+        language="$1"
+        ;;
+      --audio-only|-a)
+        audio_only=true
+        ;;
+      *)
+        echo "❌ Unknown option: $1"
+        echo "Use 'download_video --help' to see available options"
+        return 1
+        ;;
+    esac
+    shift
+  done
+
+  # Build youtube-dl arguments
+  if [[ "$audio_only" == true ]]; then
+    ytdl_args+=("-x" "--audio-format" "mp3")
+  else
+    # Handle video quality
+    case "$quality" in
+      best)
+        ytdl_args+=("-f" "bestvideo+bestaudio/best")
+        ;;
+      1080p)
+        ytdl_args+=("-f" "bestvideo[height<=1080]+bestaudio/best[height<=1080]")
+        ;;
+      720p)
+        ytdl_args+=("-f" "bestvideo[height<=720]+bestaudio/best[height<=720]")
+        ;;
+      480p)
+        ytdl_args+=("-f" "bestvideo[height<=480]+bestaudio/best[height<=480]")
+        ;;
+      360p)
+        ytdl_args+=("-f" "bestvideo[height<=360]+bestaudio/best[height<=360]")
+        ;;
+      worst)
+        ytdl_args+=("-f" "worstvideo+worstaudio/worst")
+        ;;
+      *)
+        ytdl_args+=("-f" "best") # Default to best quality
+        ;;
+    esac
+  fi
+
+  # Handle format if specified
+  if [[ -n "$format" ]]; then
+    ytdl_args+=(--recode-video "$format")
+  fi
+
+  # Handle subtitles
+  if [[ "$subtitles" == true ]]; then
+    ytdl_args+=(--write-sub --convert-subs srt --sub-lang "$language")
+  fi
+
+  # Handle output filename
+  if [[ -n "$output_filename" ]]; then
+    # Sanitize filename: replace spaces with underscores, remove special characters
+    output_filename=$(echo "$output_filename" | tr ' ' '_' | tr -cd '[:alnum:]._-')
+    ytdl_args+=(-o "$output_filename.%(ext)s")
+  else
+    # Auto-generate filename from title
+    ytdl_args+=(-o "%(title)s.%(ext)s")
+  fi
+
+  # Download the video
+  echo "🎬 Downloading from: $url"
+  echo "⚙️ Options: quality=$quality, format=$format"
+  [[ -n "$start_time" ]] && echo "Starting at: $start_time"
+  [[ -n "$end_time" ]] && echo "Ending at: $end_time"
+  
+  # Download with youtube-dl
+  if youtube-dl "${ytdl_args[@]}" "$url"; then
+    echo "✅ Download complete!"
+    
+    # Post-processing: trim if start/end times were specified
+    local downloaded_file=$(youtube-dl --get-filename -o "%(title)s.%(ext)s" "$url")
+    
+    if [[ -n "$start_time" || -n "$end_time" ]]; then
+      echo "🔪 Trimming video..."
+      # Call trim_vid to handle the trimming
+      trim_vid "$downloaded_file" --start "$start_time" --end "$end_time"
+    fi
+    
+    return 0
+  else
+    echo "❌ Download failed!"
+    return 1
+  fi
+}
+
 
 trim_vid() {
   local file=""
