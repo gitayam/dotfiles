@@ -1,13 +1,6 @@
 # ----------------------
 # General Shell Functions
 # ----------------------
-# Video and Audio Manipulation
-# These functions are used to trim videos and audio files as well as convert them to different formats
-function trim_vid() {
-  local file=""
-  local start=""
-  local end=""
-
   # Normalize time to hh:mm:ss.
   # If only seconds are provided (e.g. "10"), prepend "00:00:".
   # If minutes and seconds are provided (e.g. "01:00"), prepend "00:".
@@ -22,6 +15,14 @@ function trim_vid() {
     fi
   }
 
+
+# Video and Audio Manipulation
+# These functions are used to trim videos and audio files as well as convert them to different formats
+
+trim_vid() {
+  local file=""
+  local start=""
+  local end=""
   # Parse arguments.
   while [[ $# -gt 0 ]]; do
     case "$1" in
