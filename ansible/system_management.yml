@@ -539,24 +539,75 @@
       tags: [vaultwarden, custom, docker]
 
     - name: Update Authentik on irregularchat-information
-      shell: |
-        # rename the backup file to include the current date
-        mv docker-compose.yml docker-compose.yml.bak.$(date +%Y%m%d)
-        # confirm the file was renamed
-        ls -l docker-compose.yml.bak.$(date +%Y%m%d) && echo "File renamed"
-        # download the new docker-compose.yml file
-        wget -O docker-compose.yml https://goauthentik.io/version/{{ authentik_version }}/docker-compose.yml
-        # confirm the file was downloaded
-        ls -l docker-compose.yml && echo "File downloaded"
-        # pull the new images
-        docker compose pull
-        # restart the services
-        docker compose up -d
-      args:
-        chdir: /home/authentik/authentik
-      async: 0
-      poll: 1
-      no_log: False
+      block:
+        - name: Backup current docker-compose.yml
+          shell: |
+            # rename the backup file to include the current date
+            mv docker-compose.yml docker-compose.yml.bak.$(date +%Y%m%d)
+            # confirm the file was renamed
+            ls -l docker-compose.yml.bak.$(date +%Y%m%d) && echo "File renamed"
+          args:
+            chdir: /home/authentik/authentik
+          
+        - name: Get latest Authentik version from GitHub releases
+          shell: |
+            # Get the latest release tag from GitHub
+            LATEST_VERSION=$(curl -s https://api.github.com/repos/goauthentik/authentik/releases/latest | grep -Po '"tag_name": "version-\K[^"]*')
+            echo "Latest version: $LATEST_VERSION"
+            echo $LATEST_VERSION
+          register: version_check
+          failed_when: false
+          
+        - name: Download docker-compose.yml using detected version
+          shell: |
+            DETECTED_VERSION="{{ version_check.stdout_lines[-1] | default('') }}"
+            if [ ! -z "$DETECTED_VERSION" ]; then
+              echo "Using detected version: $DETECTED_VERSION"
+              wget -O docker-compose.yml https://goauthentik.io/version/$DETECTED_VERSION/docker-compose.yml
+            else
+              echo "No version detected, using specified version: {{ authentik_version }}"
+              wget -O docker-compose.yml https://goauthentik.io/version/{{ authentik_version }}/docker-compose.yml
+            fi
+            # confirm the file was downloaded and not empty
+            if [ -s docker-compose.yml ]; then
+              echo "File downloaded successfully"
+            else
+              echo "Downloaded file is empty, trying direct URL"
+              rm docker-compose.yml
+              wget -O docker-compose.yml https://goauthentik.io/docker-compose.yml
+            fi
+            ls -l docker-compose.yml && echo "File downloaded"
+          args:
+            chdir: /home/authentik/authentik
+            
+        - name: Update Authentik containers
+          shell: |
+            # pull the new images
+            docker compose pull
+            # restart the services
+            docker compose up -d
+          args:
+            chdir: /home/authentik/authentik
+          
+      rescue:
+        - name: Try with direct URL as fallback
+          shell: |
+            # download using the direct URL
+            echo "All version-specific attempts failed, trying with direct URL..."
+            wget -O docker-compose.yml https://goauthentik.io/docker-compose.yml
+            # confirm the file was downloaded
+            ls -l docker-compose.yml && echo "File downloaded with direct URL"
+            # pull the new images
+            docker compose pull
+            # restart the services
+            docker compose up -d
+          args:
+            chdir: /home/authentik/authentik
+          
+        - name: Display failure message
+          debug:
+            msg: "Warning: Used the direct URL from goauthentik.io/docker-compose.yml as fallback"
+
       when: inventory_hostname == 'irregularchat-information'
       tags: [authentik, custom, docker]
 
