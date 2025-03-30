@@ -33,7 +33,7 @@ CONFIG = {
         'config_dir': os.path.join(os.path.dirname(os.path.abspath(__file__)), 'linux'),
         'files': {
             'aliases': ['.bash_aliases'],
-            'functions': ['.bash_functions.sh'],
+            'functions': ['.bash_aliases', '.bash_functions.sh'],
             'main': ['.bashrc']
         }
     }
@@ -236,6 +236,42 @@ def delete_alias(alias_data):
     
     return True
 
+def execute_shell_command(command, shell_type=None):
+    """Execute a shell command and return the output."""
+    if not shell_type:
+        shell_type = current_config['shell']
+    
+    try:
+        # Execute the command in the appropriate shell
+        process = subprocess.Popen(
+            [shell_type, '-c', command],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        stdout, stderr = process.communicate(timeout=30)  # 30 second timeout
+        
+        return {
+            'success': process.returncode == 0,
+            'stdout': stdout,
+            'stderr': stderr,
+            'returncode': process.returncode
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            'success': False,
+            'stdout': '',
+            'stderr': 'Command execution timed out after 30 seconds',
+            'returncode': -1
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'stdout': '',
+            'stderr': f'Error executing command: {str(e)}',
+            'returncode': -1
+        }
+
 def get_categories():
     """Get all categories from the configuration files."""
     categories = set()
@@ -404,6 +440,52 @@ def api_categories():
     """API endpoint to get all categories."""
     categories = get_categories()
     return jsonify(categories)
+
+@app.route('/api/execute/function/<name>', methods=['POST'])
+def execute_function(name):
+    """Execute a shell function and return the output."""
+    shell_data = load_shell_files()
+    function = next((f for f in shell_data['functions'] if f['name'] == name), None)
+    
+    if not function:
+        return jsonify({
+            'success': False,
+            'stdout': '',
+            'stderr': f'Function {name} not found',
+            'returncode': -1
+        }), 404
+    
+    # Get any arguments passed in the request
+    args = request.json.get('args', '')
+    
+    # Execute the function with arguments, making sure to source the file first
+    source_cmd = f"source {os.path.join(current_config['config_dir'], function['file'])} && {function['name']} {args}"
+    result = execute_shell_command(source_cmd)
+    
+    return jsonify(result)
+
+@app.route('/api/execute/alias/<name>', methods=['POST'])
+def execute_alias(name):
+    """Execute a shell alias and return the output."""
+    shell_data = load_shell_files()
+    alias = next((a for a in shell_data['aliases'] if a['name'] == name), None)
+    
+    if not alias:
+        return jsonify({
+            'success': False,
+            'stdout': '',
+            'stderr': f'Alias {name} not found',
+            'returncode': -1
+        }), 404
+    
+    # Get any arguments passed in the request
+    args = request.json.get('args', '')
+    
+    # For aliases, we need to source the alias file first, then execute
+    source_cmd = f"source {os.path.join(current_config['config_dir'], alias['file'])} && {alias['name']} {args}"
+    result = execute_shell_command(source_cmd)
+    
+    return jsonify(result)
 
 if __name__ == '__main__':
     # Check if Flask is installed

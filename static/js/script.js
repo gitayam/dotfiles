@@ -186,4 +186,130 @@ document.addEventListener('DOMContentLoaded', function() {
             return true;
         });
     });
+    
+    // ===== COMMAND EXECUTION FUNCTIONALITY =====
+    
+    // Function execution
+    const executeFunctionButton = document.getElementById('execute-function');
+    if (executeFunctionButton) {
+        executeFunctionButton.addEventListener('click', function() {
+            const functionName = this.getAttribute('data-function');
+            const args = document.getElementById('function-args').value;
+            executeFunction(functionName, args);
+        });
+    }
+    
+    // Alias execution
+    const executeAliasButton = document.getElementById('execute-alias');
+    if (executeAliasButton) {
+        executeAliasButton.addEventListener('click', function() {
+            const aliasName = this.getAttribute('data-alias');
+            const args = document.getElementById('alias-args').value;
+            executeAlias(aliasName, args);
+        });
+    }
 });
+
+// ===== COMMAND EXECUTION FUNCTIONALITY =====
+
+// Function to execute a shell function
+function executeFunction(functionName, args) {
+    const executeButton = document.getElementById('execute-function');
+    const resultsPanel = document.querySelector('.execution-results');
+    const statusElement = document.querySelector('.result-status');
+    const stdoutElement = document.querySelector('.stdout-content');
+    const stderrElement = document.querySelector('.stderr-content');
+    
+    // Show loading state
+    executeButton.disabled = true;
+    executeButton.textContent = 'Executing...';
+    resultsPanel.style.display = 'block';
+    statusElement.innerHTML = '<span class="status-running">Running...</span>';
+    stdoutElement.textContent = '';
+    stderrElement.textContent = '';
+    
+    // Send execution request to the server
+    fetch(`/api/execute/function/${functionName}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ args: args }),
+    })
+    .then(response => response.json())
+    .then(data => {
+        // Display the results
+        if (data.success) {
+            statusElement.innerHTML = '<span class="status-success">Success (exit code: 0)</span>';
+        } else {
+            statusElement.innerHTML = `<span class="status-error">Error (exit code: ${data.returncode})</span>`;
+        }
+        
+        stdoutElement.textContent = data.stdout || 'No output';
+        stderrElement.textContent = data.stderr || 'No errors';
+        
+        // Reset button state
+        executeButton.disabled = false;
+        executeButton.textContent = 'Run Function';
+    })
+    .catch(error => {
+        // Handle errors
+        statusElement.innerHTML = '<span class="status-error">Execution failed</span>';
+        stderrElement.textContent = `Error: ${error.message}`;
+        
+        // Reset button state
+        executeButton.disabled = false;
+        executeButton.textContent = 'Run Function';
+    });
+}
+
+// Function to execute a shell alias
+function executeAlias(aliasName, args) {
+    const executeButton = document.getElementById('execute-alias');
+    const resultsPanel = document.querySelector('.execution-results');
+    const statusElement = document.querySelector('.result-status');
+    const stdoutElement = document.querySelector('.stdout-content');
+    const stderrElement = document.querySelector('.stderr-content');
+    
+    // Show loading state
+    executeButton.disabled = true;
+    executeButton.textContent = 'Executing...';
+    resultsPanel.style.display = 'block';
+    statusElement.innerHTML = '<span class="status-running">Running...</span>';
+    stdoutElement.textContent = '';
+    stderrElement.textContent = '';
+    
+    // Send execution request to the server
+    fetch(`/api/execute/alias/${aliasName}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ args: args }),
+    })
+    .then(response => response.json())
+    .then(data => {
+        // Display the results
+        if (data.success) {
+            statusElement.innerHTML = '<span class="status-success">Success (exit code: 0)</span>';
+        } else {
+            statusElement.innerHTML = `<span class="status-error">Error (exit code: ${data.returncode})</span>`;
+        }
+        
+        stdoutElement.textContent = data.stdout || 'No output';
+        stderrElement.textContent = data.stderr || 'No errors';
+        
+        // Reset button state
+        executeButton.disabled = false;
+        executeButton.textContent = 'Run Alias';
+    })
+    .catch(error => {
+        // Handle errors
+        statusElement.innerHTML = '<span class="status-error">Execution failed</span>';
+        stderrElement.textContent = `Error: ${error.message}`;
+        
+        // Reset button state
+        executeButton.disabled = false;
+        executeButton.textContent = 'Run Alias';
+    });
+}

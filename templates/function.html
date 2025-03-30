@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ function.name }} - Shell Function Manager</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/execution.css') }}">
 </head>
 <body>
     <header>
@@ -41,6 +42,31 @@
 {{ function.body }}
 }</pre>
                 </div>
+                
+                <div class="execution-panel">
+                    <h2>Execute Function</h2>
+                    <div class="execution-form">
+                        <div class="form-group">
+                            <label for="function-args">Arguments:</label>
+                            <input type="text" id="function-args" class="form-control" placeholder="Enter arguments for the function">
+                        </div>
+                        <button id="execute-function" class="button primary" data-function="{{ function.name }}">Run Function</button>
+                    </div>
+                    <div class="execution-results" style="display: none;">
+                        <h3>Results</h3>
+                        <div class="result-status"></div>
+                        <div class="result-output">
+                            <div class="stdout">
+                                <h4>Standard Output</h4>
+                                <pre class="code-block stdout-content"></pre>
+                            </div>
+                            <div class="stderr">
+                                <h4>Standard Error</h4>
+                                <pre class="code-block stderr-content"></pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </section>
         </div>
     </main>
@@ -48,5 +74,6 @@
     <footer>
         <p>Shell Function Manager - A tool to manage your shell functions and aliases</p>
     </footer>
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
 </body>
 </html>
