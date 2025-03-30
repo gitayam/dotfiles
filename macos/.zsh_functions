@@ -254,6 +254,397 @@ trim_vid() {
   echo "Running: ${cmd[*]}"
   "${cmd[@]}"
 }
+# Image Handling 
+#using exiftool, and imagemagick to handle images
+# exiftool -overwrite_original -all= -Orientation -Orientation
+# convert -auto-orient image.jpg image.jpg
+# pdf images to png
+# pdfimages -png input.pdf output
+# pdf images to jpg
+# pdfimages -jpegs input.pdf output
+# pdf images to tiff
+# pdfimages -tiff input.pdf output
+
+# Helper function to process a single image file
+process_single_image() {
+  local file="$1"
+  
+  # Check if file exists and is readable
+  if [[ ! -e "$file" ]]; then
+    echo "⚠️ File does not exist: $file"
+    return 1
+  fi
+  
+  if [[ ! -r "$file" ]]; then
+    echo "⚠️ File is not readable: $file"
+    return 1
+  fi
+  
+  # Check if it's an image or PDF file
+  if [[ "$file" =~ \.(jpg|jpeg|png|tiff|gif|bmp|ico|webp)$ ]]; then
+    echo "🔍 Processing image file: $file"
+  elif [[ "$file" =~ \.(pdf)$ ]]; then
+    echo "🔍 Processing PDF file: $file"
+    # Default to convert PDF to image
+    convert=true
+  else
+    echo "❌ Error: File is not a supported image format: $file"
+    return 1
+  fi
+  
+  # Generate output filename
+  local dirname="$(dirname "$file")"
+  local basename="$(basename "$file")"
+  local extension="${basename##*.}"
+  local filename="${basename%.*}"
+  local output_file=""
+  
+  # Generate a random name if requested
+  if [[ "$random_name" == true ]]; then
+    # Generate a random 8-character name
+    local random_str=$(cat /dev/urandom | LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 8 | head -n 1)
+    filename="${random_str}"
+  # Use sanitized name if requested
+  elif [[ "$name" == true ]]; then
+    # Replace spaces with underscores, then remove other special characters
+    filename=$(echo "$filename" | tr ' ' '_' | tr -cd '[:alnum:]._-')
+  fi
+  
+  # Use different format if converting
+  if [[ "$convert" == true && -n "$convert_format" ]]; then
+    extension="$convert_format"
+  fi
+  
+  # Build output filename
+  output_file="${dirname}/${filename}.${extension}"
+  
+  # Don't overwrite input file with same name
+  if [[ "$output_file" == "$file" && "$keep_original" == true ]]; then
+    output_file="${dirname}/${filename}_processed.${extension}"
+  fi
+  
+  # Create a temporary directory for processing
+  local temp_dir=$(mktemp -d)
+  trap 'rm -rf "$temp_dir"' EXIT
+  
+  # Temporary file for processing
+  local temp_output="${temp_dir}/processed.${extension}"
+  
+  # Make a copy of the original file to work with
+  cp "$file" "$temp_output"
+  
+  # Sanitize EXIF data if requested
+  if [[ "$sanitize" == true ]]; then
+    echo "🧹 Sanitizing EXIF data..."
+    echo "Original EXIF data:"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    exiftool "$temp_output" | grep -v "File Name" | grep -v "Directory" | grep -v "File Size" | grep -v "File Modification Date/Time"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # Preserve orientation but remove all other metadata
+    exiftool -overwrite_original -all= -Orientation "$temp_output"
+    
+    echo "EXIF data after sanitization:"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    exiftool "$temp_output"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  fi
+  
+  # Rotate image if requested
+  if [[ "$rotate" == true ]]; then
+    echo "🔄 Rotating image by ${rotate_degrees} degrees..."
+    convert "$temp_output" -rotate "$rotate_degrees" "$temp_output"
+  fi
+  
+  # Convert image if requested
+  if [[ "$convert" == true ]]; then
+    echo "🔄 Converting image to format: ${extension}..."
+    # If PDF, handle special case
+    if [[ "$file" =~ \.pdf$ ]]; then
+      convert -density 300 "$temp_output" "${temp_dir}/converted.${extension}"
+      mv "${temp_dir}/converted.${extension}" "$temp_output"
+    else
+      convert "$temp_output" "${temp_dir}/converted.${extension}"
+      mv "${temp_dir}/converted.${extension}" "$temp_output"
+    fi
+  fi
+  
+  # Apply OCR if requested
+  if [[ "$ocr" == true ]]; then
+    echo "🔍 Applying OCR..."
+    if ! command -v tesseract &> /dev/null; then
+      echo "❌ Error: Tesseract OCR not installed."
+      read -p "Do you want to install it? (y/n) " -n 1 -r
+      echo
+      if [[ $REPLY =~ ^[Yy]$ ]]; then
+        brew install tesseract
+      else
+        return 1
+      fi
+    fi
+    
+    tesseract "$temp_output" "${temp_dir}/ocr_text"
+    echo "📝 OCR text saved to: ${dirname}/${filename}_ocr.txt"
+    cp "${temp_dir}/ocr_text.txt" "${dirname}/${filename}_ocr.txt"
+  fi
+  
+  # Extract text if requested
+  if [[ "$text" == true ]]; then
+    echo "📝 Extracting text..."
+    if ! command -v tesseract &> /dev/null; then
+      echo "❌ Error: Tesseract OCR not installed."
+      read -p "Do you want to install it? (y/n) " -n 1 -r
+      echo
+      if [[ $REPLY =~ ^[Yy]$ ]]; then
+        brew install tesseract
+      else
+        return 1
+      fi
+    fi
+    
+    tesseract "$temp_output" "${temp_dir}/extracted_text"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    cat "${temp_dir}/extracted_text.txt"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  fi
+  
+  # Copy processed file to output location
+  cp "$temp_output" "$output_file"
+  
+  # Handle original file
+  if [[ "$keep_original" == true ]]; then
+    echo "💾 Original file kept: $file"
+  else
+    if [[ "$file" != "$output_file" ]]; then
+      echo "🗑️ Removing original file: $file"
+      rm "$file"
+    fi
+  fi
+  
+  echo "✅ Processed: $file -> $output_file"
+  return 0
+}
+
+handle_image() {
+  # Show help if no arguments or help option provided
+  if [[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]]; then
+    echo "📷 Image Handler"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "Usage: handle_image [options] file.jpg|directory [file2.jpg|directory2 ...]"
+    echo ""
+    echo "Options:"
+    echo "  -c, --convert [format]    Convert image to different format (jpg, png, etc.)"
+    echo "  -r, --rotate [90|180|270] Rotate image by specified degrees"
+    echo "  -s, --sanitize            Sanitize EXIF data"
+    echo "  -o, --ocr                 Apply OCR to extract text"
+    echo "  -t, --text                Extract text from image"
+    echo "  -n, --name                Rename image with sanitized name (spaces/special chars removed)"
+    echo "  -R, --recursive           Process images in directories recursively"
+    echo "  --random                  Generate random name for processed files"
+    echo "  -k, --keep                Keep original files"
+    echo "  -h, --help                Show this help message"
+    echo ""
+    echo "Default: If no options are provided, EXIF data will be sanitized."
+    return 0
+  fi
+
+  # Check if required tools are installed
+  if ! command -v convert &> /dev/null; then
+    echo "❌ Error: ImageMagick not installed. "
+    read -p "Do you want to install it? (y/n) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+      brew install imagemagick
+    else
+      return 1
+    fi
+  fi
+  
+  if ! command -v exiftool &> /dev/null; then
+    echo "❌ Error: ExifTool not installed. "
+    read -p "Do you want to install it? (y/n) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+      brew install exiftool
+    else
+      return 1
+    fi
+  fi
+
+  # Parse options
+  # options are being set to default values here to avoid errors
+  local convert=false
+  local convert_format=""
+  local rotate=false
+  local rotate_degrees=0
+  local sanitize=false
+  local ocr=false
+  local text=false
+  local name=false
+  local recursive=false
+  local random_name=false
+  local keep_original=false
+  local files=()
+  local options_provided=false
+  
+  # Parse all options first   
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -c|--convert)
+        convert=true
+        options_provided=true
+        shift
+        # Check if next argument is a format
+        if [[ "$1" =~ ^[a-zA-Z0-9]+$ && ! "$1" =~ ^- ]]; then
+          convert_format="$1"
+          shift
+        fi
+        ;;
+      -r|--rotate)
+        rotate=true
+        options_provided=true
+        shift
+        if [[ "$1" =~ ^(90|180|270)$ ]]; then
+          rotate_degrees="$1"
+          shift
+        else
+          echo "❌ Error: Rotation must be 90, 180, or 270 degrees"
+          return 1
+        fi
+        ;;
+      -s|--sanitize)
+        sanitize=true
+        options_provided=true
+        shift
+        ;;
+      -o|--ocr)
+        ocr=true
+        options_provided=true
+        shift
+        ;;
+      -t|--text)
+        text=true
+        options_provided=true
+        shift
+        ;;
+      -n|--name)
+        name=true
+        options_provided=true
+        shift
+        ;;
+      -R|--recursive)
+        recursive=true
+        options_provided=true
+        shift
+        ;;
+      --random)
+        random_name=true
+        options_provided=true
+        shift
+        ;;
+      -k|--keep)
+        keep_original=true
+        options_provided=true
+        shift
+        ;;
+      -*)
+        echo "❌ Unknown option: $1"
+        echo "Use 'handle_image --help' to see available options"
+        return 1
+        ;;
+      *)
+        # Add to files array
+        files+=("$1")
+        shift
+        ;;
+    esac
+  done
+
+  # If no options were explicitly provided, default to sanitize
+  if [[ "$options_provided" == false && ${#files[@]} -gt 0 ]]; then
+    echo "ℹ️ No options provided. Defaulting to sanitize EXIF data."
+    sanitize=true
+  fi
+
+  # Check if we have any files to process
+  if [[ ${#files[@]} -eq 0 ]]; then
+    echo "❌ Error: No input files specified"
+    return 1
+  fi
+
+  # Process each file or directory
+  local processed_count=0
+  local sanitized_count=0
+  local failed_count=0
+  
+  for item in "${files[@]}"; do
+    # Check if item is a directory
+    if [[ -d "$item" ]]; then
+      echo "📁 Processing directory: $item"
+      
+      # Find all image files in the directory
+      local image_files=()
+      local find_cmd="find \"$item\""
+      
+      if [[ "$recursive" != true ]]; then
+        find_cmd+=" -maxdepth 1"
+      fi
+      
+      find_cmd+=" -type f -regex \".*\.\(jpg\|jpeg\|png\|tiff\|gif\|bmp\|ico\|webp\)\""
+      
+      while IFS= read -r img_file; do
+        if [[ -n "$img_file" ]]; then
+          image_files+=("$img_file")
+        fi
+      done < <(eval $find_cmd)
+      
+      if [[ ${#image_files[@]} -eq 0 ]]; then
+        echo "⚠️ No image files found in directory: $item"
+        continue
+      fi
+      
+      echo "🔍 Found ${#image_files[@]} image files to process"
+      
+      # Process each image in the directory
+      for img in "${image_files[@]}"; do
+        process_single_image "$img"
+        
+        # Update counts based on return code
+        if [[ $? -eq 0 ]]; then
+          ((processed_count++))
+          $sanitize && ((sanitized_count++))
+        else
+          ((failed_count++))
+        fi
+      done
+      
+    else
+      # Process single file
+      process_single_image "$item"
+      
+      # Update counts based on return code
+      if [[ $? -eq 0 ]]; then
+        ((processed_count++))
+        $sanitize && ((sanitized_count++))
+      else
+        ((failed_count++))
+      fi
+    fi
+  done
+  
+  # Show summary
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "📋 Summary:"
+  echo "  - $processed_count file(s) processed successfully"
+  if [[ $sanitized_count -gt 0 ]]; then
+    echo "  - $sanitized_count file(s) sanitized"
+  fi
+  if [[ $failed_count -gt 0 ]]; then
+    echo "  - $failed_count file(s) failed to process"
+  fi
+  
+  return 0
+}
 
 # PDF Handling
 #using ghost script to convert pdfs to text that are still ocr
