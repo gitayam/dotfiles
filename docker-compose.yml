@@ -1,0 +1,14 @@
+services:
+  shell-manager:
+    build: .
+    ports:
+      - "5555:5000"
+    volumes:
+      - ./macos:/app/macos
+      - ./linux:/app/linux
+      - ./templates:/app/templates
+      - ./static:/app/static
+    environment:
+      - FLASK_APP=shell_manager.py
+      - FLASK_ENV=production
+    restart: unless-stopped

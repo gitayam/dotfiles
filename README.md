@@ -131,6 +131,37 @@ Go to your forked repo on github and create a pull request. This will notify the
   ./sync-linux_dotfiles.sh
   ```
 
+### Shell Function Manager
+
+The Shell Function Manager is a web-based tool that allows you to browse, view, edit, and manage shell functions and aliases defined in your configuration files.
+
+#### Features
+
+- Browse all available shell functions and aliases by category
+- View the details and implementation of each function or alias
+- Edit existing functions and aliases
+- Add new functions and aliases
+- Delete functions and aliases
+- Save changes back to the appropriate configuration files
+
+#### Usage
+
+1. Run the Shell Function Manager:
+
+   ```bash
+   python shell_manager.py
+   ```
+
+2. Open your web browser and navigate to:
+
+   ```
+   http://127.0.0.1:5000
+   ```
+
+3. Use the web interface to manage your shell functions and aliases.
+
+The tool automatically detects your operating system (macOS or Linux) and loads the appropriate shell configuration files. Changes made through the interface are saved directly to your shell configuration files.
+
 ### Ansible Playbooks
 You can run the playbooks without doing the initial setup or syncing the dotfiles but you will need to setup the hosts file in the inventory directory.
 ```bash
@@ -174,4 +205,3 @@ nano inventory/hosts
 ## Contributing
 
 Feel free to contribute by submitting pull requests or opening issues for any bugs or feature requests.
-

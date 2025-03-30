@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shell Function Manager</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="{{ url_for('static', filename='js/script.js') }}" defer></script>
+</head>
+<body>
+    <header>
+        <h1>Shell Function Manager</h1>
+        <p>Manage your {{ shell }} functions and aliases on {{ system }}</p>
+    </header>
+    
+    <nav>
+        <div class="nav-buttons">
+            <a href="{{ url_for('new_function') }}" class="button primary">New Function</a>
+            <a href="{{ url_for('new_alias') }}" class="button primary">New Alias</a>
+        </div>
+        <div class="filter-controls">
+            <input type="text" id="search-input" placeholder="Search...">
+            <select id="category-filter">
+                <option value="all">All Categories</option>
+                {% for category in categories %}
+                <option value="{{ category }}">{{ category }}</option>
+                {% endfor %}
+            </select>
+            <select id="type-filter">
+                <option value="all">All Types</option>
+                <option value="function">Functions</option>
+                <option value="alias">Aliases</option>
+            </select>
+        </div>
+    </nav>
+    <main>
+        <div class="container">
+            <section id="functions-section">
+                <h2>Functions</h2>
+                <div class="items-grid">
+                    {% for function in functions %}
+                    <div class="item-card" data-type="function" data-category="{{ function.category }}" data-name="{{ function.name }}">
+                        <div class="item-header">
+                            <h3>{{ function.name }}</h3>
+                            <span class="category-badge">{{ function.category }}</span>
+                        </div>
+                        <div class="item-body">
+                            <pre class="preview">{{ function.body[:100] }}{% if function.body|length > 100 %}...{% endif %}</pre>
+                        </div>
+                        <div class="item-footer">
+                            <a href="{{ url_for('view_function', name=function.name) }}" class="button">View</a>
+                            <a href="{{ url_for('edit_function', name=function.name) }}" class="button">Edit</a>
+                            <form action="{{ url_for('delete_function_route', name=function.name) }}" method="post" class="inline-form" onsubmit="return confirm('Are you sure you want to delete this function?');">
+                                <button type="submit" class="button danger">Delete</button>
+                            </form>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </section>
+
+            <section id="aliases-section">
+                <h2>Aliases</h2>
+                <div class="items-grid">
+                    {% for alias in aliases %}
+                    <div class="item-card" data-type="alias" data-category="{{ alias.category }}" data-name="{{ alias.name }}">
+                        <div class="item-header">
+                            <h3>{{ alias.name }}</h3>
+                            <span class="category-badge">{{ alias.category }}</span>
+                        </div>
+                        <div class="item-body">
+                            <pre class="preview">{{ alias.value }}</pre>
+                        </div>
+                        <div class="item-footer">
+                            <a href="{{ url_for('view_alias', name=alias.name) }}" class="button">View</a>
+                            <a href="{{ url_for('edit_alias', name=alias.name) }}" class="button">Edit</a>
+                            <form action="{{ url_for('delete_alias_route', name=alias.name) }}" method="post" class="inline-form" onsubmit="return confirm('Are you sure you want to delete this alias?');">
+                                <button type="submit" class="button danger">Delete</button>
+                            </form>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </section>
+        </div>
+    </main>
+    <footer>
+        <p>Shell Function Manager - A tool to manage your shell functions and aliases</p>
+    </footer>
+</body>
+</html>

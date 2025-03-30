@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Edit {{ alias.name }} - Shell Function Manager</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <header>
+        <h1>Edit Alias: {{ alias.name }}</h1>
+        <p>
+            <span class="category-badge">{{ alias.category }}</span>
+            <span class="file-badge">{{ alias.file }}</span>
+        </p>
+    </header>
+    
+    <nav>
+        <div class="nav-buttons">
+            <a href="{{ url_for('view_alias', name=alias.name) }}" class="button">Cancel</a>
+        </div>
+    </nav>
+    
+    <main>
+        <div class="container">
+            <section class="edit-form">
+                <form action="{{ url_for('edit_alias', name=alias.name) }}" method="post">
+                    <div class="form-group">
+                        <label for="name">Alias Name:</label>
+                        <input type="text" id="name" name="name" value="{{ alias.name }}" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="value">Alias Value:</label>
+                        <input type="text" id="value" name="value" value="{{ alias.value }}" required>
+                    </div>
+                    
+                    <div class="form-actions">
+                        <button type="submit" class="button primary">Save Changes</button>
+                        <a href="{{ url_for('view_alias', name=alias.name) }}" class="button">Cancel</a>
+                    </div>
+                </form>
+            </section>
+        </div>
+    </main>
+    
+    <footer>
+        <p>Shell Function Manager - A tool to manage your shell functions and aliases</p>
+    </footer>
+</body>
+</html>

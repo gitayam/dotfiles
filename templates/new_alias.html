@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>New Alias - Shell Function Manager</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <header>
+        <h1>Create New Alias</h1>
+    </header>
+    
+    <nav>
+        <div class="nav-buttons">
+            <a href="{{ url_for('index') }}" class="button">Cancel</a>
+        </div>
+    </nav>
+    
+    <main>
+        <div class="container">
+            <section class="edit-form">
+                <form action="{{ url_for('new_alias') }}" method="post">
+                    <div class="form-group">
+                        <label for="name">Alias Name:</label>
+                        <input type="text" id="name" name="name" required placeholder="myalias">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="value">Alias Value:</label>
+                        <input type="text" id="value" name="value" required placeholder="command --option value">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="file">File:</label>
+                        <select id="file" name="file" required>
+                            {% for file in files %}
+                            <option value="{{ file }}">{{ file }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    
+                    <div class="form-actions">
+                        <button type="submit" class="button primary">Create Alias</button>
+                        <a href="{{ url_for('index') }}" class="button">Cancel</a>
+                    </div>
+                </form>
+            </section>
+        </div>
+    </main>
+    
+    <footer>
+        <p>Shell Function Manager - A tool to manage your shell functions and aliases</p>
+    </footer>
+</body>
+</html>
