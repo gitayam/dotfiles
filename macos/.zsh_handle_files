@@ -891,3 +891,665 @@ handle_pdf() {
     
     return 0
 }
+
+# Convert files to PDF
+# Alias for quick access
+alias to-pdf="convert_to_pdf"
+alias pdf-convert="convert_to_pdf"
+
+convert_to_pdf() {
+    # Show help if no arguments or help option provided
+    if [[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "🔄 Convert to PDF"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "Usage: convert_to_pdf [options] file [file2 file3 ...]"
+        echo ""
+        echo "Options:"
+        echo "  -c, --combine         Combine all files into a single PDF"
+        echo "  -o, --output [name]   Specify output filename (for combine mode)"
+        echo "  -q, --quality [level] Set quality level (default: high)"
+        echo "                        Levels: low, medium, high, print"
+        echo "  -s, --sanitize        Sanitize PDF (remove metadata/EXIF data)"
+        echo "  -n, --name            Sanitize output filenames (remove spaces/special chars)"
+        echo "  -r, --recursive       Process all files in directories recursively"
+        echo "  -k, --keep            Keep original files (don't delete)"
+        echo "  -p, --prompt          Prompt before overwriting or deleting"
+        echo "  -f, --force           Force overwrite without prompting (default)"
+        echo "  -v, --verbose         Show detailed processing information"
+        echo "  -h, --help            Show this help message"
+        echo ""
+        echo "Examples:"
+        echo "  convert_to_pdf document.docx                # Convert to document.pdf"
+        echo "  convert_to_pdf -c *.pptx                    # Combine all PPTX into one PDF"
+        echo "  convert_to_pdf -c -o presentation.pdf *.jpg # Combine images into presentation.pdf"
+        echo "  convert_to_pdf -r -n Documents/             # Convert all files in directory"
+        echo "  convert_to_pdf -s -k photo.jpg              # Sanitize metadata, keep original"
+        echo ""
+        echo "Supported file types: Office documents (docx, xlsx, pptx), images (jpg, png, etc.),"
+        echo "text files (txt, md), HTML, and more."
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        return 0
+    fi
+
+    # Check if required tools are installed
+    local missing_tools=()
+    local install_cmd=""
+    
+    # Check for LibreOffice (for office documents)
+    if ! command -v soffice &> /dev/null; then
+        missing_tools+=("libreoffice")
+    fi
+    
+    # Check for ImageMagick (for images)
+    if ! command -v convert &> /dev/null; then
+        missing_tools+=("imagemagick")
+    fi
+    
+    # Check for wkhtmltopdf (for HTML)
+    if ! command -v wkhtmltopdf &> /dev/null; then
+        missing_tools+=("wkhtmltopdf")
+    fi
+    
+    # Check for Ghostscript (for combining PDFs)
+    if ! command -v gs &> /dev/null; then
+        missing_tools+=("ghostscript")
+    fi
+    
+    # Check for ExifTool (for metadata sanitization)
+    if ! command -v exiftool &> /dev/null; then
+        missing_tools+=("exiftool")
+    fi
+    
+    # Prompt to install missing tools
+    if [[ ${#missing_tools[@]} -gt 0 ]]; then
+        echo "❌ Missing required tools: ${missing_tools[*]}"
+        echo "These tools are needed for full functionality."
+        read -p "Do you want to install them? (y/n) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            for tool in "${missing_tools[@]}"; do
+                echo "📦 Installing $tool..."
+                case "$tool" in
+                    libreoffice)
+                        brew install --cask libreoffice
+                        ;;
+                    imagemagick)
+                        brew install imagemagick
+                        ;;
+                    wkhtmltopdf)
+                        brew install wkhtmltopdf
+                        ;;
+                    ghostscript)
+                        brew install ghostscript
+                        ;;
+                    exiftool)
+                        brew install exiftool
+                        ;;
+                esac
+            done
+        else
+            echo "⚠️ Some conversions may not work without required tools."
+        fi
+    fi
+    
+    # Parse options
+    local combine=false
+    local output_file=""
+    local quality="high"
+    local sanitize=false
+    local sanitize_filename=false
+    local recursive=false
+    local keep_originals=false
+    local prompt_user=false
+    local force_overwrite=true
+    local verbose=false
+    local files=()
+    
+    # Parse all options first
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -c|--combine)
+                combine=true
+                shift
+                ;;
+            -o|--output)
+                shift
+                if [[ -n "$1" && ! "$1" =~ ^- ]]; then
+                    output_file="$1"
+                    shift
+                else
+                    echo "❌ Error: --output requires a filename"
+                    return 1
+                fi
+                ;;
+            -q|--quality)
+                shift
+                if [[ "$1" =~ ^(low|medium|high|print)$ ]]; then
+                    quality="$1"
+                    shift
+                else
+                    echo "❌ Error: Quality must be low, medium, high, or print"
+                    return 1
+                fi
+                ;;
+            -s|--sanitize)
+                sanitize=true
+                shift
+                ;;
+            -n|--name)
+                sanitize_filename=true
+                shift
+                ;;
+            -r|--recursive)
+                recursive=true
+                shift
+                ;;
+            -k|--keep)
+                keep_originals=true
+                shift
+                ;;
+            -p|--prompt)
+                prompt_user=true
+                force_overwrite=false
+                shift
+                ;;
+            -f|--force)
+                force_overwrite=true
+                prompt_user=false
+                shift
+                ;;
+            -v|--verbose)
+                verbose=true
+                shift
+                ;;
+            -h|--help)
+                convert_to_pdf
+                return 0
+                ;;
+            -*)
+                echo "❌ Unknown option: $1"
+                echo "Use 'convert_to_pdf --help' to see available options"
+                return 1
+                ;;
+            *)
+                # Add to files array
+                files+=("$1")
+                shift
+                ;;
+        esac
+    done
+    
+    # Check if we have any files to process
+    if [[ ${#files[@]} -eq 0 ]]; then
+        echo "❌ Error: No input files specified"
+        return 1
+    fi
+    
+    # Set quality parameters for different tools
+    local convert_quality=""
+    local wkhtmltopdf_quality=""
+    local gs_quality=""
+    
+    case "$quality" in
+        low)
+            convert_quality="-quality 75"
+            wkhtmltopdf_quality="--image-quality 75"
+            gs_quality="-dPDFSETTINGS=/ebook"
+            ;;
+        medium)
+            convert_quality="-quality 85"
+            wkhtmltopdf_quality="--image-quality 85"
+            gs_quality="-dPDFSETTINGS=/ebook"
+            ;;
+        high)
+            convert_quality="-quality 95"
+            wkhtmltopdf_quality="--image-quality 95"
+            gs_quality="-dPDFSETTINGS=/prepress"
+            ;;
+        print)
+            convert_quality="-quality 100"
+            wkhtmltopdf_quality="--image-quality 100"
+            gs_quality="-dPDFSETTINGS=/printer"
+            ;;
+    esac
+    
+    # Temporary directory for processing
+    local temp_dir=$(mktemp -d)
+    trap 'rm -rf "$temp_dir"' EXIT
+    
+    # Build file list including recursive search
+    local all_files=()
+    for item in "${files[@]}"; do
+        if [[ -d "$item" ]]; then
+            if [[ "$verbose" == true ]]; then
+                echo "📁 Processing directory: $item"
+            fi
+            
+            # Define find options based on recursion setting
+            local find_depth=""
+            if [[ "$recursive" != true ]]; then
+                find_depth="-maxdepth 1"
+            fi
+            
+            # Find all convertible files in the directory
+            while IFS= read -r found_file; do
+                if [[ -n "$found_file" && -f "$found_file" ]]; then
+                    all_files+=("$found_file")
+                fi
+            done < <(find "$item" $find_depth -type f -not -name "*.pdf" 2>/dev/null)
+            
+            if [[ ${#all_files[@]} -eq 0 ]]; then
+                echo "⚠️ No convertible files found in directory: $item"
+            elif [[ "$verbose" == true ]]; then
+                echo "🔍 Found ${#all_files[@]} files to process"
+            fi
+        elif [[ -f "$item" ]]; then
+            all_files+=("$item")
+        else
+            echo "⚠️ Skipping: $item (not a file or directory)"
+        fi
+    done
+    
+    if [[ ${#all_files[@]} -eq 0 ]]; then
+        echo "❌ Error: No valid files to convert"
+        return 1
+    fi
+    
+    # Prepare for combined PDF if requested
+    local pdf_files_to_combine=()
+    local combined_output=""
+    
+    if [[ "$combine" == true ]]; then
+        if [[ -n "$output_file" ]]; then
+            combined_output="$output_file"
+        else
+            # Generate a unique timestamped filename for combined output
+            combined_output="combined_$(date +%Y%m%d_%H%M%S).pdf"
+        fi
+        
+        if [[ "$verbose" == true ]]; then
+            echo "📦 Will combine all files into: $combined_output"
+        fi
+    fi
+    
+    # Process each file
+    local processed_count=0
+    local failed_count=0
+    local sanitized_count=0
+    
+    for file in "${all_files[@]}"; do
+        # Skip PDF files that are already in PDF format
+        if [[ "$file" =~ \.pdf$ ]]; then
+            if [[ "$combine" == true ]]; then
+                pdf_files_to_combine+=("$file")
+                ((processed_count++))
+            else
+                echo "⚠️ Skipping already PDF file: $file"
+            fi
+            continue
+        fi
+        
+        # Get file info
+        local dirname=$(dirname "$file")
+        local basename=$(basename "$file")
+        local extension="${basename##*.}"
+        local filename="${basename%.*}"
+        
+        # Sanitize filename if requested
+        if [[ "$sanitize_filename" == true ]]; then
+            filename=$(echo "$filename" | tr ' ' '_' | tr -cd '[:alnum:]._-')
+        fi
+        
+        # Determine output file
+        local output_pdf=""
+        if [[ "$combine" == true ]]; then
+            # For combined mode, each file is converted to a temporary PDF
+            output_pdf="${temp_dir}/${filename}.pdf"
+        else
+            # For individual mode, each file gets its own output PDF
+            output_pdf="${dirname}/${filename}.pdf"
+        fi
+        
+        # Check if output file exists (for non-combine mode)
+        if [[ "$combine" != true && -f "$output_pdf" ]]; then
+            if [[ "$prompt_user" == true ]]; then
+                echo -n "⚠️ File '$output_pdf' already exists. Overwrite? (y/n): "
+                read overwrite
+                if [[ ! $overwrite =~ ^[Yy]$ ]]; then
+                    echo "💾 Not overwritten, skipping file"
+                    continue
+                fi
+            elif [[ "$force_overwrite" != true ]]; then
+                # If neither prompt nor force, skip
+                echo "⚠️ File '$output_pdf' already exists. Skipping (use -f to force overwrite)"
+                continue
+            fi
+            # Otherwise, with force_overwrite=true, we proceed without prompting
+        fi
+        
+        if [[ "$verbose" == true ]]; then
+            echo "🔄 Converting: $file"
+        fi
+        
+        # Create a temporary file for processing
+        local temp_output="${temp_dir}/temp_processing.${extension}"
+        cp "$file" "$temp_output"
+        
+        # Sanitize metadata if requested
+        if [[ "$sanitize" == true ]]; then
+            if [[ "$verbose" == true ]]; then
+                echo "🧹 Sanitizing metadata..."
+                if [[ "$extension" =~ ^(jpg|jpeg|png|tiff|gif|webp)$ ]] && command -v exiftool &> /dev/null; then
+                    echo "Original metadata:"
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    exiftool "$temp_output" | grep -v "File Name" | grep -v "Directory" | grep -v "File Size" | grep -v "File Modification Date/Time"
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                fi
+            fi
+            
+            # Apply sanitization based on file type
+            if [[ "$extension" =~ ^(jpg|jpeg|png|tiff|gif|webp)$ ]] && command -v exiftool &> /dev/null; then
+                # For images, use ExifTool to strip metadata
+                exiftool -overwrite_original -all= -Orientation "$temp_output"
+                ((sanitized_count++))
+                
+                if [[ "$verbose" == true ]]; then
+                    echo "Metadata after sanitization:"
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    exiftool "$temp_output"
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                fi
+            elif [[ "$extension" =~ ^(docx?|xlsx?|pptx?|odt|ods|odp)$ ]] && command -v soffice &> /dev/null; then
+                # For Office documents, we'll sanitize during the PDF conversion process
+                # (metadata is typically not transferred during conversion)
+                ((sanitized_count++))
+            fi
+        fi
+        
+        # Convert file based on its type
+        if [[ "$extension" =~ ^(docx?|xlsx?|pptx?|odt|ods|odp)$ ]]; then
+            # Office documents - use LibreOffice
+            if command -v soffice &> /dev/null; then
+                if [[ "$verbose" == true ]]; then
+                    echo "📄 Converting Office document with LibreOffice..."
+                fi
+                
+                local temp_output_dir="${temp_dir}/libreoffice_output"
+                mkdir -p "$temp_output_dir"
+                
+                # Convert to PDF using LibreOffice
+                soffice --headless --convert-to pdf --outdir "$temp_output_dir" "$temp_output" &> /dev/null
+                
+                # Check if conversion was successful
+                local converted_file="${temp_output_dir}/${filename}.pdf"
+                if [[ -f "$converted_file" ]]; then
+                    cp "$converted_file" "$output_pdf"
+                    
+                    if [[ "$combine" == true ]]; then
+                        pdf_files_to_combine+=("$output_pdf")
+                    fi
+                    
+                    ((processed_count++))
+                else
+                    echo "❌ Failed to convert: $file"
+                    ((failed_count++))
+                    continue
+                fi
+            else
+                echo "❌ Cannot convert Office document without LibreOffice: $file"
+                ((failed_count++))
+                continue
+            fi
+        elif [[ "$extension" =~ ^(jpg|jpeg|png|gif|bmp|tiff|webp)$ ]]; then
+            # Images - use ImageMagick
+            if command -v convert &> /dev/null; then
+                if [[ "$verbose" == true ]]; then
+                    echo "🖼️ Converting image with ImageMagick..."
+                fi
+                
+                # Convert image to PDF
+                convert $convert_quality "$temp_output" "$output_pdf"
+                
+                if [[ -f "$output_pdf" ]]; then
+                    if [[ "$combine" == true ]]; then
+                        pdf_files_to_combine+=("$output_pdf")
+                    fi
+                    
+                    ((processed_count++))
+                else
+                    echo "❌ Failed to convert: $file"
+                    ((failed_count++))
+                    continue
+                fi
+            else
+                echo "❌ Cannot convert image without ImageMagick: $file"
+                ((failed_count++))
+                continue
+            fi
+        elif [[ "$extension" =~ ^(html?|htm)$ ]]; then
+            # HTML - use wkhtmltopdf
+            if command -v wkhtmltopdf &> /dev/null; then
+                if [[ "$verbose" == true ]]; then
+                    echo "🌐 Converting HTML with wkhtmltopdf..."
+                fi
+                
+                # Convert HTML to PDF
+                wkhtmltopdf $wkhtmltopdf_quality "$temp_output" "$output_pdf"
+                
+                if [[ -f "$output_pdf" ]]; then
+                    if [[ "$combine" == true ]]; then
+                        pdf_files_to_combine+=("$output_pdf")
+                    fi
+                    
+                    ((processed_count++))
+                else
+                    echo "❌ Failed to convert: $file"
+                    ((failed_count++))
+                    continue
+                fi
+            else
+                echo "❌ Cannot convert HTML without wkhtmltopdf: $file"
+                ((failed_count++))
+                continue
+            fi
+        elif [[ "$extension" =~ ^(txt|md|markdown|csv|log|json|xml)$ ]]; then
+            # Text files - use a combination of tools
+            if [[ "$verbose" == true ]]; then
+                echo "📝 Converting text file..."
+            fi
+            
+            # Create a temporary HTML file
+            local temp_html="${temp_dir}/${filename}.html"
+            
+            echo "<html><head><title>$filename</title></head><body><pre>" > "$temp_html"
+            cat "$temp_output" >> "$temp_html"
+            echo "</pre></body></html>" >> "$temp_html"
+            
+            if command -v wkhtmltopdf &> /dev/null; then
+                wkhtmltopdf $wkhtmltopdf_quality "$temp_html" "$output_pdf"
+            elif command -v convert &> /dev/null; then
+                convert $convert_quality "$temp_html" "$output_pdf"
+            else
+                echo "❌ Cannot convert text file without wkhtmltopdf or ImageMagick: $file"
+                ((failed_count++))
+                continue
+            fi
+            
+            if [[ -f "$output_pdf" ]]; then
+                if [[ "$combine" == true ]]; then
+                    pdf_files_to_combine+=("$output_pdf")
+                fi
+                
+                ((processed_count++))
+            else
+                echo "❌ Failed to convert: $file"
+                ((failed_count++))
+                continue
+            fi
+        else
+            # Try to handle other file types with LibreOffice as a fallback
+            if command -v soffice &> /dev/null; then
+                if [[ "$verbose" == true ]]; then
+                    echo "🔄 Attempting to convert with LibreOffice..."
+                fi
+                
+                local temp_output_dir="${temp_dir}/libreoffice_output"
+                mkdir -p "$temp_output_dir"
+                
+                # Convert to PDF using LibreOffice
+                soffice --headless --convert-to pdf --outdir "$temp_output_dir" "$temp_output" &> /dev/null
+                
+                # Check if conversion was successful
+                local converted_file="${temp_output_dir}/${filename}.pdf"
+                if [[ -f "$converted_file" ]]; then
+                    cp "$converted_file" "$output_pdf"
+                    
+                    if [[ "$combine" == true ]]; then
+                        pdf_files_to_combine+=("$output_pdf")
+                    fi
+                    
+                    ((processed_count++))
+                else
+                    echo "❌ Failed to convert: $file"
+                    ((failed_count++))
+                    continue
+                fi
+            else
+                echo "❌ Unsupported file type: $extension (file: $file)"
+                ((failed_count++))
+                continue
+            fi
+        fi
+        
+        # Apply additional PDF sanitization if requested
+        if [[ "$sanitize" == true && -f "$output_pdf" ]]; then
+            if command -v exiftool &> /dev/null; then
+                if [[ "$verbose" == true ]]; then
+                    echo "🧹 Sanitizing PDF metadata..."
+                fi
+                
+                # Remove all metadata from the PDF
+                exiftool -overwrite_original -all:all= "$output_pdf" &> /dev/null
+            fi
+            
+            # For more thorough PDF sanitization, use Ghostscript
+            if command -v gs &> /dev/null; then
+                local sanitized_pdf="${temp_dir}/sanitized.pdf"
+                
+                # Use Ghostscript to create a clean copy without metadata
+                gs -q -dSAFER -dBATCH -dNOPAUSE -sDEVICE=pdfwrite \
+                   -dCompatibilityLevel=1.4 \
+                   -dPDFA=0 -dPrinted=false \
+                   -sOutputFile="$sanitized_pdf" \
+                   "$output_pdf" &> /dev/null
+                
+                if [[ -f "$sanitized_pdf" ]]; then
+                    mv "$sanitized_pdf" "$output_pdf"
+                fi
+            fi
+        fi
+        
+        # Handle original file
+        if [[ "$combine" != true && -f "$output_pdf" ]]; then
+            if [[ "$verbose" == true ]]; then
+                echo "✅ Converted: $file -> $output_pdf"
+            fi
+            
+            # Handle original file
+            if [[ "$keep_originals" != true ]]; then
+                if [[ "$prompt_user" == true ]]; then
+                    echo -n "❓ Delete original file '$file'? (y/n): "
+                    read delete_original
+                    if [[ $delete_original =~ ^[Yy]$ ]]; then
+                        rm -f "$file"
+                        if [[ "$verbose" == true ]]; then
+                            echo "🗑️ Original file deleted"
+                        fi
+                    fi
+                else
+                    rm -f "$file"
+                    if [[ "$verbose" == true ]]; then
+                        echo "🗑️ Original file deleted"
+                    fi
+                fi
+            elif [[ "$verbose" == true ]]; then
+                echo "💾 Original file kept"
+            fi
+        fi
+    done
+    
+    # Combine PDFs if requested
+    if [[ "$combine" == true && ${#pdf_files_to_combine[@]} -gt 0 ]]; then
+        if [[ "$verbose" == true ]]; then
+            echo "📦 Combining ${#pdf_files_to_combine[@]} PDFs into: $combined_output"
+        fi
+        
+        if command -v gs &> /dev/null; then
+            # Use Ghostscript to combine the PDFs
+            gs -q -dSAFER -dBATCH -dNOPAUSE -sDEVICE=pdfwrite $gs_quality \
+                -sOutputFile="$combined_output" "${pdf_files_to_combine[@]}" || {
+                echo "❌ Failed to combine PDFs."
+                return 1
+            }
+            
+            # Apply sanitization to combined PDF if requested
+            if [[ "$sanitize" == true && -f "$combined_output" ]]; then
+                if command -v exiftool &> /dev/null; then
+                    if [[ "$verbose" == true ]]; then
+                        echo "🧹 Sanitizing combined PDF metadata..."
+                    fi
+                    
+                    # Remove all metadata from the PDF
+                    exiftool -overwrite_original -all:all= "$combined_output" &> /dev/null
+                fi
+            fi
+            
+            if [[ -f "$combined_output" ]]; then
+                echo "✅ Created combined PDF: $combined_output"
+                
+                # Handle original files if they weren't already handled
+                if [[ "$keep_originals" != true ]]; then
+                    for file in "${all_files[@]}"; do
+                        if [[ "$prompt_user" == true ]]; then
+                            echo -n "❓ Delete original file '$file'? (y/n): "
+                            read delete_original
+                            if [[ $delete_original =~ ^[Yy]$ ]]; then
+                                rm -f "$file"
+                            fi
+                        else
+                            rm -f "$file"
+                        fi
+                    done
+                    
+                    if [[ "$verbose" == true ]]; then
+                        echo "🗑️ Original files deleted"
+                    fi
+                elif [[ "$verbose" == true ]]; then
+                    echo "💾 Original files kept"
+                fi
+            else
+                echo "❌ Failed to create combined PDF"
+                return 1
+            fi
+        else
+            echo "❌ Cannot combine PDFs without Ghostscript"
+            return 1
+        fi
+    fi
+    
+    # Show summary
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "📋 Summary:"
+    echo "  - $processed_count file(s) processed successfully"
+    if [[ $sanitized_count -gt 0 ]]; then
+        echo "  - $sanitized_count file(s) sanitized"
+    fi
+    if [[ "$combine" == true && -f "$combined_output" ]]; then
+        echo "  - Created combined PDF: $combined_output"
+    fi
+    if [[ $failed_count -gt 0 ]]; then
+        echo "  - $failed_count file(s) failed to process"
+    fi
+    
+    return 0
+}
