@@ -1,0 +1,893 @@
+# Image Handling 
+#using exiftool, and imagemagick to handle images
+# exiftool -overwrite_original -all= -Orientation -Orientation
+# convert -auto-orient image.jpg image.jpg
+# pdf images to png
+# pdfimages -png input.pdf output
+# pdf images to jpg
+# pdfimages -jpegs input.pdf output
+# pdf images to tiff
+# pdfimages -tiff input.pdf output
+
+# Helper function to process a single image file
+process_single_image() {
+  local file="$1"
+  
+  # Check if file exists and is readable
+  if [[ ! -e "$file" ]]; then
+    echo "⚠️ File does not exist: $file"
+    return 1
+  fi
+  
+  if [[ ! -r "$file" ]]; then
+    echo "⚠️ File is not readable: $file"
+    return 1
+  fi
+  
+  # Check if it's an image or PDF file
+  if [[ "$file" =~ \.(jpg|jpeg|png|tiff|gif|bmp|ico|webp)$ ]]; then
+    echo "🔍 Processing image file: $file"
+  elif [[ "$file" =~ \.(pdf)$ ]]; then
+    echo "🔍 Processing PDF file: $file"
+    # Default to convert PDF to image
+    convert=true
+  else
+    echo "❌ Error: File is not a supported image format: $file"
+    return 1
+  fi
+  
+  # Generate output filename
+  local dirname="$(dirname "$file")"
+  local basename="$(basename "$file")"
+  local extension="${basename##*.}"
+  local filename="${basename%.*}"
+  local output_file=""
+  
+  # Generate a random name if requested
+  if [[ "$random_name" == true ]]; then
+    # Generate a random 8-character name
+    local random_str=$(cat /dev/urandom | LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 8 | head -n 1)
+    filename="${random_str}"
+  # Use sanitized name if requested
+  elif [[ "$name" == true ]]; then
+    # Replace spaces with underscores, then remove other special characters
+    filename=$(echo "$filename" | tr ' ' '_' | tr -cd '[:alnum:]._-')
+  fi
+  
+  # Use different format if converting
+  if [[ "$convert" == true && -n "$convert_format" ]]; then
+    extension="$convert_format"
+  fi
+  
+  # Build output filename
+  output_file="${dirname}/${filename}.${extension}"
+  
+  # Don't overwrite input file with same name
+  if [[ "$output_file" == "$file" && "$keep_original" == true ]]; then
+    output_file="${dirname}/${filename}_processed.${extension}"
+  fi
+  
+  # Create a temporary directory for processing
+  local temp_dir=$(mktemp -d)
+  trap 'rm -rf "$temp_dir"' EXIT
+  
+  # Temporary file for processing
+  local temp_output="${temp_dir}/processed.${extension}"
+  
+  # Make a copy of the original file to work with
+  cp "$file" "$temp_output"
+  
+  # Sanitize EXIF data if requested
+  if [[ "$sanitize" == true ]]; then
+    echo "🧹 Sanitizing EXIF data..."
+    echo "Original EXIF data:"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    exiftool "$temp_output" | grep -v "File Name" | grep -v "Directory" | grep -v "File Size" | grep -v "File Modification Date/Time"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # Preserve orientation but remove all other metadata
+    exiftool -overwrite_original -all= -Orientation "$temp_output"
+    
+    echo "EXIF data after sanitization:"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    exiftool "$temp_output"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  fi
+  
+  # Rotate image if requested
+  if [[ "$rotate" == true ]]; then
+    echo "🔄 Rotating image by ${rotate_degrees} degrees..."
+    convert "$temp_output" -rotate "$rotate_degrees" "$temp_output"
+  fi
+  
+  # Convert image if requested
+  if [[ "$convert" == true ]]; then
+    echo "🔄 Converting image to format: ${extension}..."
+    # If PDF, handle special case
+    if [[ "$file" =~ \.pdf$ ]]; then
+      convert -density 300 "$temp_output" "${temp_dir}/converted.${extension}"
+      mv "${temp_dir}/converted.${extension}" "$temp_output"
+    else
+      convert "$temp_output" "${temp_dir}/converted.${extension}"
+      mv "${temp_dir}/converted.${extension}" "$temp_output"
+    fi
+  fi
+  
+  # Apply OCR if requested
+  if [[ "$ocr" == true ]]; then
+    echo "🔍 Applying OCR..."
+    if ! command -v tesseract &> /dev/null; then
+      echo "❌ Error: Tesseract OCR not installed."
+      read -p "Do you want to install it? (y/n) " -n 1 -r
+      echo
+      if [[ $REPLY =~ ^[Yy]$ ]]; then
+        brew install tesseract
+      else
+        return 1
+      fi
+    fi
+    
+    tesseract "$temp_output" "${temp_dir}/ocr_text"
+    echo "📝 OCR text saved to: ${dirname}/${filename}_ocr.txt"
+    cp "${temp_dir}/ocr_text.txt" "${dirname}/${filename}_ocr.txt"
+  fi
+  
+  # Extract text if requested
+  if [[ "$text" == true ]]; then
+    echo "📝 Extracting text..."
+    if ! command -v tesseract &> /dev/null; then
+      echo "❌ Error: Tesseract OCR not installed."
+      read -p "Do you want to install it? (y/n) " -n 1 -r
+      echo
+      if [[ $REPLY =~ ^[Yy]$ ]]; then
+        brew install tesseract
+      else
+        return 1
+      fi
+    fi
+    
+    tesseract "$temp_output" "${temp_dir}/extracted_text"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    cat "${temp_dir}/extracted_text.txt"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  fi
+  
+  # Copy processed file to output location
+  cp "$temp_output" "$output_file"
+  
+  # Handle original file
+  if [[ "$keep_original" == true ]]; then
+    echo "💾 Original file kept: $file"
+  else
+    if [[ "$file" != "$output_file" ]]; then
+      echo "🗑️ Removing original file: $file"
+      rm "$file"
+    fi
+  fi
+  
+  echo "✅ Processed: $file -> $output_file"
+  return 0
+}
+
+handle_image() {
+  # Show help if no arguments or help option provided
+  if [[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]]; then
+    echo "📷 Image Handler"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "Usage: handle_image [options] file.jpg|directory [file2.jpg|directory2 ...]"
+    echo ""
+    echo "Options:"
+    echo "  -c, --convert [format]    Convert image to different format (jpg, png, etc.)"
+    echo "  -r, --rotate [90|180|270] Rotate image by specified degrees"
+    echo "  -s, --sanitize            Sanitize EXIF data"
+    echo "  -o, --ocr                 Apply OCR to extract text"
+    echo "  -t, --text                Extract text from image"
+    echo "  -n, --name                Rename image with sanitized name (spaces/special chars removed)"
+    echo "  -R, --recursive           Process images in directories recursively"
+    echo "  --random                  Generate random name for processed files"
+    echo "  -k, --keep                Keep original files"
+    echo "  -h, --help                Show this help message"
+    echo ""
+    echo "Default: If no options are provided, EXIF data will be sanitized."
+    return 0
+  fi
+
+  # Check if required tools are installed
+  if ! command -v convert &> /dev/null; then
+    echo "❌ Error: ImageMagick not installed. "
+    read -p "Do you want to install it? (y/n) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+      brew install imagemagick
+    else
+      return 1
+    fi
+  fi
+  
+  if ! command -v exiftool &> /dev/null; then
+    echo "❌ Error: ExifTool not installed. "
+    read -p "Do you want to install it? (y/n) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+      brew install exiftool
+    else
+      return 1
+    fi
+  fi
+
+  # Parse options
+  # options are being set to default values here to avoid errors
+  local convert=false
+  local convert_format=""
+  local rotate=false
+  local rotate_degrees=0
+  local sanitize=false
+  local ocr=false
+  local text=false
+  local name=false
+  local recursive=false
+  local random_name=false
+  local keep_original=false
+  local files=()
+  local options_provided=false
+  
+  # Parse all options first   
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -c|--convert)
+        convert=true
+        options_provided=true
+        shift
+        # Check if next argument is a format
+        if [[ "$1" =~ ^[a-zA-Z0-9]+$ && ! "$1" =~ ^- ]]; then
+          convert_format="$1"
+          shift
+        fi
+        ;;
+      -r|--rotate)
+        rotate=true
+        options_provided=true
+        shift
+        if [[ "$1" =~ ^(90|180|270)$ ]]; then
+          rotate_degrees="$1"
+          shift
+        else
+          echo "❌ Error: Rotation must be 90, 180, or 270 degrees"
+          return 1
+        fi
+        ;;
+      -s|--sanitize)
+        sanitize=true
+        options_provided=true
+        shift
+        ;;
+      -o|--ocr)
+        ocr=true
+        options_provided=true
+        shift
+        ;;
+      -t|--text)
+        text=true
+        options_provided=true
+        shift
+        ;;
+      -n|--name)
+        name=true
+        options_provided=true
+        shift
+        ;;
+      -R|--recursive)
+        recursive=true
+        options_provided=true
+        shift
+        ;;
+      --random)
+        random_name=true
+        options_provided=true
+        shift
+        ;;
+      -k|--keep)
+        keep_original=true
+        options_provided=true
+        shift
+        ;;
+      -*)
+        echo "❌ Unknown option: $1"
+        echo "Use 'handle_image --help' to see available options"
+        return 1
+        ;;
+      *)
+        # Add to files array
+        files+=("$1")
+        shift
+        ;;
+    esac
+  done
+
+  # If no options were explicitly provided, default to sanitize
+  if [[ "$options_provided" == false && ${#files[@]} -gt 0 ]]; then
+    echo "ℹ️ No options provided. Defaulting to sanitize EXIF data."
+    sanitize=true
+  fi
+
+  # Check if we have any files to process
+  if [[ ${#files[@]} -eq 0 ]]; then
+    echo "❌ Error: No input files specified"
+    return 1
+  fi
+
+  # Process each file or directory
+  local processed_count=0
+  local sanitized_count=0
+  local failed_count=0
+  
+  for item in "${files[@]}"; do
+    # Check if item is a directory
+    if [[ -d "$item" ]]; then
+      echo "📁 Processing directory: $item"
+      
+      # Find all image files in the directory
+      local image_files=()
+      local find_cmd="find \"$item\""
+      
+      if [[ "$recursive" != true ]]; then
+        find_cmd+=" -maxdepth 1"
+      fi
+      
+      find_cmd+=" -type f -regex \".*\.\(jpg\|jpeg\|png\|tiff\|gif\|bmp\|ico\|webp\)\""
+      
+      while IFS= read -r img_file; do
+        if [[ -n "$img_file" ]]; then
+          image_files+=("$img_file")
+        fi
+      done < <(eval $find_cmd)
+      
+      if [[ ${#image_files[@]} -eq 0 ]]; then
+        echo "⚠️ No image files found in directory: $item"
+        continue
+      fi
+      
+      echo "🔍 Found ${#image_files[@]} image files to process"
+      
+      # Process each image in the directory
+      for img in "${image_files[@]}"; do
+        process_single_image "$img"
+        
+        # Update counts based on return code
+        if [[ $? -eq 0 ]]; then
+          ((processed_count++))
+          $sanitize && ((sanitized_count++))
+        else
+          ((failed_count++))
+        fi
+      done
+      
+    else
+      # Process single file
+      process_single_image "$item"
+      
+      # Update counts based on return code
+      if [[ $? -eq 0 ]]; then
+        ((processed_count++))
+        $sanitize && ((sanitized_count++))
+      else
+        ((failed_count++))
+      fi
+    fi
+  done
+  
+  # Show summary
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "📋 Summary:"
+  echo "  - $processed_count file(s) processed successfully"
+  if [[ $sanitized_count -gt 0 ]]; then
+    echo "  - $sanitized_count file(s) sanitized"
+  fi
+  if [[ $failed_count -gt 0 ]]; then
+    echo "  - $failed_count file(s) failed to process"
+  fi
+  
+  return 0
+}
+
+# PDF Handling
+#using ghost script to convert pdfs to text that are still ocr
+# gs -dSAFER -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -sOutputFile=same_name_with_no_spaces_and_no_special_chars.pdf original.pdf
+alias ocr-pdf="handle_pdf -o"
+alias extract-text="handle_pdf -t"
+alias compress-pdf="handle_pdf -c"
+alias rotate-pdf="handle_pdf -r"
+alias sanitize-pdf="handle_pdf -s"
+alias metadata-pdf="handle_pdf -m"
+
+handle_pdf() {
+    # Show help if no arguments or help option provided
+    if [[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "📄 PDF Handler"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "Usage: handle_pdf [options] file.pdf [output.pdf]"
+        echo ""
+        echo "Options:"
+        echo "  -c, --compress       Compress the PDF file"
+        echo "  -j, --combine        Combine multiple PDFs into one"
+        echo "  -e, --epub           Convert PDF to EPUB, if epub then convert to pdf"
+        echo "  -o, --ocr            Apply OCR to make text searchable"
+        echo "  -t, --text           Extract text from PDF"
+        echo "  -s, --sanitize       Sanitize filename (remove spaces and special chars)"
+        echo "  -m, --metadata       Display PDF metadata"
+        echo "  -r, --rotate [90|180|270]  Rotate PDF by specified degrees"
+        echo "  -q, --quiet          Suppress verbose output"
+        echo "  -k, --keep           Keep original files (don't delete)"
+        echo "  -p, --prompt         Prompt before overwriting or deleting"
+        echo "  -n, --rename         Rename the file to the sanitized name"
+        echo "  -f, --force          Force overwrite without prompting (default)"
+        echo "  -h, --help           Show this help message"
+        echo ""
+        echo "Examples:"
+        echo "  handle_pdf document.pdf                  # Process and replace original"
+        echo "  handle_pdf -c large_file.pdf             # Compress PDF"
+        echo "  handle_pdf -j file1.pdf file2.pdf        # Combine multiple PDFs into one"
+        echo "  handle_pdf -o scan.pdf                   # Make PDF searchable with OCR"
+        echo "  handle_pdf -t document.pdf > text.txt    # Extract text to file"
+        echo "  handle_pdf -c -o -s document.pdf         # Compress, OCR, and sanitize"
+        echo "  handle_pdf -k *.pdf                      # Process multiple PDFs, keep originals"
+        echo "  handle_pdf -p \"*.pdf\"                   # Process with prompts for each file"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        return 0
+    fi
+
+    # Parse options
+    local compress=false
+    local combine=false
+    local epub=false
+    local ocr=false
+    local extract_text=false
+    local sanitize=false
+    local show_metadata=false
+    local rotate=false
+    local rotate_degrees=0
+    local quiet_mode=false
+    local keep_originals=false
+    local prompt_user=false
+    local force_overwrite=true  # Default is to force overwrite
+    local recursive=false       # Option for recursive directory processing
+    local rename_file=false     # New option to control whether to rename with sanitized name
+    local files=()
+    
+    # Parse all options first
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -c|--compress)
+                compress=true
+                shift
+                ;;
+            -j|--combine)
+                combine=true
+                shift
+                ;;
+            -e|--epub)
+                epub=true
+                shift
+                ;;
+            -o|--ocr)
+                ocr=true
+                shift
+                ;;
+            -t|--text)
+                extract_text=true
+                shift
+                ;;
+            -s|--sanitize)
+                sanitize=true
+                shift
+                ;;
+            -m|--metadata)
+                show_metadata=true
+                shift
+                ;;
+            -r|--rotate)
+                #rotate the pdf
+                rotate=true
+                shift
+                if [[ "$1" =~ ^(90|180|270)$ ]]; then
+                    rotate_degrees="$1"
+                    shift
+                else
+                    echo "❌ Error: Rotation must be 90, 180, or 270 degrees"
+                    return 1
+                fi
+                ;;
+            -q|--quiet)
+                #quiet mode
+                quiet_mode=true
+                shift
+                ;;
+            -k|--keep)
+                #keep the original file
+                keep_originals=true
+                shift
+                ;;
+            -p|--prompt)
+                #prompt the user before overwriting or deleting the file
+                prompt_user=true
+                force_overwrite=false  # Disable force overwrite when prompt is enabled
+                shift
+                ;;
+            -f|--force)
+                #force overwrite of the file
+                force_overwrite=true
+                prompt_user=false  # Disable prompting when force is enabled
+                shift
+                ;;
+            -h|--help)
+                #show help and exit
+                handle_pdf
+                return 0
+                ;;
+            -R|--recursive)     
+                #recursive processing of pdfs in a directory
+                recursive=true
+                shift
+                ;;
+            -n|--rename)
+                #rename the file to the sanitized name
+                rename_file=true
+                shift
+                ;;
+            -*)
+                echo "❌ Unknown option: $1"
+                echo "Use 'handle_pdf --help' to see available options"
+                return 1
+                ;;
+            *)
+                # Add to files array
+                files+=("$1")
+                shift
+                ;;
+        esac
+    done
+    
+    # Check if we have any files to process
+    if [[ ${#files[@]} -eq 0 ]]; then
+        echo "❌ Error: No input files specified"
+        return 1
+    fi
+
+    # Process each file or directory
+    local processed_count=0
+    local sanitized_count=0
+    local failed_count=0
+    local combined_count=0
+    for item in "${files[@]}"; do
+        # Check if item is a directory
+        if [[ -d "$item" ]]; then
+            if [[ "$quiet_mode" != true ]]; then
+                echo "📁 Processing directory: $item"
+            fi
+            
+            # Find all PDF files in the directory
+            local dir_pdfs=()
+            
+            if [[ "$recursive" == true ]]; then
+                # Find PDFs recursively
+                while IFS= read -r pdf_file; do
+                    dir_pdfs+=("$pdf_file")
+                done < <(find "$item" -type f -iname "*.pdf" 2>/dev/null)
+            else
+                # Find PDFs in just this directory
+                while IFS= read -r pdf_file; do
+                    dir_pdfs+=("$pdf_file")
+                done < <(find "$item" -maxdepth 1 -type f -iname "*.pdf" 2>/dev/null)
+            fi
+            
+            if [[ ${#dir_pdfs[@]} -eq 0 ]]; then
+                echo "⚠️ No PDF files found in directory: $item"
+                continue
+            fi
+            
+            if [[ "$quiet_mode" != true ]]; then
+                echo "🔍 Found ${#dir_pdfs[@]} PDF files to process"
+            fi
+            
+            # Process each PDF in the directory
+            for pdf in "${dir_pdfs[@]}"; do
+                # Create a new argument list with the same options
+                local pdf_args=()
+                
+                # Add all the option flags
+                $compress && pdf_args+=("-c")
+                $epub && pdf_args+=("-e")
+                $ocr && pdf_args+=("-o")
+                $extract_text && pdf_args+=("-t")
+                $sanitize && pdf_args+=("-s")
+                $show_metadata && pdf_args+=("-m")
+                $rotate && pdf_args+=("-r" "$rotate_degrees")
+                $quiet_mode && pdf_args+=("-q")
+                $keep_originals && pdf_args+=("-k")
+                $prompt_user && pdf_args+=("-p")
+                $force_overwrite && pdf_args+=("-f")
+                $combine && pdf_args+=("-j")
+                # Add the PDF file
+                pdf_args+=("$pdf")
+                
+                # Process this PDF file
+                handle_pdf "${pdf_args[@]}"
+                
+                # Update counts based on return code
+                if [[ $? -eq 0 ]]; then
+                    ((processed_count++))
+                    $sanitize && ((sanitized_count++))
+                else
+                    ((failed_count++))
+                fi
+            done
+        else
+            # Check if file exists and is readable
+            if [[ ! -e "$item" ]]; then
+                echo "Warning: $item does not exist, skipping"
+                continue
+            fi
+            
+            if [[ ! -r "$item" ]]; then
+                echo "Warning: $item is not readable, skipping"
+                continue
+            fi
+            
+            # Check if it's a PDF file
+            if [[ "$item" =~ \.pdf$ ]]; then
+                if [[ "$quiet_mode" != true ]]; then
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    echo "📄 Processing '$item'"
+                fi
+                
+                # Get the sanitized filename
+                local dirname=$(dirname "$item")
+                local basename=$(basename "$item" .pdf)
+                
+                # Better sanitization: replace spaces with underscores first, then remove special chars
+                local sanitized_name=""
+                if [[ "$sanitize" == true ]]; then
+                    #remove (Z-Library) from the filename first 
+                    sanitized_name=$(echo "$basename" | sed 's/(Z-Library)//g')
+                    # Replace spaces with underscores, then remove other special characters
+                    sanitized_name=$(echo "$sanitized_name" | tr ' ' '_' | tr -cd '[:alnum:]._-')
+                    
+                else
+                    sanitized_name="$basename"
+                fi
+                
+                # Determine output filename based on rename_file flag
+        local output_file=""
+                if [[ "$rename_file" == true && "$sanitize" == true ]]; then
+                    # Use sanitized name when rename is requested
+            output_file="${dirname}/${sanitized_name}.pdf"
+            
+                    # Don't overwrite input file with same name
+                    if [[ "$output_file" == "$item" ]]; then
+                output_file="${dirname}/${sanitized_name}_clean.pdf"
+            fi
+        else
+                    # Default: use the original filename
+                    output_file="$item"
+                    
+                    # For processing, we need a temporary file with a different name
+                    local temp_final="${temp_dir}/final.pdf"
+                fi
+                
+                # Check if output file exists and handle accordingly
+                if [[ -f "$output_file" && "$output_file" != "$item" ]]; then
+                    if [[ "$prompt_user" == true ]]; then
+                        echo -n "⚠️ File '$output_file' already exists. Overwrite? (y/n): "
+                        read overwrite
+                        if [[ ! $overwrite =~ ^[Yy]$ ]]; then
+                            echo "💾 Not overwritten, skipping file"
+                            continue
+                        fi
+                    elif [[ "$force_overwrite" != true ]]; then
+                        # If neither prompt nor force, skip
+                        echo "⚠️ File '$output_file' already exists. Skipping (use -f to force overwrite)"
+                        continue
+                    fi
+                    # Otherwise, with force_overwrite=true, we proceed without prompting
+                fi
+                
+                # Create a temporary directory for processing
+                local temp_dir=$(mktemp -d)
+                trap 'rm -rf "$temp_dir"' EXIT
+                
+                # Temporary file for processing
+                local temp_output="${temp_dir}/processed.pdf"
+                
+                # Process the PDF
+                local processing_done=false
+                
+                if $show_metadata; then
+                    echo "📋 PDF Metadata for '$item':"
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    pdfinfo "$item"
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                fi
+                
+                # First, copy the file to our temp location
+                cp "$item" "$temp_output"
+                
+                if $rotate; then
+                    if [[ "$quiet_mode" != true ]]; then
+                        echo "🔄 Rotating PDF..."
+                    fi
+                    
+                    local rotate_temp="${temp_dir}/rotated.pdf"
+                    gs -q -dSAFER -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -sOutputFile="$rotate_temp" \
+                       -c "<</Orientation $rotate_degrees>> setpagedevice" -f "$temp_output"
+                    
+                    if [[ -f "$rotate_temp" ]]; then
+                        mv "$rotate_temp" "$temp_output"
+                        processing_done=true
+                    fi
+                fi
+                if $epub; then
+                    if [[ "$quiet_mode" != true ]]; then
+                        echo "🔄 Converting PDF to EPUB..."
+                    fi
+                    
+                    local epub_output="${dirname}/${sanitized_name}.epub"
+                    
+                    # Check if calibre's ebook-convert is installed
+                    if command -v ebook-convert &> /dev/null; then
+                        ebook-convert "$temp_output" "$epub_output"
+                        
+                        if [[ -f "$epub_output" ]]; then
+                            if [[ "$quiet_mode" != true ]]; then
+                                echo "✅ EPUB conversion complete: '$epub_output'"
+                            fi
+                            processing_done=true
+                        else
+                            echo "❌ EPUB conversion failed"
+                        fi
+                    else
+                        echo "❌ Error: ebook-convert (Calibre) is required for EPUB conversion but not installed"
+                        echo "Please install Calibre: brew install --cask calibre"
+                        return 1
+                    fi
+                fi
+                if $ocr; then
+                    if [[ "$quiet_mode" != true ]]; then
+                        echo "🔄 Applying OCR..."
+                    fi
+                    
+                    local ocr_temp="${temp_dir}/ocr.pdf"
+                    
+                    # Check if ocr_files function exists
+                    if typeset -f ocr_files > /dev/null; then
+                        ocr_files "$temp_output" "$ocr_temp"
+                    # Check if ocrmyfile function exists
+                    elif typeset -f ocrmyfile > /dev/null; then
+                        ocrmyfile "$temp_output" "$ocr_temp"
+                    else
+                        ocrmypdf --skip-text "$temp_output" "$ocr_temp"
+                    fi
+                    
+                    if [[ -f "$ocr_temp" ]]; then
+                        mv "$ocr_temp" "$temp_output"
+                        processing_done=true
+                    fi
+                fi
+                
+                if $extract_text; then
+                    if [[ "$quiet_mode" != true ]]; then
+                        echo "📝 Extracting text..."
+                    fi
+                    pdftotext "$temp_output" -
+                    processing_done=true
+                fi
+                
+                if $compress; then
+                    if [[ "$quiet_mode" != true ]]; then
+                        echo "🗜️ Compressing PDF..."
+                    fi
+                    
+                    local compress_temp="${temp_dir}/compressed.pdf"
+                    gs -q -dSAFER -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dPDFSETTINGS=/ebook \
+                       -dCompatibilityLevel=1.4 -sOutputFile="$compress_temp" "$temp_output"
+                    
+                    if [[ -f "$compress_temp" ]]; then
+                        mv "$compress_temp" "$temp_output"
+                        processing_done=true
+                    fi
+                fi
+                
+                # If sanitize is the only option and no processing was done, we still need to mark it
+                if $sanitize && [[ "$processing_done" == false ]]; then
+                    if [[ "$quiet_mode" != true ]]; then
+                        echo "🔄 Sanitizing filename..."
+                    fi
+                    processing_done=true
+                    ((sanitized_count++))
+                fi
+                
+                # Check if processing was successful
+                if [[ -f "$temp_output" && "$processing_done" == true ]]; then
+                    if [[ "$output_file" == "$item" ]]; then
+                        # When replacing the original file, use a temporary final file first
+                        cp "$temp_output" "$temp_final"
+                        
+                        # Then replace the original
+                        mv "$temp_final" "$output_file"
+                    else
+                        # When using a different output name, just copy directly
+                        cp "$temp_output" "$output_file"
+                        
+                        # Handle original file (delete by default unless keep_originals is true)
+                        if [[ "$prompt_user" == true ]]; then
+                            echo -n "❓ Do you want to delete the original file '$item'? (y/n): "
+                            read delete_original
+                            if [[ $delete_original =~ ^[Yy]$ ]]; then
+                                rm -f "$item"
+                                if [[ "$quiet_mode" != true ]]; then
+                                    echo "🗑️ Original file deleted."
+                                fi
+                            else
+                                if [[ "$quiet_mode" != true ]]; then
+                                    echo "💾 Original file kept."
+                                fi
+                            fi
+                        elif [[ "$keep_originals" == true ]]; then
+                            if [[ "$quiet_mode" != true ]]; then
+                                echo "💾 Original file kept (--keep option)."
+                            fi
+                        else
+                            # Default behavior: delete original without prompting
+                            rm -f "$item"
+                            if [[ "$quiet_mode" != true ]]; then
+                                echo "🗑️ Original file deleted."
+                            fi
+                        fi
+                    fi
+                    
+                    ((processed_count++))
+                else
+                    echo "❌ Processing failed for '$item'"
+                    ((failed_count++))
+                fi
+            else
+                echo "⚠️ Skipping non-PDF file: $item"
+            fi
+        fi
+    done
+    
+    # Show summary
+    if [[ "$quiet_mode" != true ]]; then
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "📋 Summary:"
+        echo "  - $processed_count file(s) processed successfully"
+        if [[ $sanitized_count -gt 0 ]]; then
+            echo "  - $sanitized_count file(s) sanitized"
+        fi
+        if [[ $failed_count -gt 0 ]]; then
+            echo "  - $failed_count file(s) failed to process"
+        fi
+    fi
+    
+    if [[ "$combine" == true ]]; then
+        # Check if at least two PDF files are provided
+        if [[ ${#files[@]} -lt 2 ]]; then
+            echo "❌ Error: At least two PDF files are required to combine."
+            return 1
+        fi      
+        # Generate a unique name for the combined PDF
+        local combined_output="combined_$(date +%Y%m%d_%H%M%S).pdf"  # Use a timestamp for uniqueness
+        echo "📦 Combining PDFs into: $combined_output"
+        
+        # Use Ghostscript to combine the PDFs
+        gs -q -dSAFER -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -sOutputFile="$combined_output" "${files[@]}" || {
+            echo "❌ Failed to combine PDFs."
+            return 1
+        }
+
+        ((combined_count++))
+        echo "✅ Combined $combined_count PDF(s) successfully."
+        return 0
+    fi
+    
+    return 0
+}
