@@ -1,0 +1,5 @@
+pyenv(){
+  python3 -m venv env  # Create the virtual environment
+  source env/bin/activate  # Activate the virtual environment (on Linux/Mac)
+}
+
