@@ -402,6 +402,22 @@ alias sanitize-pdf="handle_pdf -s"
 alias metadata-pdf="handle_pdf -m"
 
 handle_pdf() {
+    # Create a forcecopy function that bypasses interactive prompts
+    # This will be local to the function only
+    local forcecopy() {
+        command cp -f "$@"
+    }
+    
+    # Temporarily unalias cp to avoid interactive prompts
+    # Save the original alias if it exists
+    local cp_alias_exists=false
+    if alias cp &>/dev/null; then
+        cp_alias_exists=true
+        local cp_orig_alias=$(alias cp)
+    fi
+    # Unalias cp for this function
+    unalias cp 2>/dev/null || true
+    
     # Show help if no arguments or help option provided
     if [[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]]; then
         echo "📄 PDF Handler"
@@ -716,7 +732,7 @@ handle_pdf() {
                 fi
                 
                 # First, copy the file to our temp location
-                cp "$item" "$temp_output"
+                forcecopy "$item" "$temp_output"
                 
                 if $rotate; then
                     if [[ "$quiet_mode" != true ]]; then
@@ -808,12 +824,20 @@ handle_pdf() {
                         echo "🔄 Converting to PDF..."
                     fi
                     
-                    # Call the convert_to_pdf function with the current file
-                    convert_to_pdf "$item"
-                    
-                    # Set processing_done based on success of convert_to_pdf
-                    if [[ $? -eq 0 ]]; then
+                    # Skip conversion for files that are already PDFs
+                    if [[ "$item" =~ \.pdf$ ]]; then
+                        if [[ "$quiet_mode" != true ]]; then
+                            echo "ℹ️ File is already PDF, skipping conversion step"
+                        fi
                         processing_done=true
+                    else
+                        # Call convert_to_pdf function only for non-PDF files
+                        convert_to_pdf "$item"
+                        
+                        # Set processing_done based on success of convert_to_pdf
+                        if [[ $? -eq 0 ]]; then
+                            processing_done=true
+                        fi
                     fi
                 fi
                 
@@ -830,13 +854,13 @@ handle_pdf() {
                 if [[ -f "$temp_output" && "$processing_done" == true ]]; then
                     if [[ "$output_file" == "$item" ]]; then
                         # When replacing the original file, use a temporary final file first
-                        cp "$temp_output" "$temp_final"
+                        forcecopy "$temp_output" "$temp_final"
                         
                         # Then replace the original
-                        mv "$temp_final" "$output_file"
+                        command mv -f "$temp_final" "$output_file"
                     else
-                        # When using a different output name, just copy directly
-                        cp "$temp_output" "$output_file"
+                        # When using a different output name, use forcecopy to avoid prompts
+                        forcecopy "$temp_output" "$output_file"
                         
                         # Handle original file (delete by default unless keep_originals is true)
                         if [[ "$prompt_user" == true ]]; then
@@ -908,6 +932,11 @@ handle_pdf() {
         ((combined_count++))
         echo "✅ Combined $combined_count PDF(s) successfully."
         return 0
+    fi
+    
+    # At the end of the function, restore the original alias if it existed
+    if $cp_alias_exists; then
+        eval "$cp_orig_alias"
     fi
     
     return 0
@@ -1255,7 +1284,7 @@ convert_to_pdf() {
         
         # Create a temporary file for processing
         local temp_output="${temp_dir}/temp_processing.${extension}"
-        cp "$file" "$temp_output"
+        forcecopy "$file" "$temp_output"
         
         # Sanitize metadata if requested
         if [[ "$sanitize" == true ]]; then
@@ -1311,7 +1340,7 @@ convert_to_pdf() {
                 fi
                 
                 if [[ -f "$converted_file" ]]; then
-                    cp "$converted_file" "$output_pdf"
+                    forcecopy "$converted_file" "$output_pdf"
                     
                     if [[ "$combine" == true ]]; then
                         pdf_files_to_combine+=("$output_pdf")
@@ -1445,7 +1474,7 @@ convert_to_pdf() {
                 soffice --headless --convert-to pdf --outdir "$temp_output_dir" "$temp_output" &> /dev/null
                 local converted_file="${temp_output_dir}/${filename}.pdf"
                 if [[ -f "$converted_file" ]]; then
-                    cp "$converted_file" "$output_pdf"
+                    forcecopy "$converted_file" "$output_pdf"
                     conversion_success=true
                 fi
             fi
@@ -1477,7 +1506,7 @@ convert_to_pdf() {
                 # Check if conversion was successful
                 local converted_file="${temp_output_dir}/${filename}.pdf"
                 if [[ -f "$converted_file" ]]; then
-                    cp "$converted_file" "$output_pdf"
+                    forcecopy "$converted_file" "$output_pdf"
                     
                     if [[ "$combine" == true ]]; then
                         pdf_files_to_combine+=("$output_pdf")
@@ -1519,7 +1548,7 @@ convert_to_pdf() {
                    "$output_pdf" &> /dev/null
                 
                 if [[ -f "$sanitized_pdf" ]]; then
-                    mv "$sanitized_pdf" "$output_pdf"
+                    forcecopy "$sanitized_pdf" "$output_pdf"
                 fi
             fi
         fi
