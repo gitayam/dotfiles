@@ -16,6 +16,7 @@ ZSH_FILES=(
     ".zsh_security"
     ".zsh_utils"
     ".zsh_docker"
+    ".zsh_handle_files"
 )
 
 # Test if rsync is installed if not set copy command to cp
@@ -24,6 +25,19 @@ if command -v rsync &> /dev/null; then
 else
     COPY_CMD="cp"
 fi
+
+# Get the directory where the script is located
+DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Create symlinks for macOS-specific files
+if [[ "$OSTYPE" == "darwin"* ]]; then
+  echo "Creating symlinks for macOS configuration files..."
+  ln -sf "$DOTFILES_DIR/macos/.zsh_handle_files" ~/.zsh_handle_files
+  # Add other macOS-specific files here
+fi
+
+# More platform-specific linking as needed
+echo "Dotfiles sync complete!"
 
 # Function to check diff and prompt user
 sync_file() {
@@ -136,3 +150,20 @@ if [[ "$choice" == "y" ]]; then
         grep -h "^[a-zA-Z0-9_]*()[ ]*{" "$SYSTEM_DIR/.zsh_"* | sed 's/()[ ]*{//' | sort
     fi
 fi
+
+echo "----------------------------"
+echo "Processing .zsh_handle_files"
+if [ -f "$HOME/.zsh_handle_files" ] && [ -f ".zsh_handle_files" ]; then
+    diff -q "$HOME/.zsh_handle_files" ".zsh_handle_files" >/dev/null
+    if [ $? -ne 0 ]; then
+        cp ".zsh_handle_files" "$HOME/.zsh_handle_files"
+        echo "✓ Updated .zsh_handle_files"
+    else
+        echo "✓ No differences found in .zsh_handle_files. No action needed."
+    fi
+else
+    cp ".zsh_handle_files" "$HOME/.zsh_handle_files"
+    echo "✓ Installed .zsh_handle_files"
+fi
+
+echo "✓ .zsh_handle_files installed correctly"

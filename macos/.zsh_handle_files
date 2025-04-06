@@ -522,7 +522,7 @@ handle_pdf() {
             -f|--force)
                 #force overwrite of the file
                 force_overwrite=true
-                prompt_user=false  # Disable prompting when force is enabled
+                keep_originals=false  # Force mode enables deletion
                 shift
                 ;;
             -h|--help)
@@ -920,6 +920,11 @@ alias pdf-convert="convert_to_pdf"
 alias to_pdf="convert_to_pdf"
 
 convert_to_pdf() {
+    # Add LibreOffice to PATH if not already set
+    if [[ ! "$PATH" == *"/Applications/LibreOffice.app/Contents/MacOS"* ]]; then
+        export PATH="/Applications/LibreOffice.app/Contents/MacOS:$PATH"
+    fi
+
     # Show help if no arguments or help option provided
     if [[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]]; then
         echo "🔄 Convert to PDF"
@@ -934,9 +939,8 @@ convert_to_pdf() {
         echo "  -s, --sanitize        Sanitize PDF (remove metadata/EXIF data)"
         echo "  -n, --name            Sanitize output filenames (remove spaces/special chars)"
         echo "  -r, --recursive       Process all files in directories recursively"
-        echo "  -k, --keep            Keep original files (don't delete)"
-        echo "  -p, --prompt          Prompt before overwriting or deleting"
-        echo "  -f, --force           Force overwrite without prompting (default)"
+        echo "  -k, --keep            Keep original files (default behavior)"
+        echo "  -f, --force           Force overwrite AND delete original files"
         echo "  -v, --verbose         Show detailed processing information"
         echo "  -h, --help            Show this help message"
         echo ""
@@ -1022,9 +1026,9 @@ convert_to_pdf() {
     local sanitize=false
     local sanitize_filename=false
     local recursive=false
-    local keep_originals=false
+    local keep_originals=true  # Default to keep originals
     local prompt_user=false
-    local force_overwrite=true
+    local force_overwrite=false
     local verbose=false
     local files=()
     
@@ -1078,7 +1082,7 @@ convert_to_pdf() {
                 ;;
             -f|--force)
                 force_overwrite=true
-                prompt_user=false
+                keep_originals=false  # Force mode enables deletion
                 shift
                 ;;
             -v|--verbose)
@@ -1295,11 +1299,17 @@ convert_to_pdf() {
                 local temp_output_dir="${temp_dir}/libreoffice_output"
                 mkdir -p "$temp_output_dir"
                 
-                # Convert to PDF using LibreOffice
-                soffice --headless --convert-to pdf --outdir "$temp_output_dir" "$temp_output" &> /dev/null
+                # Convert to PDF using LibreOffice (remove error suppression)
+                echo "Attempting conversion of: $file"
+                soffice --headless --convert-to pdf --outdir "$temp_output_dir" "$temp_output"
                 
                 # Check if conversion was successful
                 local converted_file="${temp_output_dir}/${filename}.pdf"
+                if [[ ! -f "$converted_file" ]]; then
+                    # Fallback: Try to find any PDF in the output directory
+                    converted_file=$(find "$temp_output_dir" -name '*.pdf' -print -quit)
+                fi
+                
                 if [[ -f "$converted_file" ]]; then
                     cp "$converted_file" "$output_pdf"
                     
@@ -1309,7 +1319,10 @@ convert_to_pdf() {
                     
                     ((processed_count++))
                 else
-                    echo "❌ Failed to convert: $file"
+                    echo "❌ LibreOffice failed to convert: $file"
+                    echo "Debug info:"
+                    echo "Temp dir contents:"
+                    ls -la "$temp_output_dir"
                     ((failed_count++))
                     continue
                 fi
