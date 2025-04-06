@@ -396,6 +396,7 @@ handle_image() {
 alias ocr-pdf="handle_pdf -o"
 alias extract-text="handle_pdf -t"
 alias compress-pdf="handle_pdf -c"
+alias convert-to-pdf="handle_pdf -C"
 alias rotate-pdf="handle_pdf -r"
 alias sanitize-pdf="handle_pdf -s"
 alias metadata-pdf="handle_pdf -m"
@@ -409,6 +410,7 @@ handle_pdf() {
         echo ""
         echo "Options:"
         echo "  -c, --compress       Compress the PDF file"
+        echo "  -C, --convert-to-pdf Convert non pdf files to a pdfs"
         echo "  -j, --combine        Combine multiple PDFs into one"
         echo "  -e, --epub           Convert PDF to EPUB, if epub then convert to pdf"
         echo "  -o, --ocr            Apply OCR to make text searchable"
@@ -459,6 +461,10 @@ handle_pdf() {
         case "$1" in
             -c|--compress)
                 compress=true
+                shift
+                ;;
+            -C|--convert-to-pdf)
+                convert_to_pdf=true
                 shift
                 ;;
             -j|--combine)
@@ -596,6 +602,7 @@ handle_pdf() {
                 
                 # Add all the option flags
                 $compress && pdf_args+=("-c")
+                $convert_to_pdf && pdf_args+=("-C")
                 $epub && pdf_args+=("-e")
                 $ocr && pdf_args+=("-o")
                 $extract_text && pdf_args+=("-t")
@@ -796,6 +803,20 @@ handle_pdf() {
                     fi
                 fi
                 
+                if $convert_to_pdf; then
+                    if [[ "$quiet_mode" != true ]]; then
+                        echo "🔄 Converting to PDF..."
+                    fi
+                    
+                    # Call the convert_to_pdf function with the current file
+                    convert_to_pdf "$item"
+                    
+                    # Set processing_done based on success of convert_to_pdf
+                    if [[ $? -eq 0 ]]; then
+                        processing_done=true
+                    fi
+                fi
+                
                 # If sanitize is the only option and no processing was done, we still need to mark it
                 if $sanitize && [[ "$processing_done" == false ]]; then
                     if [[ "$quiet_mode" != true ]]; then
@@ -896,6 +917,7 @@ handle_pdf() {
 # Alias for quick access
 alias to-pdf="convert_to_pdf"
 alias pdf-convert="convert_to_pdf"
+alias to_pdf="convert_to_pdf"
 
 convert_to_pdf() {
     # Show help if no arguments or help option provided
@@ -945,11 +967,6 @@ convert_to_pdf() {
         missing_tools+=("imagemagick")
     fi
     
-    # Check for wkhtmltopdf (for HTML)
-    if ! command -v wkhtmltopdf &> /dev/null; then
-        missing_tools+=("wkhtmltopdf")
-    fi
-    
     # Check for Ghostscript (for combining PDFs)
     if ! command -v gs &> /dev/null; then
         missing_tools+=("ghostscript")
@@ -962,11 +979,14 @@ convert_to_pdf() {
     
     # Prompt to install missing tools
     if [[ ${#missing_tools[@]} -gt 0 ]]; then
-        echo "❌ Missing required tools: ${missing_tools[*]}"
-        echo "These tools are needed for full functionality."
-        read -p "Do you want to install them? (y/n) " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
+        echo "⚠️ Some tools are missing: ${missing_tools[*]}"
+        echo "These tools may be needed depending on the file types you're converting."
+        
+        # Use a simple y/n prompt that won't cause a coprocess error
+        echo -n "Do you want to install them? (y/n): "
+        read answer
+        
+        if [[ "$answer" == "y" || "$answer" == "Y" ]]; then
             for tool in "${missing_tools[@]}"; do
                 echo "📦 Installing $tool..."
                 case "$tool" in
@@ -975,9 +995,6 @@ convert_to_pdf() {
                         ;;
                     imagemagick)
                         brew install imagemagick
-                        ;;
-                    wkhtmltopdf)
-                        brew install wkhtmltopdf
                         ;;
                     ghostscript)
                         brew install ghostscript
@@ -990,6 +1007,12 @@ convert_to_pdf() {
         else
             echo "⚠️ Some conversions may not work without required tools."
         fi
+    fi
+    
+    # Special case for Office documents
+    local has_office_tool=false
+    if command -v soffice &> /dev/null; then
+        has_office_tool=true
     fi
     
     # Parse options
@@ -1087,28 +1110,23 @@ convert_to_pdf() {
     
     # Set quality parameters for different tools
     local convert_quality=""
-    local wkhtmltopdf_quality=""
     local gs_quality=""
     
     case "$quality" in
         low)
             convert_quality="-quality 75"
-            wkhtmltopdf_quality="--image-quality 75"
             gs_quality="-dPDFSETTINGS=/ebook"
             ;;
         medium)
             convert_quality="-quality 85"
-            wkhtmltopdf_quality="--image-quality 85"
             gs_quality="-dPDFSETTINGS=/ebook"
             ;;
         high)
             convert_quality="-quality 95"
-            wkhtmltopdf_quality="--image-quality 95"
             gs_quality="-dPDFSETTINGS=/prepress"
             ;;
         print)
             convert_quality="-quality 100"
-            wkhtmltopdf_quality="--image-quality 100"
             gs_quality="-dPDFSETTINGS=/printer"
             ;;
     esac
@@ -1297,6 +1315,7 @@ convert_to_pdf() {
                 fi
             else
                 echo "❌ Cannot convert Office document without LibreOffice: $file"
+                echo "📦 Please install LibreOffice with: brew install --cask libreoffice"
                 ((failed_count++))
                 continue
             fi
@@ -1323,18 +1342,24 @@ convert_to_pdf() {
                 fi
             else
                 echo "❌ Cannot convert image without ImageMagick: $file"
+                echo "📦 Please install ImageMagick with: brew install imagemagick"
                 ((failed_count++))
                 continue
             fi
         elif [[ "$extension" =~ ^(html?|htm)$ ]]; then
-            # HTML - use wkhtmltopdf
-            if command -v wkhtmltopdf &> /dev/null; then
+            # HTML - use ImageMagick or Chrome headless as alternative to wkhtmltopdf
+            if [[ "$verbose" == true ]]; then
+                echo "🌐 Converting HTML file..."
+            fi
+            
+            if command -v convert &> /dev/null; then
+                # Use ImageMagick for conversion
                 if [[ "$verbose" == true ]]; then
-                    echo "🌐 Converting HTML with wkhtmltopdf..."
+                    echo "🖼️ Converting HTML with ImageMagick..."
                 fi
                 
                 # Convert HTML to PDF
-                wkhtmltopdf $wkhtmltopdf_quality "$temp_output" "$output_pdf"
+                convert $convert_quality "$temp_output" "$output_pdf"
                 
                 if [[ -f "$output_pdf" ]]; then
                     if [[ "$combine" == true ]]; then
@@ -1343,12 +1368,35 @@ convert_to_pdf() {
                     
                     ((processed_count++))
                 else
-                    echo "❌ Failed to convert: $file"
+                    echo "❌ Failed to convert HTML: $file"
+                    ((failed_count++))
+                    continue
+                fi
+            elif command -v "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" &> /dev/null; then
+                # Use Chrome headless as an alternative
+                if [[ "$verbose" == true ]]; then
+                    echo "🌐 Converting HTML with Chrome headless..."
+                fi
+                
+                # Use Chrome to convert HTML to PDF
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+                    --headless --disable-gpu --print-to-pdf="$output_pdf" \
+                    "file://${temp_output}" &> /dev/null
+                
+                if [[ -f "$output_pdf" ]]; then
+                    if [[ "$combine" == true ]]; then
+                        pdf_files_to_combine+=("$output_pdf")
+                    fi
+                    
+                    ((processed_count++))
+                else
+                    echo "❌ Failed to convert HTML: $file"
                     ((failed_count++))
                     continue
                 fi
             else
-                echo "❌ Cannot convert HTML without wkhtmltopdf: $file"
+                echo "❌ Cannot convert HTML without ImageMagick or Chrome"
+                echo "📦 Please install ImageMagick with: brew install imagemagick"
                 ((failed_count++))
                 continue
             fi
@@ -1365,24 +1413,38 @@ convert_to_pdf() {
             cat "$temp_output" >> "$temp_html"
             echo "</pre></body></html>" >> "$temp_html"
             
-            if command -v wkhtmltopdf &> /dev/null; then
-                wkhtmltopdf $wkhtmltopdf_quality "$temp_html" "$output_pdf"
-            elif command -v convert &> /dev/null; then
+            local conversion_success=false
+            
+            # Try different tools in order of preference
+            if command -v convert &> /dev/null; then
                 convert $convert_quality "$temp_html" "$output_pdf"
-            else
-                echo "❌ Cannot convert text file without wkhtmltopdf or ImageMagick: $file"
-                ((failed_count++))
-                continue
+                [[ -f "$output_pdf" ]] && conversion_success=true
+            elif command -v "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" &> /dev/null; then
+                # Use Chrome headless as an alternative
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+                    --headless --disable-gpu --print-to-pdf="$output_pdf" \
+                    "file://${temp_html}" &> /dev/null
+                [[ -f "$output_pdf" ]] && conversion_success=true
+            elif command -v soffice &> /dev/null; then
+                # Use LibreOffice as last resort
+                local temp_output_dir="${temp_dir}/libreoffice_output"
+                mkdir -p "$temp_output_dir"
+                soffice --headless --convert-to pdf --outdir "$temp_output_dir" "$temp_output" &> /dev/null
+                local converted_file="${temp_output_dir}/${filename}.pdf"
+                if [[ -f "$converted_file" ]]; then
+                    cp "$converted_file" "$output_pdf"
+                    conversion_success=true
+                fi
             fi
             
-            if [[ -f "$output_pdf" ]]; then
+            # Check if conversion was successful
+            if [[ "$conversion_success" == true ]]; then
                 if [[ "$combine" == true ]]; then
                     pdf_files_to_combine+=("$output_pdf")
                 fi
-                
                 ((processed_count++))
             else
-                echo "❌ Failed to convert: $file"
+                echo "❌ Cannot convert text file. Please install ImageMagick with: brew install imagemagick"
                 ((failed_count++))
                 continue
             fi
@@ -1452,6 +1514,8 @@ convert_to_pdf() {
         # Handle original file
         if [[ "$combine" != true && -f "$output_pdf" ]]; then
             if [[ "$verbose" == true ]]; then
+                echo "✅ Converted: $file -> $output_pdf"
+            else
                 echo "✅ Converted: $file -> $output_pdf"
             fi
             
@@ -1533,6 +1597,7 @@ convert_to_pdf() {
             fi
         else
             echo "❌ Cannot combine PDFs without Ghostscript"
+            echo "📦 Please install Ghostscript with: brew install ghostscript"
             return 1
         fi
     fi
