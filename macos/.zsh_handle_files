@@ -1270,6 +1270,10 @@ convert_to_pdf() {
         command cp -f "$@"
     }
     
+    # Create a temporary directory for processing
+    local temp_dir=$(mktemp -d)
+    trap 'rm -rf "$temp_dir"' EXIT
+    
     # Add LibreOffice to PATH if not already set
     if [[ ! "$PATH" == *"/Applications/LibreOffice.app/Contents/MacOS"* ]]; then
         export PATH="/Applications/LibreOffice.app/Contents/MacOS:$PATH"
@@ -1331,6 +1335,11 @@ convert_to_pdf() {
         missing_tools+=("exiftool")
     fi
     
+    # Check for Pandoc (for markdown conversion)
+    if ! command -v pandoc &> /dev/null; then
+        missing_tools+=("pandoc")
+    fi
+    
     # Prompt to install missing tools
     if [[ ${#missing_tools[@]} -gt 0 ]]; then
         echo "⚠️ Some tools are missing: ${missing_tools[*]}"
@@ -1355,6 +1364,9 @@ convert_to_pdf() {
                         ;;
                     exiftool)
                         brew install exiftool
+                        ;;
+                    pandoc)
+                        brew install pandoc
                         ;;
                 esac
             done
@@ -1687,12 +1699,45 @@ convert_to_pdf() {
                 echo "📝 Converting text file..."
             fi
             
+            # Special handling for Markdown files
+            if [[ "$extension" =~ ^(md|markdown)$ ]]; then
+                if [[ "$verbose" == true ]]; then
+                    echo "📝 Converting Markdown file..."
+                fi
+                
+                local conversion_success=false
+                
+                # Try Pandoc first for Markdown (best quality)
+                if command -v pandoc &> /dev/null; then
+                    if [[ "$verbose" == true ]]; then
+                        echo "🔄 Converting Markdown with Pandoc..."
+                    fi
+                    
+                    pandoc "$temp_output" -o "$output_pdf" &> /dev/null
+                    [[ -f "$output_pdf" ]] && conversion_success=true
+                    
+                    if [[ "$conversion_success" == true ]]; then
+                        ((processed_count++))
+                        continue
+                    else
+                        echo "⚠️ Pandoc conversion failed, trying alternative methods..."
+                    fi
+                fi
+            fi
+            
             # Create a temporary HTML file in the temp directory
             local temp_html="${temp_dir}/${filename}.html"
             
-            echo "<html><head><title>$filename</title></head><body><pre>" > "$temp_html"
-            cat "$temp_output" >> "$temp_html"
-            echo "</pre></body></html>" >> "$temp_html"
+            # Different HTML generation for Markdown vs other text files
+            if [[ "$extension" =~ ^(md|markdown)$ ]] && command -v pandoc &> /dev/null; then
+                # Convert markdown to HTML using pandoc
+                pandoc -f markdown -t html "$temp_output" -o "$temp_html" &> /dev/null
+            else
+                # Simple HTML wrapper for plain text
+                echo "<html><head><title>$filename</title></head><body><pre>" > "$temp_html"
+                cat "$temp_output" >> "$temp_html"
+                echo "</pre></body></html>" >> "$temp_html"
+            fi
             
             local conversion_success=false
             
@@ -1703,7 +1748,12 @@ convert_to_pdf() {
                     echo "🌐 Converting HTML with wkhtmltopdf..."
                 fi
                 
-                wkhtmltopdf "$temp_html" "$output_pdf" &> /dev/null
+                # Use better options for Markdown files
+                if [[ "$extension" =~ ^(md|markdown)$ ]]; then
+                    wkhtmltopdf --enable-local-file-access --page-size Letter --margin-top 20 --margin-bottom 20 --margin-left 20 --margin-right 20 "$temp_html" "$output_pdf" &> /dev/null
+                else
+                    wkhtmltopdf "$temp_html" "$output_pdf" &> /dev/null
+                fi
                 [[ -f "$output_pdf" ]] && conversion_success=true
             elif command -v convert &> /dev/null; then
                 # Try to convert the HTML to PDF using ImageMagick
