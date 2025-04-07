@@ -79,19 +79,47 @@ pyserver(){
     fi
 }
 
-# Tailscale funnel for sharing files
+# Tailscale funnel for sharing files or services over the internet
 funnel() {
-    # usage: funnel file1 file2 dir1 dir2 ...
-    # On MacOS you must be using the open source tailscaled distribution to use the funnel command for files. 
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-        echo "Usage: funnel <target>"
-        echo "Funnel enables you to share a local server on the internet using Tailscale."
-        return 0
-    fi
-    
     # Default port and allow override with FUNNEL_PORT env variable
     local port=${FUNNEL_PORT:-8080}
-    use_python=true #use this with MacOS or as needed
+    local use_python=true
+    local direct_service=false
+    
+    # Process options
+    while [[ "$1" == -* ]]; do
+        case "$1" in
+            -h|--help)
+                echo "Usage: funnel [OPTIONS] [target]"
+                echo "Funnel enables you to share local files or services over the internet using Tailscale."
+                echo ""
+                echo "Options:"
+                echo "  -h, --help            Show this help message"
+                echo "  -d, --direct          Directly funnel to a port without using Python server"
+                echo "  -p, --port PORT       Specify port (default: 8080 or FUNNEL_PORT env variable)"
+                echo ""
+                echo "Examples:"
+                echo "  funnel file.txt              # Share a file using Python HTTP server"
+                echo "  funnel -d -p 3000            # Directly funnel localhost:3000"
+                echo "  funnel -d redis://localhost:6379  # Directly funnel a Redis service"
+                return 0
+                ;;
+            -d|--direct)
+                direct_service=true
+                use_python=false
+                shift
+                ;;
+            -p|--port)
+                port="$2"
+                shift 2
+                ;;
+            *)
+                echo "Unknown option: $1"
+                echo "Use 'funnel --help' for usage information."
+                return 1
+                ;;
+        esac
+    done
 
     # Check if tailscale is running
     if ! tailscale status &> /dev/null; then
@@ -159,8 +187,26 @@ funnel() {
     # Trap SIGINT (Ctrl+C) to run cleanup
     trap cleanup INT TERM EXIT
 
-    # if files are passed as arguments
-    if [ -n "$1" ]; then
+    # If direct service mode is enabled, funnel directly to the target service
+    if $direct_service; then
+        echo "Directly funneling to service on port $port..."
+        
+        # If the target contains a service URL, use it directly
+        if [[ "$target" == *://* ]]; then
+            echo "Funneling service: $target"
+            tailscale funnel "$target"
+        else
+            echo "Funneling localhost:$port"
+            tailscale funnel localhost:$port
+        fi
+        
+        # Keep the process alive until Ctrl+C
+        echo "Press Ctrl+C to stop the funnel"
+        while true; do
+            sleep 1
+        done
+    # if files are passed as arguments and not using direct mode
+    elif [ -n "$1" ]; then
         # Clean up any existing temp directory
         if [[ -d "/tmp/funnel" ]]; then
             rm -rf /tmp/funnel
@@ -250,6 +296,7 @@ funnel() {
 
 alias tsf=funnel
 alias postfile=funnel
+alias openport=funnel
 
 # MAC address management
 gen_mac_addr(){
