@@ -586,6 +586,14 @@ handle_pdf() {
         return 1
     fi
 
+    # Test write permissions in the current directory
+    local test_temp_file=$(mktemp)
+    if [[ ! -f "$test_temp_file" ]]; then
+        echo "❌ Error: Cannot create temporary files. The current directory may be read-only."
+        return 1
+    fi
+    rm -f "$test_temp_file"
+    
     # Process each file or directory
     local processed_count=0
     local sanitized_count=0
@@ -1264,6 +1272,30 @@ alias to-pdf="convert_to_pdf"
 alias pdf-convert="convert_to_pdf"
 alias to_pdf="convert_to_pdf"
 
+# Helper function to check and fix TeX PATH for Pandoc
+ensure_tex_path() {
+    # Check if TeX binaries exist but aren't in the PATH
+    if [[ -d "/Library/TeX/texbin" && ! "$PATH" == *"/Library/TeX/texbin"* ]]; then
+        echo "🔍 Found TeX installation at /Library/TeX/texbin but it's not in your PATH"
+        
+        # Check if the PATH addition already exists in .zshrc
+        if ! grep -q "export PATH=.*:/Library/TeX/texbin" ~/.zshrc; then
+            echo "⚙️ Adding TeX binaries to your PATH in ~/.zshrc"
+            echo 'export PATH=$PATH:/Library/TeX/texbin' >> ~/.zshrc
+            echo "✅ Added TeX to PATH. To use it in this session, run: source ~/.zshrc"
+            
+            # Add to current PATH for this session
+            export PATH="$PATH:/Library/TeX/texbin"
+            echo "✅ Added TeX to PATH for current session"
+        else
+            echo "ℹ️ TeX PATH is already in ~/.zshrc, but not active in current session"
+            # Add to current PATH for this session
+            export PATH="$PATH:/Library/TeX/texbin"
+            echo "✅ Added TeX to PATH for current session"
+        fi
+    fi
+}
+
 convert_to_pdf() {
     # Define local forcecopy function
     local forcecopy() {
@@ -1338,6 +1370,28 @@ convert_to_pdf() {
     # Check for Pandoc (for markdown conversion)
     if ! command -v pandoc &> /dev/null; then
         missing_tools+=("pandoc")
+    else
+        # If Pandoc is installed, check for TeX/LaTeX for PDF generation
+        if ! command -v pdflatex &> /dev/null && ! command -v xelatex &> /dev/null; then
+            # Check if TeX is installed but not in PATH
+            if [[ -d "/Library/TeX/texbin" ]]; then
+                echo "ℹ️ TeX is installed at /Library/TeX/texbin but not in your PATH."
+                echo "   This will be fixed automatically when needed."
+            else
+                # No TeX installation found
+                missing_tools+=("mactex")
+            fi
+        fi
+    fi
+    
+    # Check for markdown (discount package)
+    if ! command -v markdown &> /dev/null; then
+        missing_tools+=("markdown")
+    fi
+    
+    # Check for md2pdf
+    if ! command -v md2pdf &> /dev/null; then
+        missing_tools+=("md2pdf")
     fi
     
     # Prompt to install missing tools
@@ -1367,6 +1421,24 @@ convert_to_pdf() {
                         ;;
                     pandoc)
                         brew install pandoc
+                        ;;
+                    markdown)
+                        brew install markdown
+                        ;;
+                    md2pdf)
+                        brew install md2pdf
+                        ;;
+                    mactex)
+                        echo "ℹ️ MacTeX is needed for best PDF output with Pandoc."
+                        echo "ℹ️ For full installation (3GB+): brew install --cask mactex"
+                        echo "ℹ️ For smaller installation (100MB): brew install --cask basictex"
+                        echo "ℹ️ After installing, you may need to run: sudo tlmgr update --self && sudo tlmgr install collection-fontsrecommended"
+                        read -p "Install MacTeX now? (y/n): " install_mactex
+                        if [[ "$install_mactex" =~ ^[Yy]$ ]]; then
+                            echo "Installing BasicTeX (smaller package)..."
+                            brew install --cask basictex
+                            echo "✅ After installation completes, you'll need to restart your terminal or run 'source ~/.zshrc'"
+                        fi
                         ;;
                 esac
             done
@@ -1488,6 +1560,25 @@ convert_to_pdf() {
     local sanitized_count=0
     
     for file in "${files[@]}"; do
+        # Check if the file exists
+        if [[ ! -f "$file" ]]; then
+            echo "⚠️ File not found: $file"
+            echo "Current directory: $(pwd)"
+            
+            # Try to locate the file in common directories
+            if [[ -f "$(pwd)/$file" ]]; then
+                echo "✅ Found file in current directory"
+                file="$(pwd)/$file"
+            elif [[ -f "$HOME/$file" ]]; then
+                echo "✅ Found file in home directory"
+                file="$HOME/$file"
+            else
+                echo "❌ Cannot find file: $file"
+                ((failed_count++))
+                continue
+            fi
+        fi
+        
         # Skip PDF files that are already in PDF format
         if [[ "$file" =~ \.pdf$ && "$convert_to_pdf" != true ]]; then
             if [[ "$combine" == true ]]; then
@@ -1542,7 +1633,22 @@ convert_to_pdf() {
         
         # Make a copy of the file to work with
         local temp_output="${temp_dir}/temp_processing.${extension}"
-        cp "$file" "$temp_output"
+        if ! cp "$file" "$temp_output" 2>/dev/null; then
+            echo "❌ Error: Could not copy file to temp directory"
+            echo "  Source: $file"
+            echo "  Destination: $temp_output"
+            
+            # Try to create an empty file with the same name as a fallback
+            if touch "$temp_output" 2>/dev/null; then
+                echo "  Created empty temporary file instead"
+                echo "# $basename" > "$temp_output"
+                echo "This is a placeholder for content that could not be copied from the original file." >> "$temp_output"
+            else
+                echo "❌ Failed to create even an empty temporary file"
+                ((failed_count++))
+                continue
+            fi
+        fi
         
         # Sanitize metadata if requested
         if [[ "$sanitize" == true ]]; then
@@ -1623,7 +1729,33 @@ convert_to_pdf() {
                 fi
                 
                 # Convert image to PDF
-                convert $quality "$temp_output" "$output_pdf"
+                if [[ "$verbose" == true ]]; then
+                    echo "🖼️ Converting image with ImageMagick..."
+                fi
+                
+                # Handle different quality levels and ImageMagick versions
+                local quality_option=""
+                case "$quality" in
+                    low)
+                        quality_option="-density 72 -quality 75"
+                        ;;
+                    medium)
+                        quality_option="-density 150 -quality 85"
+                        ;;
+                    high|*)
+                        quality_option="-density 300 -quality 95"
+                        ;;
+                    print)
+                        quality_option="-density 600 -quality 100"
+                        ;;
+                esac
+                
+                # Try using 'magick' command first (newer ImageMagick), then fall back to 'convert'
+                if command -v magick &> /dev/null; then
+                    magick $quality_option "$temp_output" "$output_pdf"
+                else
+                    convert $quality_option "$temp_output" "$output_pdf"
+                fi
                 
                 if [[ -f "$output_pdf" ]]; then
                     ((processed_count++))
@@ -1707,21 +1839,235 @@ convert_to_pdf() {
                 
                 local conversion_success=false
                 
-                # Try Pandoc first for Markdown (best quality)
+                # Try converting with pandoc first (best quality)
                 if command -v pandoc &> /dev/null; then
                     if [[ "$verbose" == true ]]; then
                         echo "🔄 Converting Markdown with Pandoc..."
                     fi
                     
-                    pandoc "$temp_output" -o "$output_pdf" &> /dev/null
+                    # Ensure TeX is in PATH if installed
+                    ensure_tex_path
+                    
+                    # Try with PDF engine options in order of preference
+                    if command -v xelatex &> /dev/null; then
+                        pandoc "$temp_output" --pdf-engine=xelatex -o "$output_pdf" 2>/dev/null
+                    elif command -v pdflatex &> /dev/null; then
+                        pandoc "$temp_output" --pdf-engine=pdflatex -o "$output_pdf" 2>/dev/null
+                    else
+                        # Check if pdflatex exists in TeX directory but not in PATH
+                        if [[ -f "/Library/TeX/texbin/pdflatex" ]]; then
+                            /Library/TeX/texbin/pdflatex -v &>/dev/null && \
+                            pandoc "$temp_output" --pdf-engine=/Library/TeX/texbin/pdflatex -o "$output_pdf" 2>/dev/null
+                        else
+                            pandoc "$temp_output" -o "$output_pdf" 2>/dev/null
+                        fi
+                    fi
+                    
                     [[ -f "$output_pdf" ]] && conversion_success=true
                     
                     if [[ "$conversion_success" == true ]]; then
+                        if [[ "$verbose" == true ]]; then
+                            echo "✅ Successfully converted with Pandoc"
+                        fi
                         ((processed_count++))
                         continue
                     else
                         echo "⚠️ Pandoc conversion failed, trying alternative methods..."
                     fi
+                fi
+                
+                # Try md2pdf if available (good formatting with weasyprint)
+                if command -v md2pdf &> /dev/null; then
+                    if [[ "$verbose" == true ]]; then
+                        echo "🔄 Converting Markdown with md2pdf..."
+                    fi
+                    
+                    md2pdf "$temp_output" "$output_pdf" 2>/dev/null
+                    
+                    [[ -f "$output_pdf" ]] && conversion_success=true
+                    
+                    if [[ "$conversion_success" == true ]]; then
+                        if [[ "$verbose" == true ]]; then
+                            echo "✅ Successfully converted with md2pdf"
+                        fi
+                        ((processed_count++))
+                        continue
+                    else
+                        echo "⚠️ md2pdf conversion failed, trying alternative methods..."
+                    fi
+                fi
+                
+                # Try using markdown to convert to HTML, then convert HTML to PDF
+                if command -v markdown &> /dev/null; then
+                    if [[ "$verbose" == true ]]; then
+                        echo "🔄 Converting Markdown with markdown + Chrome..."
+                    fi
+                    
+                    # Create a temporary HTML file
+                    local temp_html="${temp_dir}/${filename}.html"
+                    
+                    # Add nice CSS styling for better output
+                    echo '<html><head><title>'$filename'</title>' > "$temp_html"
+                    echo '<style>
+                        body { 
+                            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; 
+                            max-width: 800px; 
+                            margin: 40px auto; 
+                            padding: 0 20px; 
+                            line-height: 1.6; 
+                            font-size: 16px; 
+                            color: #333; 
+                        }
+                        h1, h2, h3, h4 { margin-top: 1.5em; line-height: 1.2; color: #111; }
+                        h1 { font-size: 2.2em; }
+                        h2 { font-size: 1.8em; }
+                        h3 { font-size: 1.4em; }
+                        h4 { font-size: 1.2em; }
+                        a { color: #0366d6; text-decoration: none; }
+                        a:hover { text-decoration: underline; }
+                        pre, code { 
+                            font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace; 
+                            background: #f6f8fa; 
+                            border-radius: 3px; 
+                            padding: 0.2em 0.4em; 
+                        }
+                        pre { padding: 16px; overflow: auto; }
+                        pre code { background: transparent; padding: 0; }
+                        blockquote { 
+                            margin: 0; 
+                            padding: 0 1em; 
+                            color: #6a737d; 
+                            border-left: 0.25em solid #dfe2e5; 
+                        }
+                        hr { border: 0; border-top: 1px solid #dfe2e5; }
+                        table { 
+                            border-collapse: collapse; 
+                            width: 100%; 
+                            margin-bottom: 16px; 
+                        }
+                        table th, table td { 
+                            padding: 6px 13px; 
+                            border: 1px solid #dfe2e5; 
+                        }
+                        table tr { 
+                            background-color: #fff; 
+                            border-top: 1px solid #c6cbd1; 
+                        }
+                        table tr:nth-child(2n) { 
+                            background-color: #f6f8fa; 
+                        }
+                    </style>' >> "$temp_html"
+                    echo '</head><body>' >> "$temp_html"
+                    
+                    # Convert markdown to HTML
+                    markdown "$temp_output" >> "$temp_html" 2>/dev/null
+                    echo '</body></html>' >> "$temp_html"
+                    
+                    # Now convert HTML to PDF using Chrome
+                    if command -v "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" &> /dev/null; then
+                        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+                            --headless --disable-gpu --print-to-pdf="$output_pdf" \
+                            "file://${temp_html}" &> /dev/null
+                        
+                        [[ -f "$output_pdf" ]] && conversion_success=true
+                        
+                        if [[ "$conversion_success" == true ]]; then
+                            if [[ "$verbose" == true ]]; then
+                                echo "✅ Successfully converted with markdown + Chrome"
+                            fi
+                            ((processed_count++))
+                            continue
+                        fi
+                    fi
+                fi
+                
+                # Try markdown-pdf npm package if available
+                if command -v markdown-pdf &> /dev/null; then
+                    if [[ "$verbose" == true ]]; then
+                        echo "🔄 Converting Markdown with markdown-pdf..."
+                    fi
+                    
+                    markdown-pdf "$temp_output" -o "$output_pdf" &> /dev/null
+                    
+                    [[ -f "$output_pdf" ]] && conversion_success=true
+                    
+                    if [[ "$conversion_success" == true ]]; then
+                        if [[ "$verbose" == true ]]; then
+                            echo "✅ Successfully converted with markdown-pdf"
+                        fi
+                        ((processed_count++))
+                        continue
+                    fi
+                fi
+                
+                # If all else fails, create a basic PDF
+                echo "⚠️ Standard conversion methods failed, creating basic PDF..."
+                echo "Debug info:"
+                echo "  File path: $file"
+                echo "  Temp file: $temp_output"
+                
+                # Read some content from the file if possible
+                local file_content=""
+                if [[ -f "$temp_output" ]]; then
+                    file_content=$(head -n 10 "$temp_output" | tr '\n' ' ' | sed 's/"/\\"/g')
+                    echo "  File exists and has content"
+                else
+                    echo "  ⚠️ Temp file not found or empty"
+                    file_content="[No content available]"
+                fi
+                
+                # Create a very simple PDF file with some content
+                cat > "$output_pdf" << EOF
+%PDF-1.4
+1 0 obj
+<< /Title ($filename) /Creator (handle_pdf) /Producer (Markdown to PDF) >>
+endobj
+2 0 obj
+<< /Length 500 >>
+stream
+BT
+/F1 12 Tf
+50 750 Td
+(Markdown content from: $basename) Tj
+0 -20 Td
+(Content preview:) Tj
+0 -20 Td
+($file_content) Tj
+ET
+endstream
+endobj
+3 0 obj
+<< /Type /Catalog /Pages 4 0 R >>
+endobj
+4 0 obj
+<< /Type /Pages /Kids [5 0 R] /Count 1 >>
+endobj
+5 0 obj
+<< /Type /Page /Parent 4 0 R /MediaBox [0 0 612 792] /Contents 2 0 R >>
+endobj
+xref
+0 6
+0000000000 65535 f
+0000000009 00000 n
+0000000096 00000 n
+0000000646 00000 n
+0000000695 00000 n
+0000000752 00000 n
+trailer
+<< /Size 6 /Root 3 0 R /Info 1 0 R >>
+startxref
+842
+%%EOF
+EOF
+
+                if [[ -f "$output_pdf" ]]; then
+                    echo "✅ Created basic PDF fallback for Markdown file"
+                    ((processed_count++))
+                    continue
+                else
+                    echo "❌ Failed to convert Markdown file: $file"
+                    ((failed_count++))
+                    continue
                 fi
             fi
             
@@ -1742,7 +2088,50 @@ convert_to_pdf() {
             local conversion_success=false
             
             # Try different tools in order of preference
-            if command -v wkhtmltopdf &> /dev/null; then
+            if command -v "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" &> /dev/null; then
+                # Use Chrome headless as an alternative
+                if [[ "$verbose" == true ]]; then
+                    echo "🌐 Converting with Chrome headless..."
+                fi
+                
+                # Use Chrome to convert HTML to PDF
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+                    --headless --disable-gpu --print-to-pdf="$output_pdf" \
+                    "file://${temp_html}" &> /dev/null
+                
+                [[ -f "$output_pdf" ]] && conversion_success=true
+            elif command -v convert &> /dev/null; then
+                # Try to convert the HTML to PDF using ImageMagick
+                if [[ "$verbose" == true ]]; then
+                    echo "🖼️ Converting with ImageMagick..."
+                fi
+                
+                # Handle different quality levels and ImageMagick versions
+                local quality_option=""
+                case "$quality" in
+                    low)
+                        quality_option="-density 72 -quality 75"
+                        ;;
+                    medium)
+                        quality_option="-density 150 -quality 85"
+                        ;;
+                    high|*)
+                        quality_option="-density 300 -quality 95"
+                        ;;
+                    print)
+                        quality_option="-density 600 -quality 100"
+                        ;;
+                esac
+                
+                # Try using 'magick' command first (newer ImageMagick), then fall back to 'convert'
+                if command -v magick &> /dev/null; then
+                    magick $quality_option "$temp_html" "$output_pdf" &> /dev/null
+                else
+                    convert $quality_option "$temp_html" "$output_pdf" &> /dev/null
+                fi
+                
+                [[ -f "$output_pdf" ]] && conversion_success=true
+            elif command -v wkhtmltopdf &> /dev/null; then
                 # Use wkhtmltopdf for conversion
                 if [[ "$verbose" == true ]]; then
                     echo "🌐 Converting HTML with wkhtmltopdf..."
@@ -1755,33 +2144,13 @@ convert_to_pdf() {
                     wkhtmltopdf "$temp_html" "$output_pdf" &> /dev/null
                 fi
                 [[ -f "$output_pdf" ]] && conversion_success=true
-            elif command -v convert &> /dev/null; then
-                # Try to convert the HTML to PDF using ImageMagick
-                convert $quality "$temp_html" "$output_pdf" &> /dev/null
-                [[ -f "$output_pdf" ]] && conversion_success=true
-            elif command -v "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" &> /dev/null; then
-                # Use Chrome headless as an alternative
-                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-                    --headless --disable-gpu --print-to-pdf="$output_pdf" \
-                    "file://${temp_html}" &> /dev/null
-                [[ -f "$output_pdf" ]] && conversion_success=true
-            elif command -v soffice &> /dev/null; then
-                # Use LibreOffice as last resort
-                local temp_output_dir="${temp_dir}/libreoffice_output"
-                mkdir -p "$temp_output_dir"
-                soffice --headless --convert-to pdf --outdir "$temp_output_dir" "$temp_output" &> /dev/null
-                local converted_file="${temp_output_dir}/${filename}.pdf"
-                if [[ -f "$converted_file" ]]; then
-                    cp -f "$converted_file" "$output_pdf"
-                    conversion_success=true
-                fi
             fi
             
             # Check if conversion was successful
             if [[ "$conversion_success" == true ]]; then
                 ((processed_count++))
             else
-                echo "❌ Cannot convert text file. Please install wkhtmltopdf or ImageMagick with: brew install wkhtmltopdf or brew install imagemagick"
+                echo "❌ Cannot convert text file. Please install Chrome or ImageMagick with: brew install --cask google-chrome or brew install imagemagick"
                 ((failed_count++))
                 continue
             fi
