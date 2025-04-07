@@ -841,6 +841,20 @@ handle_pdf() {
                     fi
                 fi
                 
+                # Add this section immediately after to ensure a copy is made for renamed files
+                # This ensures PDFs are properly copied with their new name before deletion
+                if [[ "$rename_file" == true && "$item" =~ \.pdf$ && "$output_file" != "$item" ]]; then
+                    if [[ "$quiet_mode" != true ]]; then
+                        echo "📄 Creating renamed copy of PDF file..."
+                    fi
+                    
+                    # Create a renamed copy
+                    forcecopy "$item" "$output_file"
+                    
+                    # Mark as processed so it doesn't get reported as failed
+                    processing_done=true
+                fi
+                
                 # If sanitize is the only option and no processing was done, we still need to mark it
                 if $sanitize && [[ "$processing_done" == false ]]; then
                     if [[ "$quiet_mode" != true ]]; then
