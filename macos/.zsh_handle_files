@@ -1925,3 +1925,44 @@ convert_to_pdf() {
 
 # Alias for quick access
 alias mdpdf="convert_to_pdf"
+
+# ----------------------
+# Clean markdown files by handling problematic separators
+# ----------------------
+clean_markdown() {
+    if [ $# -eq 0 ]; then
+        echo "Usage: clean_markdown <input_file> [output_file]"
+        return 1
+    fi
+
+    local input_file="$1"
+    local output_file="${2:-${input_file%.*}_cleaned.${input_file##*.}}"
+
+    if [ ! -f "$input_file" ]; then
+        echo "Error: Input file '$input_file' does not exist"
+        return 1
+    fi
+
+    # Replace standalone '---' with '***' except for YAML frontmatter
+    awk '
+        BEGIN { in_yaml = 0; yaml_count = 0 }
+        /^---$/ {
+            if (NR == 1) {
+                in_yaml = 1
+                yaml_count = 1
+                print
+                next
+            }
+            if (in_yaml && yaml_count == 1) {
+                in_yaml = 0
+                print
+                next
+            }
+            print "***"
+            next
+        }
+        { print }
+    ' "$input_file" > "$output_file"
+
+    echo "Cleaned markdown file created: $output_file"
+} 
