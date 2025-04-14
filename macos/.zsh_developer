@@ -225,3 +225,171 @@ create_repo(){
 
     echo "Repository $repo_name created and initialized successfully in $base_dir."
 } 
+
+# ----------------------
+# Python Virtual Environment Management
+# ----------------------
+
+pyenv() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: pyenv [create|activate|deactivate|cleanup] [version]"
+        return 1
+    fi
+
+    case "$1" in
+        create)
+            if [[ -z "$2" ]]; then
+                echo "Creating Python virtual environment with default Python version..."
+                python3 -m venv env
+            else
+                echo "Creating Python virtual environment with Python $2..."
+                python"$2" -m venv env
+            fi
+            ;;
+        activate)
+            if [ -d "env" ]; then
+                source env/bin/activate
+            elif [ -d "venv" ]; then
+                source venv/bin/activate
+            else
+                echo "No virtual environment found. Create one with 'pyenv create'"
+                return 1
+            fi
+            ;;
+        deactivate)
+            if [[ "$VIRTUAL_ENV" != "" ]]; then
+                deactivate
+            else
+                echo "No virtual environment is currently active"
+            fi
+            ;;
+        cleanup)
+            if [ -d "env" ]; then
+                rm -rf env
+                echo "Removed env directory"
+            fi
+            if [ -d "venv" ]; then
+                rm -rf venv
+                echo "Removed venv directory"
+            fi
+            if [ -d "__pycache__" ]; then
+                rm -rf __pycache__
+                echo "Removed __pycache__ directory"
+            fi
+            if [ -d ".pytest_cache" ]; then
+                rm -rf .pytest_cache
+                echo "Removed .pytest_cache directory"
+            fi
+            ;;
+        *)
+            echo "Unknown command: $1"
+            return 1
+            ;;
+    esac
+}
+
+# Python environment setup and test running
+pyenv_setup() {
+    # Show help menu if requested
+    if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+        echo "Usage: pyenv_setup [options]"
+        echo "Options:"
+        echo "  --help, -h     Show this help menu"
+        echo "  --tests, -t    Run tests after setup"
+        echo "  --version, -v  Specify Python version (e.g., 3.9)"
+        echo "  --clean, -c    Clean up existing environment before setup"
+        echo "  No arguments   Setup environment and install requirements"
+        return 0
+    fi
+
+    local python_version="3"
+    local run_tests=false
+    local cleanup=false
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --tests|-t)
+                run_tests=true
+                shift
+                ;;
+            --version|-v)
+                python_version="$2"
+                shift 2
+                ;;
+            --clean|-c)
+                cleanup=true
+                shift
+                ;;
+            *)
+                echo "Unknown option: $1"
+                return 1
+                ;;
+        esac
+    done
+
+    # Clean up if requested
+    if [[ "$cleanup" == true ]]; then
+        pyenv cleanup
+    fi
+
+    # Check if virtual environment exists, create if not
+    if [ ! -d "venv" ] && [ ! -d "env" ]; then
+        echo "Creating virtual environment with Python $python_version..."
+        if ! python"$python_version" -m venv env; then
+            echo "Failed to create virtual environment"
+            return 1
+        fi
+    fi
+
+    # Activate virtual environment
+    if [ -d "env" ]; then
+        source env/bin/activate
+    elif [ -d "venv" ]; then
+        source venv/bin/activate
+    fi
+
+    # Verify virtual environment activation
+    if [[ "$VIRTUAL_ENV" == "" ]]; then
+        echo "Failed to activate virtual environment"
+        return 1
+    fi
+
+    # Upgrade pip
+    echo "Upgrading pip..."
+    if ! python3 -m pip install --upgrade pip; then
+        echo "Failed to upgrade pip"
+        return 1
+    fi
+
+    # Install requirements if requirements.txt exists
+    if [ -f "requirements.txt" ]; then
+        echo "Installing requirements..."
+        if ! python3 -m pip install -r requirements.txt; then
+            echo "Failed to install requirements"
+            return 1
+        fi
+    else
+        echo "No requirements.txt found"
+    fi
+
+    # Run tests if requested
+    if [[ "$run_tests" == true ]]; then
+        if [ -d "tests" ]; then
+            echo "Running tests..."
+            if ! python3 -m pytest tests/ -v; then
+                echo "Tests failed"
+                return 1
+            fi
+        else
+            echo "No tests directory found"
+        fi
+    fi
+
+    echo "Setup completed successfully"
+    return 0
+}
+
+
+
+
