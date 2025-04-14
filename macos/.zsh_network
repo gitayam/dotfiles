@@ -296,7 +296,7 @@ funnel() {
 
 alias tsf=funnel
 alias postfile=funnel
-alias openport=funnel
+alias openport="funnel -d -p"
 
 # MAC address management
 gen_mac_addr(){
