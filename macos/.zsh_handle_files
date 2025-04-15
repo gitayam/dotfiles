@@ -1531,6 +1531,40 @@ convert_to_pdf() {
             fi
 
             ((processed_count++))
+        # Handle Office documents
+        elif [[ "$extension" =~ ^(docx?|xlsx?|pptx?|odt|ods|odp)$ ]]; then
+            if [[ "$verbose" == true ]]; then
+                echo "🔄 Converting Office document: $file"
+            fi
+
+            # Check if LibreOffice is installed
+            if ! command -v soffice &> /dev/null; then
+                echo "❌ LibreOffice is required for Office document conversion but not installed"
+                echo "Please install LibreOffice: brew install --cask libreoffice"
+                ((failed_count++))
+                continue
+            fi
+
+            # Convert using LibreOffice
+            if ! soffice --headless --convert-to pdf --outdir "$(dirname "$file")" "$file"; then
+                echo "❌ Failed to convert Office document: $file"
+                ((failed_count++))
+                continue
+            fi
+
+            # Handle sanitization if requested
+            if [[ "$sanitize" == true ]]; then
+                if command -v exiftool &> /dev/null; then
+                    exiftool -overwrite_original -all:all= -m -f "$output_pdf" &> /dev/null
+                fi
+            fi
+
+            # Handle original file based on keep_originals flag
+            if [[ "$keep_originals" == false ]]; then
+                rm -f "$file"
+            fi
+
+            ((processed_count++))
         else
             echo "❌ Unsupported file type: $file"
             ((failed_count++))
