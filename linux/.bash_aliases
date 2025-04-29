@@ -1135,3 +1135,23 @@ alias df='df -h'                # Show free disk space in human-readable format
 alias rm='rm -i'
 alias cp='cp -i'
 alias mv='mv -i'
+
+# Git shortcuts
+alias gits='git status'
+alias gita='git add .'
+alias gitc='git commit -m'
+alias gitp='git push'
+alias gitpl='git pull'
+alias gitl='git log --oneline --graph --decorate'
+alias logs='tail -f /var/log/syslog'
+
+# Grep aliases
+alias grep='grep -i --color=auto "$@"'
+alias grepv='grep -vi --color=auto'
+
+# Find aliases
+alias findf='find . -type f -name'
+alias findd='find . -type d -name'
+
+# Python aliases
+alias pyenv='python3 -m venv env && source env/bin/activate'
