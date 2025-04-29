@@ -1,0 +1,111 @@
+# Security-related functions and aliases for bash
+# (ported from .zsh_security)
+
+# Check for open ports by process
+check_ports_by_process() {
+    sudo lsof -i -P -n | grep LISTEN
+}
+
+# Check for world-writable files
+find_world_writable() {
+    find / -xdev -type f -perm -0002 -print 2>/dev/null
+}
+
+# --- Expanded security functions ported from .zsh_security ---
+
+# Format JSON output
+alias json="jq ."
+
+# Setup age encryption
+setup_age() {
+    mkdir -p ~/.age
+    username=$(whoami)
+    key_name="${1:-$username}"
+    echo "Store the following keys in a secure location:"
+    echo "Public key: ~/.age/keys/$key_name.pub"
+    echo "Private key: ~/.age/keys/$key_name.key"
+    echo "You will see a public key output to the screen that you can share with others"
+    echo "For more information on age see https://github.com/FiloSottile/age"
+    sleep 1
+    age-keygen -a -o ~/.age/keys/$key_name.key
+    ls -l ~/.age/keys
+}
+
+# Encrypt file(s) with age, gpg, or openssl
+encrypt_file() {
+    local encrypt_method="age"
+    local recipient=""
+    local use_passphrase=true
+    local zip_file=""
+    local password=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -e|--encrypt)
+                shift
+                ;;
+            -m)
+                encrypt_method="$2"; shift 2 ;;
+            -r)
+                recipient="$2"; use_passphrase=false; shift 2 ;;
+            -h|--help)
+                echo "Usage: encrypt_file [-m method] [-r recipient] file1 file2 ..."
+                echo "Options: -m method (age|gpg|aes), -r recipient (for age), -e/--encrypt"
+                return 0
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+    files_to_encrypt=("$@")
+    case "$encrypt_method" in
+        age)
+            encrypted_file="${files_to_encrypt[0]}.age"
+            if [[ -n "$recipient" ]]; then
+                age -r "$recipient" -o "$encrypted_file" "${files_to_encrypt[@]}"
+            else
+                age -p -o "$encrypted_file" "${files_to_encrypt[@]}"
+            fi
+            ;;
+        gpg)
+            encrypted_file="${files_to_encrypt[0]}.gpg"
+            gpg --output "$encrypted_file" --symmetric "${files_to_encrypt[@]}"
+            ;;
+        aes)
+            encrypted_file="${files_to_encrypt[0]}.aes"
+            openssl enc -aes-256-cbc -salt -in "${files_to_encrypt[0]}" -out "$encrypted_file"
+            ;;
+        *)
+            echo "Unknown encryption method: $encrypt_method"
+            return 1
+            ;;
+    esac
+    echo "Encrypted file created: $encrypted_file"
+}
+
+# Clean filename
+clean_file() {
+    if [[ -z "$1" ]]; then
+        echo "Error: No file path provided."
+        return 1
+    fi
+    local path="$1"
+    local full_path=$(readlink -f "$path")
+    local dir=$(dirname "$full_path")
+    local base=$(basename "$full_path")
+    local clean_file=$(echo "$base" | tr -cd '[:alnum:]._-')
+    mv "$full_path" "$dir/$clean_file"
+    echo "$dir/$clean_file"
+}
+
+# Virus scanning using clamscan
+virus_scan() {
+    if ! command -v clamscan &> /dev/null; then
+        echo "Error: clamscan is not installed."
+        return 1
+    fi
+    for file in "$@"; do
+        clamscan "$file"
+    done
+}
+# --- End expanded ---

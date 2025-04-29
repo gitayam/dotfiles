@@ -1,0 +1,60 @@
+# Application launcher and app-related functions for bash
+# (ported from .zsh_apps)
+
+# Example: open default browser
+open_browser() {
+    if command -v xdg-open &> /dev/null; then
+        xdg-open "$1"
+    elif command -v gnome-open &> /dev/null; then
+        gnome-open "$1"
+    elif command -v kde-open &> /dev/null; then
+        kde-open "$1"
+    else
+        echo "No supported open command found."
+        return 1
+    fi
+}
+
+# --- Expanded app launchers and helpers ported from .zsh_apps ---
+
+# Open a PDF file in the default viewer
+open_pdf() {
+    if command -v xdg-open &> /dev/null; then
+        xdg-open "$1"
+    elif command -v evince &> /dev/null; then
+        evince "$1"
+    elif command -v okular &> /dev/null; then
+        okular "$1"
+    else
+        echo "No supported PDF viewer found."
+        return 1
+    fi
+}
+
+# Open a text editor (prefer micro, then nano, then vi)
+edit_file() {
+    if command -v nano &> /dev/null; then
+        nano "$1"
+    elif command -v micro &> /dev/null; then
+        micro "$1"
+    else
+        vi "$1"
+    fi
+}
+
+# Open file manager (prefer nautilus, then thunar, then xdg-open)
+open_file_manager() {
+    if command -v nautilus &> /dev/null; then
+        nautilus "$1" &
+    elif command -v thunar &> /dev/null; then
+        thunar "$1" &
+    elif command -v xdg-open &> /dev/null; then
+        xdg-open "$1"
+    else
+        echo "No supported file manager found."
+        return 1
+    fi
+}
+# --- End expanded ---
+
+# Add more app launchers as needed

@@ -1,0 +1,153 @@
+# Utility functions for bash
+# (ported from .zsh_utils)
+
+# --- Expanded utility functions ported from .zsh_utils ---
+
+# Find files matching a pattern and execute a command on them
+findex() {
+    if [[ "$1" == "-h" || "$1" == "--help" || $# -eq 0 ]]; then
+        echo "Usage: findex [OPTIONS] [PATH] PATTERN COMMAND [--shift] [ARGS...]"
+        echo ""
+        echo "Required arguments:"
+        echo "  PATTERN       File pattern to search for (e.g., '*.txt')"
+        echo "  COMMAND       Command to execute on each matching file"
+        echo ""
+        echo "Optional arguments:"
+        echo "  PATH          Directory path to search in (default: current directory)"
+        echo "  -d DEPTH      Maximum directory depth to search (default: unlimited)"
+        echo "  -t TYPE       File type: f (files), d (directories), l (symlinks)"
+        echo "  --shift       Place all arguments after --shift to the right of the file placeholder"
+        echo ""
+        echo "Examples:"
+        echo "  findex '*.txt' ls -l                         # List all text files in current dir"
+        echo "  findex /home '*.pdf' ls -l                   # List all PDF files in /home"
+        echo "  findex -d 2 '*.sh' chmod 755                 # Make shell scripts executable (max depth 2)"
+        echo "  findex -t f /var/log '*.log' grep 'error'    # Search for 'error' in log files"
+        echo "  findex '*.txt' sed -i 's/old/new/g'          # Replace text in all text files"
+        echo "  findex /tmp '*.jpg' 'convert {} -resize 50% {}.resized'  # Resize all JPG files in /tmp"
+        echo "  findex -d 2 ~/Documents '*.pdf' cp --shift /tmp/     # Copy PDFs to /tmp directory"
+        return 0
+    fi
+    local max_depth=""
+    local file_type=""
+    local search_path="."  # Default to current directory
+    local pattern=""
+    local command=""
+    local pre_shift_args=()
+    local post_shift_args=()
+    local shift_mode=false
+    for arg in "$@"; do
+        if [[ "$arg" == "--shift" ]]; then
+            shift_mode=true
+            break
+        fi
+    done
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -d)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: -d requires a depth argument"
+                    return 1
+                fi
+                max_depth="-maxdepth $2"
+                shift 2
+                ;;
+            -t)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: -t requires a type argument (f, d, or l)"
+                    return 1
+                fi
+                file_type="-type $2"
+                shift 2
+                ;;
+            --shift)
+                shift
+                ;;
+            -* )
+                echo "Unknown option: $1"
+                echo "Use 'findex --help' for usage information."
+                return 1
+                ;;
+            *)
+                if [[ -z "$pattern" ]]; then
+                    if [[ -d "$1" ]]; then
+                        search_path="$1"
+                    else
+                        pattern="$1"
+                    fi
+                elif [[ -z "$command" ]]; then
+                    command="$1"
+                elif [[ "$shift_mode" == true && "$1" != "--shift" ]]; then
+                    post_shift_args+=("$1")
+                else
+                    pre_shift_args+=("$1")
+                fi
+                shift
+                ;;
+        esac
+    done
+    if [[ -z "$pattern" || -z "$command" ]]; then
+        echo "Error: Missing pattern or command. See 'findex --help' for usage."
+        return 1
+    fi
+    search_path=$(eval echo "$search_path")
+    local find_cmd="find \"$search_path\" $max_depth $file_type -name \"$pattern\" 2>/dev/null"
+    local matching_files=$(eval $find_cmd)
+    if [[ -z "$matching_files" ]]; then
+        echo "No files found matching pattern: $pattern in $search_path"
+        return 0
+    fi
+    local file_count=$(echo "$matching_files" | wc -l | tr -d ' ')
+    echo "Found $file_count file(s) to process:"
+    echo "$matching_files" | sed 's/^/  /'
+    for file in $matching_files; do
+        if [[ "$shift_mode" == true ]]; then
+            $command "$file" "${post_shift_args[@]}"
+        else
+            $command "${pre_shift_args[@]}" "$file"
+        fi
+    done
+    echo "Command execution completed on $file_count file(s)."
+}
+
+# Generate a random UUID
+uuidgen_util() {
+    if command -v uuidgen &> /dev/null; then
+        uuidgen
+    else
+        cat /proc/sys/kernel/random/uuid
+    fi
+}
+
+# Show disk usage for a directory
+show_disk_usage() {
+    du -sh "$1"
+}
+
+# Convert markdown and office files to PDF (requires pandoc & libreoffice)
+convert_to_pdf() {
+    if [ $# -eq 0 ]; then
+        echo "Usage: convert_to_pdf <file1> [file2 ...]"
+        return 1
+    fi
+    for file in "$@"; do
+        if [[ "$file" =~ \.(md|markdown)$ ]]; then
+            if ! command -v pandoc &> /dev/null; then
+                echo "pandoc not installed. Skipping $file."
+                continue
+            fi
+            pandoc "$file" -o "${file%.*}.pdf"
+        elif [[ "$file" =~ \.(docx?|xlsx?|pptx?|odt|ods|odp)$ ]]; then
+            if ! command -v soffice &> /dev/null; then
+                echo "LibreOffice (soffice) not installed. Skipping $file."
+                continue
+            fi
+            soffice --headless --convert-to pdf "$file"
+        else
+            echo "Unsupported file type: $file"
+        fi
+    done
+}
+
+alias mdpdf="convert_to_pdf"
+# --- End expanded ---

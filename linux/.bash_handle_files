@@ -1,0 +1,85 @@
+# File handling helpers for bash
+# (ported from .zsh_handle_files)
+
+# Safely move a file to trash (if trash-cli is available)
+safe_rm() {
+    if command -v trash &> /dev/null; then
+        trash "$@"
+    else
+        rm -i "$@"
+    fi
+}
+
+# --- Expanded file handling helpers ported from .zsh_handle_files ---
+
+# Process a single image: sanitize EXIF, convert, rotate, OCR, etc.
+process_single_image() {
+    local file="$1"
+    if [[ ! -e "$file" ]]; then
+        echo "File does not exist: $file"; return 1
+    fi
+    if [[ "$file" =~ \.(jpg|jpeg|png|tiff|gif|bmp|ico|webp)$ ]]; then
+        echo "Processing image file: $file"
+    elif [[ "$file" =~ \.pdf$ ]]; then
+        echo "Processing PDF file: $file"
+    else
+        echo "Unsupported file type: $file"; return 1
+    fi
+    # EXIF sanitize (if exiftool)
+    if command -v exiftool &> /dev/null; then
+        exiftool -overwrite_original -all= "$file"
+    fi
+    # Rotate (if convert)
+    # Usage: process_single_image file [degrees]
+    if [[ -n "$2" ]]; then
+        if command -v convert &> /dev/null; then
+            convert "$file" -rotate "$2" "$file"
+        fi
+    fi
+}
+
+# Batch rename files with a pattern
+batch_rename() {
+    if [ $# -lt 2 ]; then
+        echo "Usage: batch_rename <pattern> <replacement>"
+        return 1
+    fi
+    for f in *$1*; do
+        mv -- "$f" "${f//$1/$2}"
+    done
+}
+
+# Clean markdown files by handling problematic separators
+clean_markdown() {
+    if [ $# -eq 0 ]; then
+        echo "Usage: clean_markdown <input_file> [output_file]"
+        return 1
+    fi
+    local input_file="$1"
+    local output_file="${2:-${input_file%.*}_cleaned.${input_file##*.}}"
+    if [ ! -f "$input_file" ]; then
+        echo "Error: Input file '$input_file' does not exist"
+        return 1
+    fi
+    awk '
+        BEGIN { in_yaml = 0; yaml_count = 0 }
+        /^---$/ {
+            if (NR == 1) {
+                in_yaml = 1
+                yaml_count = 1
+                print
+                next
+            }
+            if (in_yaml && yaml_count == 1) {
+                in_yaml = 0
+                print
+                next
+            }
+            print "***"
+            next
+        }
+        { print }
+    ' "$input_file" > "$output_file"
+    echo "Cleaned markdown file created: $output_file"
+}
+# --- End expanded ---

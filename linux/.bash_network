@@ -1,0 +1,196 @@
+# Network-related utilities for bash
+# (ported from .zsh_network)
+
+# Show all network interfaces and their IPs
+show_interfaces() {
+    if command -v ip &> /dev/null; then
+        ip addr show
+    else
+        ifconfig -a
+    fi
+}
+
+# Ping a host with count and summary
+ping_summary() {
+    if [ -z "$1" ]; then
+        echo "Usage: ping_summary <host>"
+        return 1
+    fi
+    ping -c 4 "$1"
+}
+
+# --- Expanded functions ported from .zsh_network ---
+
+# List open ports
+alias ports='netstat -tulanp'
+# Get public IP address
+alias myip='curl ifconfig.me'
+# Check HTTP headers
+alias http="curl -I"
+
+# Scan network ports using nmap
+scan_ports() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "usage: scan_ports ip_or_host"
+        return 0
+    fi
+    if [[ -z "$1" ]]; then
+        local_ip=$(hostname -I | awk '{print $1}')
+        ip_or_host=$local_ip
+    else
+        ip_or_host=$1
+    fi
+    if ! command -v nmap &> /dev/null; then
+        echo "Error: nmap is not installed."
+        echo -n "Do you want to install nmap? (y/n): "
+        read install_nmap
+        if [[ $install_nmap =~ ^[Yy]$ ]]; then
+            if command -v apt &> /dev/null; then
+                sudo apt update && sudo apt install -y nmap
+            elif command -v yum &> /dev/null; then
+                sudo yum install -y nmap
+            else
+                echo "Please install nmap manually."
+                return 1
+            fi
+        else
+            return 1
+        fi
+    fi
+    sudo nmap -sS -Pn "$ip_or_host"
+}
+
+# Simple Python HTTP server for sharing files
+pyserver() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: pyserver [file1 file2 ...]"
+        return 0
+    fi
+    if ! command -v python3 &> /dev/null; then
+        echo "Error: Python 3 is not installed."
+        return 1
+    fi
+    local port=8000
+    local_ip=$(hostname -I | awk '{print $1}')
+    if [ -n "$1" ]; then
+        mkdir -p /tmp/pyserver
+        for file in "$@"; do
+            ln -s "$PWD/$file" /tmp/pyserver
+        done
+        cd /tmp/pyserver
+        python3 -m http.server $port
+    else
+        python3 -m http.server $port
+    fi
+}
+
+# Tailscale funnel for sharing files/services over the internet
+funnel() {
+    local port=${FUNNEL_PORT:-8080}
+    local use_python=true
+    local direct_service=false
+    while [[ "$1" == -* ]]; do
+        case "$1" in
+            -h|--help)
+                echo "Usage: funnel [OPTIONS] [target]"
+                echo "Options: -h|--help, -d|--direct, -p|--port PORT"
+                return 0
+                ;;
+            -d|--direct)
+                direct_service=true
+                use_python=false
+                shift
+                ;;
+            -p|--port)
+                port="$2"
+                shift 2
+                ;;
+            *)
+                echo "Unknown option: $1"
+                return 1
+                ;;
+        esac
+    done
+    if ! command -v tailscale &> /dev/null; then
+        echo "tailscale not installed"
+        return 1
+    fi
+    if ! tailscale status &> /dev/null; then
+        echo "Tailscale is not running. Attempting to start it..."
+        tailscale up || return 1
+    fi
+    if $direct_service; then
+        echo "Funneling localhost:$port"
+        tailscale funnel localhost:$port
+        echo "Press Ctrl+C to stop the funnel"
+        while true; do sleep 1; done
+    elif [ -n "$1" ]; then
+        mkdir -p /tmp/funnel
+        for file in "$@"; do
+            cp -r "$PWD/$file" /tmp/funnel/
+        done
+        cd /tmp/funnel
+        python3 -m http.server $port &
+        server_pid=$!
+        sleep 1
+        tailscale funnel localhost:$port
+        kill $server_pid
+    else
+        python3 -m http.server $port &
+        server_pid=$!
+        sleep 1
+        tailscale funnel localhost:$port
+        kill $server_pid
+    fi
+}
+alias tsf=funnel
+alias postfile=funnel
+alias openport="funnel -d -p"
+
+# MAC address management
+# Generate a random MAC address
+gen_mac_addr() {
+    openssl rand -hex 6 | sed 's/\(..\)/\1:/g; s/.$//'
+}
+
+# Change MAC address interactively
+change_mac_menu() {
+    echo "Choose an option:"
+    echo "1. Set a specific MAC address"
+    echo "2. Set a random MAC address"
+    echo "3. Restore original MAC address"
+    echo -n "Enter your choice (1/2/3): "
+    read choice
+    case $choice in
+        1)
+            echo -n "Enter the new MAC address (e.g., E6:B8:BA:D2:41:07): "
+            read mac_address
+            sudo ip link set dev eth0 address "$mac_address"
+            ;;
+        2)
+            mac_address=$(gen_mac_addr)
+            sudo ip link set dev eth0 address "$mac_address"
+            echo "Random MAC set: $mac_address"
+            ;;
+        3)
+            sudo ip link set dev eth0 address $(cat /sys/class/net/eth0/address)
+            echo "Restored original MAC address."
+            ;;
+        *)
+            echo "Invalid choice. Exiting."
+            ;;
+    esac
+}
+alias ports='netstat -tulanp'  # List open ports
+alias mypublicip='curl ifconfig.me'  # Check external IP address
+alias myprivateip='privateip'  # Check private IP address
+
+privateip() {
+    if command -v ip &> /dev/null; then
+        ip a | grep "inet " | grep -v "127.0.0.1" | awk '{print $2}'
+    elif command -v ifconfig &> /dev/null; then
+        ifconfig | grep "inet " | grep -v "127.0.0.1" | awk '{print $2}'
+    else
+        echo "ip command not found"
+    fi
+}

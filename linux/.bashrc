@@ -13,15 +13,14 @@ export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # Loads nvm
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # Loads nvm bash_completion
 
-# Load custom functions if available
-if [ -f ~/.bash_functions.sh ]; then
-  source ~/.bash_functions.sh
-fi
+# Modular sourcing of bash config files (added for maintainability)
+for config_file in ~/.bash_{aliases,functions,system,docker,apps,network,security,transfer,utils,handle_files}; do
+  if [ -f "$config_file" ]; then
+    source "$config_file"
+  fi
+done
 
-# Load custom aliases if available
-if [ -f ~/.bash_aliases ]; then
-  source ~/.bash_aliases
-fi
+# Remove duplicate or now-modularized function/alias definitions from here if present
 
 # Define OS 
 if [ -f /etc/os-release ]; then

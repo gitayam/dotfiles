@@ -1,0 +1,86 @@
+# Docker-related aliases and functions for bash
+
+# --- Docker Compose Aliases ---
+alias dc="docker compose"
+alias docker-compose="dc"
+alias dcu="dc pull && dc up -d"
+alias dcr="dc down && dc up -d"
+alias dcp="dc pull"
+
+# --- Docker Aliases ---
+alias d="docker"
+alias dps="d ps"
+alias dbash="d exec -it $1 /bin/bash"
+alias dsh="d exec -it $1 /bin/sh"
+
+# --- BEGIN: migrated from .bash_aliases ---
+# Docker Compose Update Function
+update_docker_compose() {
+    search_path="."
+    exclude_paths=""
+    pull_only=false
+    ask=false
+    if [[ "$1" == "--help" ]]; then
+        echo "Usage: update_docker_compose [OPTIONS]"
+        echo "Options:"
+        echo "  --home              Set the search path to /home/"
+        echo "  --exclude <path>    Exclude specific paths from the update"
+        echo "  --pull-only         Only pull Docker images without running 'up -d'"
+        echo "  --ask               Prompt before updating each compose file"
+        echo "  --help              Show this help message"
+        return 0
+    fi
+    while [[ "$#" -gt 0 ]]; do
+        case $1 in
+            --home) search_path="/home/" ;;
+            --exclude) exclude_paths="$2"; shift ;;
+            --pull-only) pull_only=true ;;
+            --ask) ask=true ;;
+            *) echo "Unknown parameter passed: $1"; return 1 ;;
+        esac
+        shift
+    done
+    IFS=' ' read -r -a exclude_array <<< "$exclude_paths"
+    exclude_expr=""
+    for path in "${exclude_array[@]}"; do
+        exclude_expr+=" ! -path \"${path}*\""
+    done
+    find "$search_path" -type f \( -name "docker-compose.yml" -o -name "docker-compose.yaml" \) ${exclude_expr} -print | while read -r composefile; do
+        compose_dir=$(dirname "$composefile")
+        echo "Found docker-compose file in $compose_dir"
+        if $ask; then
+            read -p "Choose action for $compose_dir (p = pull only, u = pull & up, s = skip): " choice
+            case $choice in
+                p|P) action="pull" ;;
+                u|U) action="pull_and_up" ;;
+                s|S) echo "Skipping $compose_dir"; continue ;;
+                *) echo "Invalid choice. Skipping $compose_dir"; continue ;;
+            esac
+        else
+            action="pull_and_up"
+        fi
+        cd "$compose_dir" || continue
+        if [[ $action == "pull" ]] || $pull_only; then
+            echo "Running 'docker compose pull' in $compose_dir"
+            docker compose pull
+        fi
+        if [[ $action == "pull_and_up" ]] && ! $pull_only; then
+            echo "Running 'docker compose pull' and 'docker compose up -d' in $compose_dir"
+            docker compose pull
+            docker compose up -d
+        fi
+    done
+}
+
+# --- Migrated Docker Compose Aliases ---
+alias dc="docker compose"
+alias docker-compose="dc"
+alias dcu="dc pull && dc up -d"
+alias dcb="dcu --build"
+alias dcr="dc down && dc up -d"
+alias dcp="dc pull"
+alias d="docker"
+alias dps="d ps"
+alias dbash="d exec -it $1 /bin/bash"
+alias dsh="d exec -it $1 /bin/sh"
+# --- END: migrated from .bash_aliases ---
