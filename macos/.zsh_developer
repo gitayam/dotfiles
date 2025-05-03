@@ -391,5 +391,60 @@ pyenv_setup() {
 }
 
 
+# ----------------------
+# Virtual Hackathon Functions
+# ----------------------
 
+## Create Repo for Virtual Hackathon
+# Public Repo under IrregularChat Org , use the create_repo function
+# Create labels for issues that are going to apply during the hackathon
+# Create issues with titles that are easy to read, with a clear description of the issue
+# Create Issues for creating a Minimal Viable Product (MVP) for the hackathon
+# Create issues for Identifying Frameworks and Navigation (dirs and files)
+# Create issues for researching the topic and creating a plan
 
+hackathon_setup() {
+    # Help menu
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: hackathon_setup [REPO_NAME]"
+        echo "If REPO_NAME is not provided, you will be prompted to enter one."
+        echo "Options:"
+        echo "  -h, --help    Show this help message"
+        return 0
+    fi
+
+    # Accept repo name as argument or prompt if not provided
+    if [[ -n "$1" ]]; then
+        repo_name="$1"
+    else
+        echo "Enter the name of the repo: "
+        read repo_name
+        while [[ -z "$repo_name" ]]; do
+            echo "Repo name cannot be empty, please enter a valid repo name: "
+            read repo_name
+        done
+    fi
+
+    # Validate repo name: no spaces
+    if [[ "$repo_name" =~ [[:space:]] ]]; then
+        echo "Error: Repository name cannot contain spaces. Please use dashes or underscores."
+        return 1
+    fi
+
+    # gh commands to create a project (org and template as positional args)
+    gh repo create "$repo_name" --public --template="https://github.com/orgs/irregularchat/projects/7" --owner IrregularChat
+    if [[ $? -ne 0 ]]; then
+        echo "gh repo create failed. Aborting setup."
+        return 1
+    fi
+
+    # Create labels for issues (correct syntax: gh label create <name> -c <color>)
+    gh label create MVP -c "#FF0000"
+    gh label create Frameworks -c "#FF0000"
+    gh label create Research -c "#FF0000"
+
+    # create issues
+    gh issue create --title "MVP" --body "Create a Minimal Viable Product (MVP) for the hackathon"
+    gh issue create --title "Frameworks" --body "Identify the frameworks and navigation (dirs and files) for the hackathon"
+    gh issue create --title "Research" --body "Research the topic and create a plan for the hackathon"
+}
