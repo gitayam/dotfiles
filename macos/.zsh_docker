@@ -25,6 +25,7 @@ alias d="docker" # alias for docker
 alias dps="d ps"
 alias dbash="d exec -it \$1 /bin/bash"
 alias dsh="d exec -it \$1 /bin/sh" 
+
 # Docker exec function
 ##FIXME! Menu with running containers needs work and the command being sent to execute in the container isn't working 
 dexec() {
@@ -89,24 +90,63 @@ docker_auto() {
     """
     This function will automatically run docker compose up -d --build if a docker-compose.yml file is found in the current directory.
     If a Dockerfile is also found, it will run docker compose up -d --build
+    Additionally, after starting, it will print a clickable localhost:PORT link if a port can be detected from the compose file.
     """
+    # Helper: Try to extract a port from a compose file
+    print_localhost_link() {
+        local compose_file=""
+        for f in docker-compose.yml docker-compose.yaml compose.yml compose.yaml; do
+            if [ -f "$f" ]; then
+                compose_file="$f"
+                break
+            fi
+        done
+        if [ -n "$compose_file" ]; then
+            local port=""
+            # Try yq if available
+            if command -v yq >/dev/null 2>&1; then
+                # Extract the first host port from any service's ports section
+                port=$(yq '(.services[]?.ports[]? // []) | select(.) | sub("^([0-9]+):.*$"; "\\1")' "$compose_file" | grep -Eo '^[0-9]{2,5}$' | head -n1)
+            fi
+            # If yq not found or no port found, try improved grep/sed fallback
+            if [ -z "$port" ]; then
+                port=$(grep -E 'ports:|^[[:space:]]*-?[[:space:]]*[0-9]+:[0-9]+' "$compose_file" | \
+                    awk '/ports:/ {p=1; next} p && /^[[:space:]]*-[[:space:]]*[0-9]+:[0-9]+/ {gsub(/[^0-9:]/,""); split($1,a,":"); print a[1]; exit}' )
+            fi
+            # If still not found, try another fallback for quoted ports
+            if [ -z "$port" ]; then
+                port=$(grep -E '^[[:space:]]*-?[[:space:]]*"[0-9]+:[0-9]+"' "$compose_file" | sed -E 's/.*"([0-9]{2,5}):[0-9]{2,5}".*/\1/' | head -n1)
+            fi
+            if [ -n "$port" ]; then
+                echo "Open your app at: http://localhost:$port"
+            else
+                echo "App started! (Could not auto-detect port)"
+                echo "If your service exposes a port, open: http://localhost:PORT (replace PORT with the correct value)"
+            fi
+        else
+            echo "App started! (No compose file to detect port from)"
+        fi
+    }
+
     # Check for various Docker Compose file variations
     if [ -f "docker-compose.yml" ] || [ -f "docker-compose.yaml" ] || [ -f "compose.yml" ] || [ -f "compose.yaml" ]; then
         echo "Docker Compose file found in current directory"
-        
         # If both Dockerfile and docker-compose file exist
         if [ -f "Dockerfile" ]; then
             echo "Dockerfile also found - running docker compose up with build"
             docker compose up -d --build
+            print_localhost_link
         else
             # Just docker-compose without Dockerfile
             echo "Running docker compose up -d"
             docker compose up -d
+            print_localhost_link
         fi
     elif [ -f "Dockerfile" ]; then
         # Only Dockerfile exists, no compose file
         echo "Only Dockerfile found in current directory"
         echo "You may want to build this image manually with: docker build -t <name> ."
+        echo "After running the container, open: http://localhost:PORT (replace PORT with the correct value)"
     else
         echo "No Docker Compose file or Dockerfile found in current directory"
     fi

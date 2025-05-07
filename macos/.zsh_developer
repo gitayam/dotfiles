@@ -371,6 +371,7 @@ pyenv() {
     esac
 }
 
+alias psetup="pyenv_setup"
 # Python environment setup and test running
 pyenv_setup() {
     # Show help menu if requested
