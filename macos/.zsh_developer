@@ -90,17 +90,73 @@ git_clone(){
         return 1
     fi
 
-    # Determine the repo name from the URL or input
-    if [[ "$1" =~ ^https?:// || "$1" =~ ^git@ ]]; then
-        repo_name=$(basename "$1" .git)
-        repo_url="$1"
+    input="$1"
+    repo_url=""
+    repo_name=""
+
+    # Handle 'gh repo clone user/repo' style
+    if [[ "$input" =~ ^gh[[:space:]]+repo[[:space:]]+clone[[:space:]]+([a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)$ ]]; then
+        if command -v gh &> /dev/null; then
+            user_repo=${BASH_REMATCH[1]}
+            repo_name=$(basename "$user_repo")
+            if [[ -d "$HOME/Documents/Git/$repo_name" ]]; then
+                echo "Repository already exists: $repo_name"
+                return 1
+            fi
+            gh repo clone "$user_repo" "$HOME/Documents/Git/$repo_name" || {
+                echo "Failed to clone repository with gh"
+                return 1
+            }
+            cd "$HOME/Documents/Git/$repo_name" || {
+                echo "Failed to access $repo_name directory"
+                return 1
+            }
+            pwd
+            ls -l
+            open_repo_dir
+            return 0
+        else
+            echo "GitHub CLI (gh) is not installed."
+            return 1
+        fi
+    fi
+
+    # SSH URL (git@...)
+    if [[ "$input" =~ ^git@([^:]+):[^/]+/.+?(.git)?$ ]]; then
+        repo_url="$input"
+        repo_name=$(basename "$input")
+        repo_name="${repo_name%.git}"
+        ssh_host="${BASH_REMATCH[1]}"
+        # Only check known_hosts if file exists
+        if [[ -f "$HOME/.ssh/known_hosts" ]]; then
+            if ! ssh-keygen -F "$ssh_host" > /dev/null; then
+                echo "\n[INFO] You are connecting to $ssh_host via SSH for the first time."
+                echo "You may see an authenticity prompt. This is normal and is a security feature of SSH."
+                echo "If you trust this host, type 'yes' at the prompt.\n"
+            fi
+        fi
+    # HTTPS URL
+    elif [[ "$input" =~ ^https?:// ]]; then
+        repo_url="$input"
+        repo_name=$(basename "$input")
+        repo_name="${repo_name%.git}"
+    # user/repo shorthand
+    elif [[ "$input" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+(\.git)?$ ]]; then
+        repo_name=$(basename "$input")
+        # Only append .git if not already present
+        if [[ "$input" == *.git ]]; then
+            repo_url="https://github.com/$input"
+        else
+            repo_url="https://github.com/$input.git"
+        fi
+    # bare repo name
     else
-        repo_name=$(basename "$1")
+        repo_name=$(basename "$input")
         repo_url="https://github.com/your-username/$repo_name.git"
     fi
 
     # Check if the repo name is a valid directory name
-    if [[ ! "$repo_name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    if [[ ! "$repo_name" =~ ^[a-zA-Z0-9_.-]+$ ]]; then
         echo "Invalid repository name: $repo_name"
         return 1
     fi
@@ -122,33 +178,60 @@ git_clone(){
         echo "Failed to access $repo_name directory"
         return 1
     }
-    # print the current directory and list the files
     pwd
     ls -l
-    #prompt user to open the repo dir (./) in vs code or cursor
+    open_repo_dir
+}
+
+# Helper to prompt and open repo dir in editor
+open_repo_dir(){
     echo "Do you want to open the repository? (Y/n): "
     read open_in
     open_in=${open_in:-y}  # Default to 'y' if no input is provided
 
     if [[ $open_in =~ ^[Yy]$ ]]; then
-        if command -v code &> /dev/null && command -v cursor &> /dev/null; then
-            echo "Both VS Code and Cursor are available. Open with (v)scode or (c)ursor? (v/c): "
+        editors=()
+        editor_labels=()
+        if command -v code &> /dev/null; then
+            editors+=("code")
+            editor_labels+=("VS Code (v)")
+        fi
+        if command -v cursor &> /dev/null; then
+            editors+=("cursor")
+            editor_labels+=("Cursor (c)")
+        fi
+        if command -v windsurf &> /dev/null; then
+            editors+=("windsurf")
+            editor_labels+=("Windsurf (w)")
+        fi
+
+        if [[ ${#editors[@]} -eq 0 ]]; then
+            echo "No supported editors (VS Code, Cursor, Windsurf) are available."
+        elif [[ ${#editors[@]} -eq 1 ]]; then
+            ${editors[0]} .
+        else
+            echo "Available editors: ${editor_labels[*]}"
+            echo -n "Open with? (v/c/w): "
             read editor_choice
             editor_choice=${editor_choice:-v}  # Default to 'v' if no input is provided
-            if [[ $editor_choice == "v" ]]; then
-                code .
-            elif [[ $editor_choice == "c" ]]; then
-                cursor .
-            fi
-        elif command -v code &> /dev/null; then
-            code .
-        elif command -v cursor &> /dev/null; then
-            cursor .
-        else
-            echo "Neither VS Code nor Cursor is available."
+            case $editor_choice in
+                v)
+                    if command -v code &> /dev/null; then code .; else echo "VS Code not found."; fi
+                    ;;
+                c)
+                    if command -v cursor &> /dev/null; then cursor .; else echo "Cursor not found."; fi
+                    ;;
+                w)
+                    if command -v windsurf &> /dev/null; then windsurf .; else echo "Windsurf not found."; fi
+                    ;;
+                *)
+                    echo "Invalid choice."
+                    ;;
+            esac
         fi
     fi
 }
+
 
 # ----------------------
 # GitHub Repository Management
