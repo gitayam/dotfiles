@@ -32,6 +32,95 @@ install_terminal_apps() {
 }
 
 install_gui_apps() {
+  # Prompt user for which Code Editor to install
+  echo "Which code editor would you like to install?"
+  echo "1. Visual Studio Code"
+  echo "2. Cursor (Default)"
+  echo "3. Windsurf"
+  echo "4. None"
+  echo -n "Enter your choice (1-4)(Default: 2) (multiple choices separated by commas): "
+  read editor_choice
+  editor_choice=${editor_choice:-2}
+
+  # Convert comma separated choices to array, trim whitespace, remove duplicates (zsh compatible)
+  raw_choices=()
+  local IFS=','
+  for item in $editor_choice; do
+    raw_choices+=("$item")
+  done
+
+  typeset -A seen_editors
+  editor_choices=()
+  for raw in "${raw_choices[@]}"; do
+    choice=$(echo "$raw" | xargs)
+    if [[ -n "$choice" && -z "${seen_editors[$choice]}" ]]; then
+      editor_choices+=("$choice")
+      seen_editors[$choice]=1
+    fi
+  done
+
+  # If '4' (None) is selected, skip all installations
+  if [[ " ${editor_choices[@]} " =~ " 4 " ]]; then
+    echo "No code editor selected. Skipping code editor installation."
+  else
+    for choice in "${editor_choices[@]}"; do
+      case $choice in
+        1)
+          if command -v code &>/dev/null; then
+            echo "Visual Studio Code is already installed. Skipping."
+          else
+            echo "Installing Visual Studio Code..."
+            brew install --cask visual-studio-code
+          fi
+          ;;
+        2)
+          if command -v cursor &>/dev/null; then
+            echo "Cursor is already installed. Skipping."
+          else
+            echo "Installing Cursor..."
+            brew install --cask cursor
+          fi
+          ;;
+        3)
+          if command -v windsurf &>/dev/null; then
+            echo "Windsurf is already installed. Skipping."
+          else
+            echo "Installing Windsurf..."
+            brew install --cask windsurf
+          fi
+          ;;
+        *)
+          echo "Invalid choice: $choice"
+          ;;
+      esac
+    done
+  fi
+
+  # Install selected code editors
+  for choice in "${editor_choices[@]}"; do
+    case $choice in
+      1)
+        echo "Installing Visual Studio Code..."
+        brew install --cask visual-studio-code
+        ;;
+      2)
+        echo "Installing Cursor..."
+        brew install --cask cursor
+        ;;
+      3)
+        echo "Installing Windsurf..."
+        brew install --cask windsurf
+        ;;
+      4)
+        echo "No code editor selected."
+        ;;
+      *)
+        echo "Invalid choice: $choice"
+        ;;
+    esac
+  done
+
+  # GUI Apps
   gui_apps=("element" "firefox" "keepassxc" "obsidian" "qbittorrent" "simplex" "tailscale")
 
   for app in "${gui_apps[@]}"; do
