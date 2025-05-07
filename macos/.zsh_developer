@@ -236,7 +236,7 @@ open_repo_dir(){
 # ----------------------
 # GitHub Repository Management
 # ----------------------
-
+alias git_create="create_repo"
 create_repo(){
     # "Usage: create_repo repo_name"
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
