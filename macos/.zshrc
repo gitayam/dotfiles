@@ -75,7 +75,7 @@ sudotouch() {
   fi
 }
 # alias for initial-setup.sh
-alias initial-install="./initial-setup.sh"
+alias initial-install="./initial_macos_setup.sh"
 # call sudotouch to enable Touch ID for sudo if not already enabled
 sudotouch
 
