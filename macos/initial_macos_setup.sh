@@ -121,7 +121,7 @@ install_gui_apps() {
   done
 
   # GUI Apps
-  gui_apps=("element" "firefox" "keepassxc" "obsidian" "qbittorrent" "simplex" "tailscale" "docker")
+  gui_apps=("element" "firefox" "keepassxc" "obsidian" "qbittorrent" "simplex" "tailscale" "docker" "warp" )
 
   for app in "${gui_apps[@]}"; do
     if [[ -d "/Applications/$app.app" ]]; then

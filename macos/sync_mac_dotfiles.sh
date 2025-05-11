@@ -8,6 +8,7 @@ REPO_DIR="."
 ZSH_FILES=(
     ".zshrc"
     ".zsh_aliases"
+    ".zsh_developer"
     ".zsh_functions"
     ".zsh_git"
     ".zsh_apps"

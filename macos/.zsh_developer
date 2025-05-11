@@ -93,7 +93,26 @@ git_clone(){
     input="$1"
     repo_url=""
     repo_name=""
-
+    #check if gh is installed
+    if [[ -z "$(command -v gh)" ]]; then
+        echo "GitHub CLI (gh) is not installed."
+        echo "Would you like to install it? (y/n): "
+        read install_gh
+        if [[ $install_gh =~ ^[Yy]$ ]]; then
+            brew install gh
+        fi
+        return 1
+    fi
+    #check if gh is setup
+    if [[ -z "$(gh auth status | grep "Logged in to GitHub as")" ]]; then
+        echo "GitHub CLI (gh) is not logged in."
+        echo "Would you like to login? (y/n): "
+        read login_gh
+        if [[ $login_gh =~ ^[Yy]$ ]]; then
+            gh auth login
+        fi
+        return 1
+    fi
     # Handle 'gh repo clone user/repo' style
     if [[ "$input" =~ ^gh[[:space:]]+repo[[:space:]]+clone[[:space:]]+([a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)$ ]]; then
         if command -v gh &> /dev/null; then
