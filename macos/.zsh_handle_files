@@ -416,7 +416,7 @@ alias to_pdf="convert_to_pdf"
 handle_pdf() {
     # Create a forcecopy function that bypasses interactive prompts
     # This will be local to the function only
-    local forcecopy() {
+    forcecopy() {
         command cp -f "$@"
     }
     
@@ -1294,7 +1294,7 @@ ensure_tex_path() {
 
 convert_to_pdf() {
     # Define local forcecopy function
-    local forcecopy() {
+    forcecopy() {
         command cp -f "$@"
     }
     
