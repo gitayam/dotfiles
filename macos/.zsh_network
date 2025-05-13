@@ -98,69 +98,187 @@ change_mac_menu() {
             ;;
     esac
 }
-
-# capture network traffic pcaps
-capture_network_traffic() {
-    local iface="" duration="" size="" count="" output="capture" filter="" help=false
+analyze_network_traffic() {
+    local help=false pcap_file=""
+    # Analysis flags
+    local want_top=false want_proto=false want_io=false want_http=false
+    local want_dns=false want_tls=false want_expert=false want_resp=false
+    local export_fields=""
 
     # Parse options
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            -h|--help) help=true; shift ;;
-            -i|--interface) iface="$2"; shift 2 ;;
-            -d|--duration) duration="$2"; shift 2 ;;
-            -s|--size) size="$2"; shift 2 ;;
-            -c|--count) count="$2"; shift 2 ;;
-            -o|--output) output="$2"; shift 2 ;;
-            -p|--filter) filter="$2"; shift 2 ;;
-            *)
-                echo "Unknown option: $1"
-                echo "Try: capture_network_traffic -h"
-                return 1
-                ;;
+            -h|--help)       help=true; shift ;;
+            -f|--file)       pcap_file="$2"; shift 2 ;;
+            -t|--top-talkers) want_top=true; shift ;;
+            -p|--proto-hierarchy) want_proto=true; shift ;;
+            -s|--io-stats)   want_io=true; shift ;;
+            -H|--http)       want_http=true; shift ;;
+            -D|--dns-summary) want_dns=true; shift ;;
+            -L|--tls-handshake) want_tls=true; shift ;;
+            -E|--expert)     want_expert=true; shift ;;
+            -R|--response-times) want_resp=true; shift ;;
+            -x|--export-fields) export_fields="$2"; shift 2 ;;
+            *) echo "Unknown option: $1"; echo "Try: analyze_network_traffic -h"; return 1 ;;
         esac
     done
 
-    # Show help or error if interface not provided
-    if $help || [[ -z "$iface" ]]; then
-        cat << 'EOF'
-usage: capture_network_traffic -i interface [options]
-
-Options:
--i, --interface IFACE    Network interface to capture on (required)
--d, --duration SEC       Rotate file every SEC seconds (uses -G)
--s, --size MB            Rotate file after MB megabytes (uses -C)
--c, --count N            Keep at most N rotated files (uses -W)
--o, --output PREFIX      Output filename prefix (default: "capture")
--p, --filter BPF         BPF capture filter (e.g. "port 80")
--h, --help               Show this help message
-
-Examples:
-capture_network_traffic -i en0
-capture_network_traffic -i en0 -d 3600 -o hourly_capture
-capture_network_traffic -i en0 -s 50 -c 10 -p "tcp port 443"
-EOF
+    # Help or missing file
+    if $help || [[ -z "$pcap_file" ]]; then
+        echo "Usage: analyze_network_traffic -f FILE [options]"
+        echo
+        echo "Options:"
+        echo "  -f, --file FILE           PCAP file to analyze (required)"
+        echo "  -t, --top-talkers         Show IP conversation stats"
+        echo "  -p, --proto-hierarchy     Show protocol hierarchy"
+        echo "  -s, --io-stats            Show packet I/O rates"
+        echo "  -H, --http                Extract HTTP host/URI list"
+        echo "  -D, --dns-summary         Summarize DNS qtypes/qclasses"
+        echo "  -L, --tls-handshake       Count TLS handshake packets"
+        echo "  -E, --expert              Show expert errors/warnings"
+        echo "  -R, --response-times      Show DNS/HTTP response times"
+        echo "  -x, --export-fields F1,F2 Export fields F1,F2,... as CSV"
         return 0
     fi
 
-    # Build timestamped filename
-    local timestamp file cmd
-    timestamp=$(date +%Y%m%d_%H%M%S)
-    file="${output}_${timestamp}.pcap"
-    cmd="sudo tcpdump -i $iface -w $file -s 0 -n"
+    # Validate file exists
+    if [[ ! -f "$pcap_file" ]]; then
+        echo "Error: PCAP file '$pcap_file' not found"
+        return 1
+    fi
 
-    # Apply rotation options
-    [[ -n "$size" ]]     && cmd+=" -C $size"
-    [[ -n "$count" ]]    && cmd+=" -W $count"
-    [[ -n "$duration" ]] && cmd+=" -G $duration"
-    [[ -n "$filter" ]]   && cmd+=" $filter"
+    echo "Analyzing $pcap_file..."
 
-    # Execute
-    echo "Capturing on interface: $iface"
-    echo "Output file: $file"
-    echo "Running command: $cmd"
-    eval "$cmd"
+    # Top Talkers (IP conversations)
+    if $want_top; then
+        echo "== Top Talkers =="
+        tshark -r "$pcap_file" -q -z conv,ip      #  [oai_citation:11‡Wireshark Q&A](https://osqa-ask.wireshark.org/questions/6430/analyze-per-ip/?utm_source=chatgpt.com)
+    fi
+
+    # Protocol Hierarchy
+    if $want_proto; then
+        echo "== Protocol Hierarchy =="
+        tshark -r "$pcap_file" -q -z io,phs        #  [oai_citation:12‡Chris Sanders](https://chrissanders.org/2018/05/large-captures2-proto-hierarchy/?utm_source=chatgpt.com)
+    fi
+
+    # I/O Statistics (per-second)
+    if $want_io; then
+        echo "== I/O Statistics =="
+        tshark -r "$pcap_file" -q -z io,stat,1     #  [oai_citation:13‡Stack Overflow](https://stackoverflow.com/questions/14451599/how-to-save-tshark-statistics-in-variables?utm_source=chatgpt.com) [oai_citation:14‡GitHub](https://github.com/Cthfm/Azure/blob/main/packet-analysis/tshark-cheatsheet.md?utm_source=chatgpt.com)
+    fi
+
+    # HTTP Requests Extraction
+    if $want_http; then
+        echo "== HTTP Requests =="
+        tshark -r "$pcap_file" -Y http.request \
+               -T fields -e http.host -e http.request.uri  #  [oai_citation:15‡CellStream, Inc.](https://www.cellstream.com/2014/05/12/t-shark-usage-examples/?utm_source=chatgpt.com) [oai_citation:16‡Gist](https://gist.github.com/githubfoam/6c9e07f95c2eb03ec4ae9709252c713f?utm_source=chatgpt.com)
+    fi
+
+    # DNS Summary
+    if $want_dns; then
+        echo "== DNS Summary =="
+        tshark -r "$pcap_file" -q -z dns,tree      #  [oai_citation:17‡Wireshark](https://www.wireshark.org/docs/man-pages/tshark.html?utm_source=chatgpt.com)
+    fi
+
+    # TLS Handshake Count
+    if $want_tls; then
+        echo "== TLS Handshakes =="
+        tshark -r "$pcap_file" -Y tls.handshake \
+               -q -z io,stat,0                    #  [oai_citation:18‡CLI Wiki](https://cli.wiki/TShark---Terminal-Wireshark-Network-Analyzer-Guide?utm_source=chatgpt.com)
+    fi
+
+    # Expert Info (errors/warnings)
+    if $want_expert; then
+        echo "== Expert Info =="
+        tshark -r "$pcap_file" -q -z "expert,error"  #  [oai_citation:19‡Gist](https://gist.github.com/donovanrodriguez/87dacb99caefa56d98d7e35b7d4a2539?utm_source=chatgpt.com)
+    fi
+
+    # Service Response Times (DNS & HTTP)
+    if $want_resp; then
+        echo "== Response Times =="
+        tshark -r "$pcap_file" -q -z srt,dns        #  [oai_citation:20‡Gist](https://gist.github.com/donovanrodriguez/87dacb99caefa56d98d7e35b7d4a2539?utm_source=chatgpt.com)
+        tshark -r "$pcap_file" -q -z srt,http
+    fi
+
+    # CSV Field Export
+    if [[ -n "$export_fields" ]]; then
+        echo "== Exporting Fields: $export_fields =="
+        # convert comma list to multiple -e args
+        IFS=',' read -ra F <<< "$export_fields"
+        tshark -r "$pcap_file" -T fields -E header=y -E separator=, "${F[@]/#/-e }"
+    fi
 }
+
+capture_network_traffic() {
+	local iface duration size count prefix filter help=false
+
+	# Default prefix
+	prefix="capture"
+
+	# Parse options
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		-h|--help)
+			help=true; shift
+			;;
+		-i|--interface)
+			iface="$2"; shift 2
+			;;
+		-d|--duration)
+			duration="$2"; shift 2
+			;;
+		-s|--size)
+			size="$2"; shift 2
+			;;
+		-c|--count)
+			count="$2"; shift 2
+			;;
+		-o|--prefix)
+			prefix="$2"; shift 2
+			;;
+		-p|--filter)
+			filter="$2"; shift 2
+			;;
+		*)
+			echo "Unknown option: $1"
+			echo "Use: capture_network_traffic --help"
+			return 1
+			;;
+		esac
+	done
+
+	# Show help or error if interface missing
+	if [[ "$help" == true ]] || [[ -z "$iface" ]]; then
+		echo "Usage: capture_network_traffic -i interface [options]"
+		echo "	-i, --interface IFACE    (required) e.g. en0"
+		echo "	-d, --duration SEC       rotate every SEC seconds"
+		echo "	-s, --size MB            rotate after MB megabytes"
+		echo "	-c, --count N            keep up to N files"
+		echo "	-o, --prefix PREFIX      filename prefix (default: capture)"
+		echo "	-p, --filter BPF         e.g. 'port 443 and host 1.2.3.4'"
+		echo "	-h, --help               show this message"
+		return 0
+	fi
+
+	# Build timestamped filename
+	local ts file cmd
+	ts=$(date +%Y%m%d_%H%M%S)
+	file="${prefix}_${ts}.pcap"
+
+	# Assemble tcpdump command
+	cmd=( sudo tcpdump -i "$iface" -s 0 -n -w "$file" )
+	[[ -n "$size"     ]] && cmd+=( -C "$size" )       # size-based rotate  [oai_citation:8‡Kudithipudi](https://kudithipudi.org/2013/02/14/how-to-configure-tcpdump-to-rotate-capture-files-based-on-size/?utm_source=chatgpt.com)
+	[[ -n "$duration" ]] && cmd+=( -G "$duration" )   # time-based rotate  [oai_citation:9‡discoveringsystems.com](https://discoveringsystems.com/how-to-rotate-packet-capture-files-using-tcpdump/?utm_source=chatgpt.com)
+	[[ -n "$count"    ]] && cmd+=( -W "$count" )      # limit file count  [oai_citation:10‡Super User](https://superuser.com/questions/904786/tcpdump-rotate-capture-files-using-g-w-and-c?utm_source=chatgpt.com)
+	[[ -n "$filter"   ]] && cmd+=( $filter )          # BPF filter  [oai_citation:11‡myF5](https://my.f5.com/manage/s/article/K65251607?utm_source=chatgpt.com)
+
+	# Execute
+	echo "Capturing on $iface → $file"
+	printf '› %q ' "${cmd[@]}"
+	echo
+	"${cmd[@]}"
+}
+
 
 # Scan network ports
 scan_ports() {
