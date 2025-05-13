@@ -329,6 +329,16 @@ create_repo(){
 } 
 
 # ----------------------
+# Project Management
+# ----------------------
+cdproj() {
+  local dir
+  dir=$(find ~/Documents/Git -maxdepth 2 -type d | fzf +m)
+  cd "$dir"
+  echo "Current directory: $(pwd)"
+}
+
+# ----------------------
 # Python Virtual Environment Management
 # ----------------------
 

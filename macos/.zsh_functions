@@ -24,6 +24,7 @@ clipls() { ls -l | pbcopy; } # list directory contents and copy to clipboard
 clipcat() { cat "$1" | pbcopy; } # copy file contents to clipboard
 clippwd() { pwd | pbcopy; } # copy current directory to clipboard
 clipip() { ipconfig getifaddr en0 | pbcopy; } # copy en0 ip address to clipboard
+# temp copy to clipboard by backing up current clipboard, then copying to clipboard, then restoring clipboard
 
 # ----------------------
 # Video and Audio Manipulation
