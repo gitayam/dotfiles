@@ -32,6 +32,21 @@ git_add(){
     fi
 }
 
+# Undo last local commit, keep changes staged
+git_undo() {
+  git reset --soft HEAD~1
+}
+
+# Delete all merged local branches (except main)
+git_clean_merged() {
+  git branch --merged | grep -vE '(^\*|main|master|develop)' | xargs -r git branch -d
+}
+
+# Show list of branches sorted by last commit date
+git_recent_branches() {
+  git for-each-ref --sort=-committerdate refs/heads/ --format='%(refname:short) — %(committerdate:relative)'
+}
+
 update_git_repos(){
     # Default variables
     search_path="$HOME/Documents/Git/"  # Default search path
