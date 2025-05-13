@@ -55,24 +55,33 @@ gen_mac_addr(){
     echo "$mac"
 }
 
+show_current_mac(){
+    # show current MAC address for connected network location using location name
+    networksetup -getmacaddress "$location_name"
+}
+
 change_mac_menu(){
     echo "Choose an option:"
+    echo "0. Show current MAC address"
     echo "1. Set a specific MAC address"
     echo "2. Set a random MAC address"
     echo "3. Restore original MAC address"
-    echo -n "Enter your choice (1/2/3): "
+    echo -n "Enter your choice (0/1/2/3): "
     read choice
 
     case $choice in
+        0)
+            show_current_mac $location_name
+            ;;
         1)
             echo -n "Enter the new MAC address (e.g., E6:B8:BA:D2:41:07): "
             read mac_address
-            echo -n "Enter the name of the new network location: "
+            echo -n "Enter the name of the new network location (e.g., Home, Work, etc.): "
             read location_name
             change_mac_address "$mac_address" "$location_name"
             ;;
         2)
-            echo -n "Enter the name of the new network location: "
+            echo -n "Enter the name of the new network location (e.g., Home, Work, etc.): "
             read location_name
             mac_address=$(gen_mac_addr)
             change_mac_address "$mac_address" "$location_name"
