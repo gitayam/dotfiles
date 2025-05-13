@@ -26,6 +26,13 @@ clippwd() { pwd | pbcopy; } # copy current directory to clipboard
 clipip() { ipconfig getifaddr en0 | pbcopy; } # copy en0 ip address to clipboard
 # temp copy to clipboard by backing up current clipboard, then copying to clipboard, then restoring clipboard
 
+
+# Fuzzy-search your shell history and re-run a command
+fhist() {
+  local cmd
+  cmd=$(fc -l 1 | sed 's/ *[0-9]* *//' | fzf --height 40% --reverse) && print -s -- "$cmd" && eval "$cmd"
+}
+
 # ----------------------
 # Video and Audio Manipulation
 # These functions are used to trim videos and audio files as well as convert them to different formats
