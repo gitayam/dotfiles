@@ -6,28 +6,22 @@
 alias ports='netstat -tulanp'  # List open ports
 alias myip='curl ifconfig.me'  # Check external IP address
 alias http="curl -I"           # Check HTTP headers
+
 # lookup your public IP via multiple services
-myip() {
-  for svc in ifconfig.me ipinfo.io/ip; do
-    echo -n "$svc → " && curl -s $svc
-  done
+check_ip() {
+    for svc in ifconfig.me ipinfo.io/ip; do
+        echo -n "$svc → " && curl -s "$svc"
+    done
 }
+
 # flush DNS cache
 flushdns() {
-  # flush DNS cache -  can be helpful when you have a new IP address
-  sudo killall -HUP mDNSResponder
+    # flush DNS cache -  can be helpful when you have a new IP address
+    sudo killall -HUP mDNSResponder
 }
 
 # faster DNS lookup with caching
 digc() {
-    # Check if flushdns is being called recursively
-    if [[ -n "$DIGC_RUNNING" ]]; then
-        return 1
-    fi
-    
-    # Set flag to prevent recursive calls
-    export DIGC_RUNNING=1
-    
     # flush DNS cache
     flushdns
     
@@ -35,54 +29,63 @@ digc() {
     if [[ -z "$1" ]]; then
         dig @8.8.8.8
     else
-        dig "$@"
+        # Use array to prevent word splitting issues
+        local args=("$@")
+        dig "${args[@]}"
     fi
-    
-    # Clear flag after completion
-    unset DIGC_RUNNING
 }
-
 
 # quick ping summary
 pings() {
-  ping -c "${2:-5}" "$1" | tail -2
+    if [[ -z "$1" ]]; then
+        echo "Usage: pings hostname [count]"
+        return 1
+    fi
+    ping -c "${2:-5}" "$1" | tail -2
 }
 
-
 # MAC address management
-gen_mac_addr(){
-    local mac=$(openssl rand -hex 6 | sed 's/\(..\)/\1:/g; s/.$//')
+gen_mac_addr() {
+    local mac
+    mac=$(openssl rand -hex 6 | sed 's/\(..\)/\1:/g; s/.$//')
     echo "$mac"
 }
 
-show_current_mac(){
-    # show current MAC address for connected network location using location name
-    networksetup -getmacaddress "$location_name"
+show_current_mac() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: show_current_mac location_name"
+        return 1
+    fi
+    networksetup -getmacaddress "$1"
 }
 
-change_mac_menu(){
+change_mac_menu() {
+    local choice mac_address location_name
+    
     echo "Choose an option:"
     echo "0. Show current MAC address"
     echo "1. Set a specific MAC address"
     echo "2. Set a random MAC address"
     echo "3. Restore original MAC address"
     echo -n "Enter your choice (0/1/2/3): "
-    read choice
+    read -r choice
 
     case $choice in
         0)
-            show_current_mac $location_name
+            echo -n "Enter location name: "
+            read -r location_name
+            show_current_mac "$location_name"
             ;;
         1)
             echo -n "Enter the new MAC address (e.g., E6:B8:BA:D2:41:07): "
-            read mac_address
+            read -r mac_address
             echo -n "Enter the name of the new network location (e.g., Home, Work, etc.): "
-            read location_name
+            read -r location_name
             change_mac_address "$mac_address" "$location_name"
             ;;
         2)
             echo -n "Enter the name of the new network location (e.g., Home, Work, etc.): "
-            read location_name
+            read -r location_name
             mac_address=$(gen_mac_addr)
             change_mac_address "$mac_address" "$location_name"
             ;;
@@ -91,17 +94,83 @@ change_mac_menu(){
             ;;
         *)
             echo "Invalid choice. Exiting."
+            return 1
             ;;
     esac
-} 
+}
+
+# capture network traffic pcaps
+capture_network_traffic() {
+    local iface="" duration="" size="" count="" output="capture" filter="" help=false
+
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help) help=true; shift ;;
+            -i|--interface) iface="$2"; shift 2 ;;
+            -d|--duration) duration="$2"; shift 2 ;;
+            -s|--size) size="$2"; shift 2 ;;
+            -c|--count) count="$2"; shift 2 ;;
+            -o|--output) output="$2"; shift 2 ;;
+            -p|--filter) filter="$2"; shift 2 ;;
+            *)
+                echo "Unknown option: $1"
+                echo "Try: capture_network_traffic -h"
+                return 1
+                ;;
+        esac
+    done
+
+    # Show help or error if interface not provided
+    if $help || [[ -z "$iface" ]]; then
+        cat << 'EOF'
+usage: capture_network_traffic -i interface [options]
+
+Options:
+-i, --interface IFACE    Network interface to capture on (required)
+-d, --duration SEC       Rotate file every SEC seconds (uses -G)
+-s, --size MB            Rotate file after MB megabytes (uses -C)
+-c, --count N            Keep at most N rotated files (uses -W)
+-o, --output PREFIX      Output filename prefix (default: "capture")
+-p, --filter BPF         BPF capture filter (e.g. "port 80")
+-h, --help               Show this help message
+
+Examples:
+capture_network_traffic -i en0
+capture_network_traffic -i en0 -d 3600 -o hourly_capture
+capture_network_traffic -i en0 -s 50 -c 10 -p "tcp port 443"
+EOF
+        return 0
+    fi
+
+    # Build timestamped filename
+    local timestamp file cmd
+    timestamp=$(date +%Y%m%d_%H%M%S)
+    file="${output}_${timestamp}.pcap"
+    cmd="sudo tcpdump -i $iface -w $file -s 0 -n"
+
+    # Apply rotation options
+    [[ -n "$size" ]]     && cmd+=" -C $size"
+    [[ -n "$count" ]]    && cmd+=" -W $count"
+    [[ -n "$duration" ]] && cmd+=" -G $duration"
+    [[ -n "$filter" ]]   && cmd+=" $filter"
+
+    # Execute
+    echo "Capturing on interface: $iface"
+    echo "Output file: $file"
+    echo "Running command: $cmd"
+    eval "$cmd"
+}
 
 # Scan network ports
-scan_ports(){
-    #usage: scan_ports ip_or_host
+scan_ports() {
+    local ip_or_host local_ip install_nmap
+    
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
         echo "usage: scan_ports ip_or_host"
         return 0
     fi
+    
     # if no ip_or_host is passed then use the router ip 
     if [[ -z "$1" ]]; then
         local_ip=$(ifconfig | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -n 1)
@@ -109,13 +178,12 @@ scan_ports(){
     else
         ip_or_host=$1
     fi
+    
     #check if package is installed
     if ! command -v nmap &> /dev/null; then
         echo "Error: nmap is not installed"
-        #prompt to install if yes install and continue else return 1
-        install_nmap="n"
         echo -n "Do you want to install nmap? (y/n): " 
-        read install_nmap
+        read -r install_nmap
         if [[ $install_nmap =~ ^[Yy]$ ]]; then
             brew install nmap
             echo "nmap installed, continuing with scan"
@@ -123,16 +191,18 @@ scan_ports(){
             return 1
         fi
     fi
-    sudo nmap -sS -Pn $1
+    sudo nmap -sS -Pn "$ip_or_host"
 }
 
 # Python HTTP server
-pyserver(){
-    # usage: pyserver file1 file2 ...
+pyserver() {
+    local port=8000 local_ip file original_dir
+    
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
         echo "Usage: pyserver file1 file2 ..."
         return 0
     fi
+    
     # check if python3 is installed
     if ! command -v python3 &> /dev/null; then
         echo "Error: Python 3 is not installed"
@@ -140,56 +210,57 @@ pyserver(){
         echo 'brew install python'
         return 1
     fi
-    # set port for the python server
-    local port=8000
-    # create a python server for the passed files or dir
+    
     #get local ip
     local_ip=$(hostname -I | awk '{print $1}')
-    # path for the server else use current dir
+    original_dir=$(pwd)
+    
     # if multiple files passed in arg then create tmp dir and add those passed files or dir via ln to the temp server dir
-    # if no files passed in arg then use current dir
-    if [ -n "$1" ]; then # if there are files passed in arg
+    if [ -n "$1" ]; then
         # create temp dir
         mkdir -p /tmp/pyserver
         # add files or dir to the temp dir
         for file in "$@"; do
-            ln -s "$file" /tmp/pyserver
+            ln -s "$file" /tmp/pyserver/
         done
         # change dir to the temp dir
-        cd /tmp/pyserver
-        # start the python server
-        python3 -m http.server $port
-    else
-        # use current dir
-        cd .
-        # start the python server
-        python3 -m http.server $port
+        cd /tmp/pyserver || return 1
     fi
+    
+    # start the python server
+    python3 -m http.server "$port"
+    
+    # Return to original directory
+    cd "$original_dir" || return 1
 }
 
 # Tailscale funnel for sharing files or services over the internet
 funnel() {
-    # Default port and allow override with FUNNEL_PORT env variable
     local port=${FUNNEL_PORT:-8080}
     local use_python=true
     local direct_service=false
+    local target
+    local server_pid
+    local original_dir
     
     # Process options
     while [[ "$1" == -* ]]; do
         case "$1" in
             -h|--help)
-                echo "Usage: funnel [OPTIONS] [target]"
-                echo "Funnel enables you to share local files or services over the internet using Tailscale."
-                echo ""
-                echo "Options:"
-                echo "  -h, --help            Show this help message"
-                echo "  -d, --direct          Directly funnel to a port without using Python server"
-                echo "  -p, --port PORT       Specify port (default: 8080 or FUNNEL_PORT env variable)"
-                echo ""
-                echo "Examples:"
-                echo "  funnel file.txt              # Share a file using Python HTTP server"
-                echo "  funnel -d -p 3000            # Directly funnel localhost:3000"
-                echo "  funnel -d redis://localhost:6379  # Directly funnel a Redis service"
+                cat << 'EOF'
+Usage: funnel [OPTIONS] [target]
+Funnel enables you to share local files or services over the internet using Tailscale.
+
+Options:
+  -h, --help            Show this help message
+  -d, --direct          Directly funnel to a port without using Python server
+  -p, --port PORT       Specify port (default: 8080 or FUNNEL_PORT env variable)
+
+Examples:
+  funnel file.txt              # Share a file using Python HTTP server
+  funnel -d -p 3000            # Directly funnel localhost:3000
+  funnel -d redis://localhost:6379  # Directly funnel a Redis service
+EOF
                 return 0
                 ;;
             -d|--direct)
@@ -217,7 +288,7 @@ funnel() {
         # Check again if tailscale is running after attempting to start it
         if ! tailscale status &> /dev/null; then
             echo "Error: Failed to start Tailscale. Please start it manually."
-        return 1
+            return 1
         fi
         echo "Tailscale started successfully. Continuing..."
     fi
@@ -227,14 +298,15 @@ funnel() {
         echo "No target specified. Using current directory as target."
         target="."
     else
-        target="$@"
+        target="$*"
     fi
 
     # Kill any existing Python HTTP servers on our port
-    local existing_pid=$(lsof -ti:$port)
+    local existing_pid
+    existing_pid=$(lsof -ti:"$port")
     if [[ -n "$existing_pid" ]]; then
         echo "Killing existing process on port $port (PID: $existing_pid)"
-        kill -9 $existing_pid 2>/dev/null
+        kill -9 "$existing_pid" 2>/dev/null
         sleep 1
     fi
 
@@ -244,15 +316,16 @@ funnel() {
         # Find and kill the Python HTTP server process
         if [[ -n "$server_pid" ]]; then
             echo "Killing server process (PID: $server_pid)"
-            kill -9 $server_pid 2>/dev/null
-            wait $server_pid 2>/dev/null
+            kill -9 "$server_pid" 2>/dev/null
+            wait "$server_pid" 2>/dev/null
         fi
         
         # Also try to find any process using our port
-        local port_pid=$(lsof -ti:$port)
+        local port_pid
+        port_pid=$(lsof -ti:"$port")
         if [[ -n "$port_pid" ]]; then
             echo "Killing process on port $port (PID: $port_pid)"
-            kill -9 $port_pid 2>/dev/null
+            kill -9 "$port_pid" 2>/dev/null
         fi
         
         # Clean up temp directory
@@ -263,7 +336,7 @@ funnel() {
         
         # Return to original directory
         if [[ -n "$original_dir" ]]; then
-            cd "$original_dir"
+            cd "$original_dir" || return 1
         fi
         
         return 0
@@ -285,7 +358,7 @@ funnel() {
             tailscale funnel "$target"
         else
             echo "Funneling localhost:$port"
-            tailscale funnel localhost:$port
+            tailscale funnel "localhost:$port"
         fi
         
         # Keep the process alive until Ctrl+C
@@ -328,7 +401,7 @@ funnel() {
         done
         
         # Change dir to the temp dir
-        cd /tmp/funnel
+        cd /tmp/funnel || return 1
         
         # List the contents to verify
         echo "Files available for sharing:"
@@ -336,45 +409,44 @@ funnel() {
         
         if $use_python; then
             # Start the python server
-            python3 -m http.server $port &
+            python3 -m http.server "$port" &
             server_pid=$!
             
             # Wait a moment to ensure server starts
             sleep 1
             
             # Check if server started successfully
-            if ! lsof -ti:$port >/dev/null 2>&1; then
+            if ! lsof -ti:"$port" >/dev/null 2>&1; then
                 echo "Error: Failed to start Python HTTP server on port $port"
                 cleanup
                 return 1
             fi
             
             # Start the funnel
-            tailscale funnel localhost:$port
+            tailscale funnel "localhost:$port"
         else
             # Start the funnel
             tailscale funnel "$target"
         fi
     else
         # Use current dir
-        cd .
         if $use_python; then
             # Start the python server
-            python3 -m http.server $port &
+            python3 -m http.server "$port" &
             server_pid=$!
             
             # Wait a moment to ensure server starts
             sleep 1
             
             # Check if server started successfully
-            if ! lsof -ti:$port >/dev/null 2>&1; then
+            if ! lsof -ti:"$port" >/dev/null 2>&1; then
                 echo "Error: Failed to start Python HTTP server on port $port"
                 cleanup
                 return 1
             fi
             
             # Start the funnel
-            tailscale funnel localhost:$port
+            tailscale funnel "localhost:$port"
         else
             # Start the funnel
             tailscale funnel "$target"
