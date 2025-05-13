@@ -15,7 +15,17 @@
     fi
   }
 
+# ----------------------
+# Clip Board
+# ----------------------
+ccopy()  { pbcopy < "$1"; } # copy to clipboard
+cpaste() { pbpaste; } # paste from clipboard
+clipls() { ls -l | pbcopy; } # list directory contents and copy to clipboard
+clipcat() { cat "$1" | pbcopy; } # copy file contents to clipboard
+clippwd() { pwd | pbcopy; } # copy current directory to clipboard
+clipip() { ipconfig getifaddr en0 | pbcopy; } # copy en0 ip address to clipboard
 
+# ----------------------
 # Video and Audio Manipulation
 # These functions are used to trim videos and audio files as well as convert them to different formats
 download_video() {
