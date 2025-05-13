@@ -332,10 +332,21 @@ create_repo(){
 # Project Management
 # ----------------------
 cdproj() {
-  local dir
-  dir=$(find ~/Documents/Git -maxdepth 2 -type d | fzf +m)
-  cd "$dir"
-  echo "Current directory: $(pwd)"
+    # Usage: cdproj [repo_name]
+    # check if fzf is installed
+    if ! command -v fzf &> /dev/null; then
+        echo "Error: fzf is not installed."
+        echo "Would you like to install it? (y/n): "
+        read install_fzf
+        if [[ $install_fzf =~ ^[Yy]$ ]]; then
+            brew install fzf
+        fi
+        return 1
+    fi
+    local dir
+    dir=$(find ~/Documents/Git -maxdepth 2 -type d | fzf +m)
+    cd "$dir"
+    echo "Current directory: $(pwd)"
 }
 
 # ----------------------
