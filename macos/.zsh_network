@@ -6,6 +6,85 @@
 alias ports='netstat -tulanp'  # List open ports
 alias myip='curl ifconfig.me'  # Check external IP address
 alias http="curl -I"           # Check HTTP headers
+# lookup your public IP via multiple services
+myip() {
+  for svc in ifconfig.me ipinfo.io/ip; do
+    echo -n "$svc → " && curl -s $svc
+  done
+}
+# flush DNS cache
+flushdns() {
+  # flush DNS cache -  can be helpful when you have a new IP address
+  sudo killall -HUP mDNSResponder
+}
+
+# faster DNS lookup with caching
+digc() {
+    # Check if flushdns is being called recursively
+    if [[ -n "$DIGC_RUNNING" ]]; then
+        return 1
+    fi
+    
+    # Set flag to prevent recursive calls
+    export DIGC_RUNNING=1
+    
+    # flush DNS cache
+    flushdns
+    
+    # if no arg is passed use default google DNS if arg is passed use that arg
+    if [[ -z "$1" ]]; then
+        dig @8.8.8.8
+    else
+        dig "$@"
+    fi
+    
+    # Clear flag after completion
+    unset DIGC_RUNNING
+}
+
+
+# quick ping summary
+pings() {
+  ping -c "${2:-5}" "$1" | tail -2
+}
+
+
+# MAC address management
+gen_mac_addr(){
+    local mac=$(openssl rand -hex 6 | sed 's/\(..\)/\1:/g; s/.$//')
+    echo "$mac"
+}
+
+change_mac_menu(){
+    echo "Choose an option:"
+    echo "1. Set a specific MAC address"
+    echo "2. Set a random MAC address"
+    echo "3. Restore original MAC address"
+    echo -n "Enter your choice (1/2/3): "
+    read choice
+
+    case $choice in
+        1)
+            echo -n "Enter the new MAC address (e.g., E6:B8:BA:D2:41:07): "
+            read mac_address
+            echo -n "Enter the name of the new network location: "
+            read location_name
+            change_mac_address "$mac_address" "$location_name"
+            ;;
+        2)
+            echo -n "Enter the name of the new network location: "
+            read location_name
+            mac_address=$(gen_mac_addr)
+            change_mac_address "$mac_address" "$location_name"
+            ;;
+        3)
+            restore_original_mac
+            ;;
+        *)
+            echo "Invalid choice. Exiting."
+            ;;
+    esac
+} 
 
 # Scan network ports
 scan_ports(){
@@ -298,39 +377,3 @@ alias tsf=funnel
 alias postfile=funnel
 alias openport="funnel -d -p"
 
-# MAC address management
-gen_mac_addr(){
-    local mac=$(openssl rand -hex 6 | sed 's/\(..\)/\1:/g; s/.$//')
-    echo "$mac"
-}
-
-change_mac_menu(){
-    echo "Choose an option:"
-    echo "1. Set a specific MAC address"
-    echo "2. Set a random MAC address"
-    echo "3. Restore original MAC address"
-    echo -n "Enter your choice (1/2/3): "
-    read choice
-
-    case $choice in
-        1)
-            echo -n "Enter the new MAC address (e.g., E6:B8:BA:D2:41:07): "
-            read mac_address
-            echo -n "Enter the name of the new network location: "
-            read location_name
-            change_mac_address "$mac_address" "$location_name"
-            ;;
-        2)
-            echo -n "Enter the name of the new network location: "
-            read location_name
-            mac_address=$(gen_mac_addr)
-            change_mac_address "$mac_address" "$location_name"
-            ;;
-        3)
-            restore_original_mac
-            ;;
-        *)
-            echo "Invalid choice. Exiting."
-            ;;
-    esac
-} 
