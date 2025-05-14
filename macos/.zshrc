@@ -13,7 +13,7 @@ export PS1="%n@%m %1~ %# "
 # autoload -U compinit && compinit
 
 # Load zsh configuration files
-for config_file in ~/.zsh_{aliases,functions,developer,apps,network,transfer,security,utils,docker,dev,handle_files}; do
+for config_file in ~/.zsh_{aliases,aws,functions,developer,apps,network,transfer,security,utils,docker,dev,handle_files,encryption}; do
   if [ -f "$config_file" ]; then
     source "$config_file"
   fi
