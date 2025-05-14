@@ -1,0 +1,458 @@
+# Debug line to verify file is sourced
+echo "Loading encryption functions..."
+
+# ----------------------
+# Password and Encryption Functions
+# ----------------------
+
+# Generate secure passwords
+generate_password() {
+    # Default password type is phrases using diceware
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: generate_password [-p type] [-l length] [-m] [-c] [-s] [-q] [-n]"
+        echo "Options:"
+        echo "  -p type       Password type: phrases (default), chars (random characters), numbers, or hex"
+        echo "  -l length     Length of the password (default: 6 words for phrases, 22 chars for others)"
+        echo "  -m            Manual mode - prompt for password instead of generating"
+        echo "  -c            Copy the generated password to clipboard"
+        echo "  -s            Include special characters (for chars type only)"
+        echo "  -q            Quiet mode - only output the password (useful for scripting)"
+        echo "  -n            No spaces in passphrase (for phrases type only)"
+        return 0
+    fi
+    
+    # For macOS, check for brew-installed diceware
+    local has_diceware=false
+    if command -v diceware &> /dev/null; then
+        has_diceware=true
+    fi
+    
+    local password_type="phrases"
+    local length=6  # Default 6 words for phrases
+    local char_length=22  # Default 22 chars for character passwords
+    local manual_mode=false
+    local copy_to_clipboard=false
+    local include_special=false
+    local quiet_mode=false
+    local no_spaces=false
+    local password=""
+    
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -p)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: -p requires a type argument (phrases, chars, numbers, hex)" >&2
+                    return 1
+                fi
+                password_type="$2"
+                shift 2
+                ;;
+            -l)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: -l requires a length argument" >&2
+                    return 1
+                fi
+                if [[ ! "$2" =~ ^[0-9]+$ ]]; then
+                    echo "Error: Length must be a number" >&2
+                    return 1
+                fi
+                if [[ "$password_type" == "phrases" ]]; then
+                    length="$2"
+                else
+                    char_length="$2"
+                fi
+                shift 2
+                ;;
+            -m)
+                manual_mode=true
+                shift
+                ;;
+            -c)
+                copy_to_clipboard=true
+                shift
+                ;;
+            -s)
+                include_special=true
+                shift
+                ;;
+            -q)
+                quiet_mode=true
+                shift
+                ;;
+            -n)
+                no_spaces=true
+                shift
+                ;;
+            *)
+                if ! $quiet_mode; then
+                    echo "Unknown option: $1" >&2
+                    echo "Use 'generate_password -h' for help." >&2
+                fi
+                return 1
+                ;;
+        esac
+    done
+    
+    # If manual mode, prompt for password
+    if $manual_mode; then
+        if ! $quiet_mode; then
+            echo "Enter your password (input will be hidden):" >&2
+        fi
+        read -s password
+        if ! $quiet_mode; then
+            echo "Confirm password:" >&2
+        fi
+        read -s password_confirm
+        
+        if [[ "$password" != "$password_confirm" ]]; then
+            if ! $quiet_mode; then
+                echo "Error: Passwords do not match." >&2
+            fi
+            return 1
+        fi
+        
+        if ! $quiet_mode; then
+            echo "Password set manually." >&2
+        fi
+    else
+        # Generate password based on type
+        case "$password_type" in
+            phrases)
+                if ! $has_diceware; then
+                    if ! $quiet_mode; then
+                        echo "Error: 'diceware' is not installed but required for phrase passwords." >&2
+                        echo "You can install it with: brew install diceware" >&2
+                        echo -n "Do you want to install diceware now? (y/n): " >&2
+                    fi
+                    read install_diceware
+                    if [[ "$install_diceware" =~ ^[Yy]$ ]]; then
+                        brew install diceware
+                        has_diceware=true
+                    else
+                        if ! $quiet_mode; then
+                            echo "Falling back to character-based password." >&2
+                        fi
+                        password_type="chars"
+                    fi
+                fi
+                
+                if $has_diceware; then
+                    # Use diceware to generate a phrase password
+                    password=$(diceware -n "$length" -c -s 2)
+                    
+                    # Remove spaces if requested
+                    if $no_spaces; then
+                        password=$(echo "$password" | tr -d ' ')
+                    fi
+                    
+                    if ! $quiet_mode; then
+                        echo "Generated passphrase: $password" >&2
+                    fi
+                else
+                    # Use macOS's built-in word list as a fallback if diceware isn't available
+                    if [[ -f "/usr/share/dict/words" ]]; then
+                        local wordlist="/usr/share/dict/words"
+                        local words=()
+                        for ((i=1; i<=length; i++)); do
+                            # Get a random word from dictionary, filter for appropriate word length (5-8 chars)
+                            word=$(cat "$wordlist" | grep -E "^[a-z]{5,8}$" | sort -R | head -n 1)
+                            words+=("$word")
+                        done
+                        
+                        # Join words with spaces or nothing based on no_spaces flag
+                        if $no_spaces; then
+                            password=$(IFS=; echo "${words[*]}")
+                        else
+                            password=$(IFS=" "; echo "${words[*]}")
+                        fi
+                    else
+                        # If no word list, fall back to random characters
+                        password=$(openssl rand -base64 $(($char_length * 2)) | tr -d '/+=' | cut -c1-"$char_length")
+                    fi
+                    
+                    if ! $quiet_mode; then
+                        echo "Generated passphrase: $password" >&2
+                    fi
+                fi
+                ;;
+                
+            chars)
+                # Generate a random character password with letters, numbers, and symbols
+                if $include_special; then
+                    # On macOS, use built-in tools for random generation
+                    password=$(LC_ALL=C < /dev/urandom tr -dc 'a-zA-Z0-9!@#$%^&*()_+=-' | head -c "$char_length")
+                    
+                    # Ensure at least one of each character type for better password strength
+                    if [[ ${#password} -ge 4 ]]; then
+                        # Get one of each type
+                        local lower=$(LC_ALL=C < /dev/urandom tr -dc 'a-z' | head -c 1)
+                        local upper=$(LC_ALL=C < /dev/urandom tr -dc 'A-Z' | head -c 1)
+                        local number=$(LC_ALL=C < /dev/urandom tr -dc '0-9' | head -c 1)
+                        local special=$(LC_ALL=C < /dev/urandom tr -dc '!@#$%^&*()_+=-' | head -c 1)
+                        
+                        # Replace first 4 characters with our guaranteed types
+                        password="${lower}${upper}${number}${special}${password:4}"
+                        
+                        # Shuffle the password to avoid predictable pattern (macOS compatible)
+                        password=$(echo "$password" | fold -w1 | sort -R | tr -d '\n' | head -c "$char_length")
+                    fi
+                else
+                    # Standard character set
+                    password=$(LC_ALL=C < /dev/urandom tr -dc 'a-zA-Z0-9' | head -c "$char_length")
+                    
+                    # Ensure at least one lowercase, one uppercase, and one number
+                    if [[ ${#password} -ge 3 ]]; then
+                        local lower=$(LC_ALL=C < /dev/urandom tr -dc 'a-z' | head -c 1)
+                        local upper=$(LC_ALL=C < /dev/urandom tr -dc 'A-Z' | head -c 1)
+                        local number=$(LC_ALL=C < /dev/urandom tr -dc '0-9' | head -c 1)
+                        
+                        password="${lower}${upper}${number}${password:3}"
+                        password=$(echo "$password" | fold -w1 | sort -R | tr -d '\n' | head -c "$char_length")
+                    fi
+                fi
+                
+                if ! $quiet_mode; then
+                    echo "Generated password: $password" >&2
+                fi
+                ;;
+                
+            numbers)
+                # Generate a random numeric password
+                password=$(LC_ALL=C < /dev/urandom tr -dc '0-9' | head -c "$char_length")
+                if ! $quiet_mode; then
+                    echo "Generated numeric password: $password" >&2
+                fi
+                ;;
+                
+            hex)
+                # Generate a random hexadecimal password
+                password=$(LC_ALL=C < /dev/urandom tr -dc 'a-f0-9' | head -c "$char_length")
+                if ! $quiet_mode; then
+                    echo "Generated hex password: $password" >&2
+                fi
+                ;;
+                
+            *)
+                if ! $quiet_mode; then
+                    echo "Error: Invalid password type '$password_type'. Use phrases, chars, numbers, or hex." >&2
+                fi
+                return 1
+                ;;
+        esac
+    fi
+    
+    # Copy to clipboard if requested - use pbcopy on macOS
+    if $copy_to_clipboard && [[ -n "$password" ]]; then
+        echo -n "$password" | pbcopy
+        if ! $quiet_mode; then
+            echo "Password copied to clipboard." >&2
+        fi
+    fi
+    
+    if ! $quiet_mode; then
+        echo "Save this password securely!" >&2
+    fi
+    
+    # Return the password as the function result
+    echo "$password"
+}
+
+# Common aliases for password generation
+alias genpass="generate_password -c"
+alias genpassphrase="generate_password -p phrases -c"
+alias genpin="generate_password -p numbers -l 6 -c"
+
+# Function to encrypt a file using GPG
+encrypt_file() {
+    if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: encrypt_file [file] [recipient]"
+        echo "  Encrypts a file using GPG."
+        echo "  If recipient is specified, uses public key encryption."
+        echo "  Otherwise, uses symmetric encryption with a password."
+        return 0
+    fi
+    
+    local file="$1"
+    local recipient="$2"
+    
+    # Check if file exists
+    if [[ ! -f "$file" ]]; then
+        echo "Error: File '$file' not found."
+        return 1
+    fi
+    
+    # Check if GPG is installed
+    if ! command -v gpg &> /dev/null; then
+        echo "Error: GPG is not installed."
+        echo "Install it with: brew install gnupg"
+        return 1
+    fi
+    
+    # Encrypt with recipient's public key or use symmetric encryption
+    if [[ -n "$recipient" ]]; then
+        # Public key encryption
+        gpg --encrypt --recipient "$recipient" "$file"
+        echo "File encrypted for $recipient: ${file}.gpg"
+    else
+        # Symmetric encryption (password-based)
+        gpg --symmetric --cipher-algo AES256 "$file"
+        echo "File encrypted with password: ${file}.gpg"
+    fi
+}
+
+# Function to decrypt a GPG-encrypted file
+decrypt_file() {
+    if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: decrypt_file [encrypted_file] [output_file]"
+        echo "  Decrypts a GPG-encrypted file."
+        echo "  If output_file is not specified, removes the .gpg extension."
+        return 0
+    fi
+    
+    local encrypted_file="$1"
+    local output_file="$2"
+    
+    # Check if file exists
+    if [[ ! -f "$encrypted_file" ]]; then
+        echo "Error: File '$encrypted_file' not found."
+        return 1
+    fi
+    
+    # Check if GPG is installed
+    if ! command -v gpg &> /dev/null; then
+        echo "Error: GPG is not installed."
+        echo "Install it with: brew install gnupg"
+        return 1
+    fi
+    
+    # Set default output file if not specified
+    if [[ -z "$output_file" ]]; then
+        output_file="${encrypted_file%.gpg}"
+        # If the filename doesn't end with .gpg, append .decrypted
+        if [[ "$output_file" == "$encrypted_file" ]]; then
+            output_file="${encrypted_file}.decrypted"
+        fi
+    fi
+    
+    # Decrypt file
+    gpg --decrypt --output "$output_file" "$encrypted_file"
+    if [[ $? -eq 0 ]]; then
+        echo "File decrypted to: $output_file"
+    else
+        echo "Decryption failed."
+        return 1
+    fi
+}
+
+# Quick file encryption with OpenSSL (for when GPG is not needed)
+encrypt_file_simple() {
+    if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: encrypt_file_simple [file]"
+        echo "  Simple encryption using OpenSSL AES-256-CBC."
+        return 0
+    fi
+    
+    local file="$1"
+    local output="${file}.enc"
+    
+    # Check if file exists
+    if [[ ! -f "$file" ]]; then
+        echo "Error: File '$file' not found."
+        return 1
+    fi
+    
+    # Encrypt using OpenSSL
+    openssl enc -aes-256-cbc -salt -in "$file" -out "$output"
+    echo "File encrypted: $output"
+}
+
+# Quick file decryption with OpenSSL
+decrypt_file_simple() {
+    if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: decrypt_file_simple [encrypted_file] [output_file]"
+        echo "  Decrypts a file encrypted with encrypt_file_simple."
+        return 0
+    fi
+    
+    local encrypted_file="$1"
+    local output_file="$2"
+    
+    # Check if file exists
+    if [[ ! -f "$encrypted_file" ]]; then
+        echo "Error: File '$encrypted_file' not found."
+        return 1
+    fi
+    
+    # Set default output file if not specified
+    if [[ -z "$output_file" ]]; then
+        output_file="${encrypted_file%.enc}"
+        # If the filename doesn't end with .enc, append .decrypted
+        if [[ "$output_file" == "$encrypted_file" ]]; then
+            output_file="${encrypted_file}.decrypted"
+        fi
+    fi
+    
+    # Decrypt using OpenSSL
+    openssl enc -d -aes-256-cbc -in "$encrypted_file" -out "$output_file"
+    if [[ $? -eq 0 ]]; then
+        echo "File decrypted to: $output_file"
+    else
+        echo "Decryption failed."
+        return 1
+    fi
+}
+
+# Securely delete a file (macOS-compatible)
+secure_delete() {
+    if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: secure_delete [file]"
+        echo "  Securely delete a file using srm if available, or rm with overwrite."
+        return 0
+    fi
+    
+    local file="$1"
+    
+    # Check if file exists
+    if [[ ! -f "$file" ]]; then
+        echo "Error: File '$file' not found."
+        return 1
+    fi
+    
+    # Try to use secure_rm if available
+    if command -v srm &> /dev/null; then
+        srm -z "$file"
+        echo "File securely deleted using srm: $file"
+    else
+        # Fallback to overwriting the file before deletion
+        local filesize=$(stat -f "%z" "$file")
+        dd if=/dev/urandom of="$file" bs=1 count="$filesize" conv=notrunc status=none
+        rm -f "$file"
+        echo "File overwritten and deleted: $file"
+    fi
+}
+
+# Create a password-protected zip archive
+secure_zip() {
+    if [[ $# -lt 2 || "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: secure_zip [zipfile] [files/directories...]"
+        echo "  Creates a password-protected ZIP archive."
+        return 0
+    fi
+    
+    local zipfile="$1"
+    shift
+    
+    # Add .zip extension if not present
+    if [[ ! "$zipfile" =~ \.zip$ ]]; then
+        zipfile="${zipfile}.zip"
+    fi
+    
+    # Use zip command with password protection
+    zip -e "$zipfile" "$@"
+    
+    echo "Created encrypted ZIP archive: $zipfile"
+}
+
+# EOF - End of file marker to ensure proper termination
+
