@@ -770,4 +770,3 @@ restore_original_mac() {
         return 1
     fi
 }
-
