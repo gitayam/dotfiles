@@ -52,15 +52,135 @@ gen_mac_addr() {
 }
 
 show_current_mac() {
-    if [[ -z "$1" ]]; then
-        echo "Usage: show_current_mac location_name"
+    local interface_input="$1"
+    local interface_name
+    
+    if [[ -z "$interface_input" ]]; then
+        echo "Usage: show_current_mac <device_name>"
+        echo "Available interfaces:"
+        networksetup -listallhardwareports | grep -E "Hardware Port:|Device:|Ethernet Address:" | sed 's/^/  /'
         return 1
     fi
-    networksetup -getmacaddress "$1"
+    
+    # Convert friendly name to device name if needed
+    if [[ "$interface_input" == "Wi-Fi" || "$interface_input" == "wifi" || "$interface_input" == "WIFI" ]]; then
+        # Look up the device name for Wi-Fi
+        interface_name=$(networksetup -listallhardwareports | grep -A 1 "Wi-Fi" | grep "Device:" | awk '{print $2}')
+        echo "Converting Wi-Fi to device name: $interface_name"
+    elif [[ "$interface_input" =~ ^en[0-9]+$ ]]; then
+        # Already a device name
+        interface_name="$interface_input"
+    else
+        # Try to find the device name for the given hardware port
+        interface_name=$(networksetup -listallhardwareports | grep -A 1 "$interface_input" | grep "Device:" | awk '{print $2}')
+        if [[ -z "$interface_name" ]]; then
+            echo "Error: Could not find device name for '$interface_input'"
+            echo "Available interfaces:"
+            networksetup -listallhardwareports | grep -E "Hardware Port:|Device:|Ethernet Address:" | sed 's/^/  /'
+            return 1
+        fi
+        echo "Converting '$interface_input' to device name: $interface_name"
+    fi
+    
+    networksetup -getmacaddress "$interface_name"
+}
+
+change_mac_address() {
+    local mac_address="$1"
+    local interface_input="$2"
+    local interface_name
+    
+    # Generate random MAC if none provided
+    if [[ -z "$mac_address" ]]; then
+        mac_address=$(gen_mac_addr)
+        echo "No MAC address provided. Using generated MAC: $mac_address"
+    fi
+    
+    # Check if interface name is provided
+    if [[ -z "$interface_input" ]]; then
+        echo "No interface name provided. Available interfaces:"
+        networksetup -listallhardwareports | grep -E "Hardware Port:|Device:|Ethernet Address:" | sed 's/^/  /'
+        echo "Usage: change_mac_address <mac_address> <interface_name>"
+        return 1
+    fi
+    
+    # Convert friendly name to device name if needed
+    if [[ "$interface_input" == "Wi-Fi" || "$interface_input" == "wifi" || "$interface_input" == "WIFI" ]]; then
+        # Look up the device name for Wi-Fi
+        interface_name=$(networksetup -listallhardwareports | grep -A 1 "Wi-Fi" | grep "Device:" | awk '{print $2}')
+        echo "Converting Wi-Fi to device name: $interface_name"
+    elif [[ "$interface_input" =~ ^en[0-9]+$ ]]; then
+        # Already a device name
+        interface_name="$interface_input"
+    else
+        # Try to find the device name for the given hardware port
+        interface_name=$(networksetup -listallhardwareports | grep -A 1 "$interface_input" | grep "Device:" | awk '{print $2}')
+        if [[ -z "$interface_name" ]]; then
+            echo "Error: Could not find device name for '$interface_input'"
+            echo "Available interfaces:"
+            networksetup -listallhardwareports | grep -E "Hardware Port:|Device:|Ethernet Address:" | sed 's/^/  /'
+            return 1
+        fi
+        echo "Converting '$interface_input' to device name: $interface_name"
+    fi
+    
+    # Get current MAC for this interface
+    local current_info
+    current_info=$(networksetup -getmacaddress "$interface_name" 2>/dev/null)
+    
+    # Check if the interface exists
+    if [[ $? -ne 0 || "$current_info" == *"does not exist"* ]]; then
+        echo "Error: Interface $interface_name not found."
+        return 1
+    fi
+    
+    # Extract current MAC address
+    local current_mac
+    current_mac=$(echo "$current_info" | awk '{print $3}')
+    
+    # Save original MAC if not already saved
+    local mac_file="$HOME/.mac_$interface_name"
+    if [[ ! -f "$mac_file" ]]; then
+        echo "$current_mac" > "$mac_file"
+        echo "Original MAC address saved: $current_mac"
+    fi
+    
+    # Change MAC address
+    echo "Changing MAC address for $interface_name to $mac_address..."
+    
+    # Turn off the interface
+    echo "Disabling interface..."
+    sudo ifconfig "$interface_name" down
+    
+    # Set the new MAC address
+    sudo ifconfig "$interface_name" ether "$mac_address"
+    
+    # Turn the interface back on
+    echo "Re-enabling interface..."
+    sudo ifconfig "$interface_name" up
+    
+    # Verify the change
+    local new_mac
+    new_mac=$(ifconfig "$interface_name" | grep ether | awk '{print $2}')
+    
+    if [[ "$new_mac" == "$mac_address" ]]; then
+        echo "MAC address successfully changed to $mac_address"
+        return 0
+    else
+        echo "Failed to change MAC address. Current MAC is $new_mac"
+        return 1
+    fi
 }
 
 change_mac_menu() {
-    local choice mac_address location_name
+    local choice mac_address interface_name
+    
+    # First show available interfaces
+    echo "Available network interfaces:"
+    networksetup -listallhardwareports | grep -E "Hardware Port:|Device:|Ethernet Address:" | sed 's/^/  /'
+    echo ""
+    echo "You can use either the device name (e.g., en0) or the friendly name (e.g., Wi-Fi)"
+    echo ""
     
     echo "Choose an option:"
     echo "0. Show current MAC address"
@@ -72,25 +192,27 @@ change_mac_menu() {
 
     case $choice in
         0)
-            echo -n "Enter location name: "
-            read -r location_name
-            show_current_mac "$location_name"
+            echo -n "Enter interface name (e.g., en0 or Wi-Fi): "
+            read -r interface_name
+            show_current_mac "$interface_name"
             ;;
         1)
             echo -n "Enter the new MAC address (e.g., E6:B8:BA:D2:41:07): "
             read -r mac_address
-            echo -n "Enter the name of the new network location (e.g., Home, Work, etc.): "
-            read -r location_name
-            change_mac_address "$mac_address" "$location_name"
+            echo -n "Enter the interface name (e.g., en0 or Wi-Fi): "
+            read -r interface_name
+            change_mac_address "$mac_address" "$interface_name"
             ;;
         2)
-            echo -n "Enter the name of the new network location (e.g., Home, Work, etc.): "
-            read -r location_name
+            echo -n "Enter the interface name (e.g., en0 or Wi-Fi): "
+            read -r interface_name
             mac_address=$(gen_mac_addr)
-            change_mac_address "$mac_address" "$location_name"
+            change_mac_address "$mac_address" "$interface_name"
             ;;
         3)
-            restore_original_mac
+            echo -n "Enter the interface name to restore (press enter to see available): "
+            read -r interface_name
+            restore_original_mac "$interface_name"
             ;;
         *)
             echo "Invalid choice. Exiting."
@@ -98,6 +220,7 @@ change_mac_menu() {
             ;;
     esac
 }
+
 analyze_network_traffic() {
     local help=false pcap_file=""
     # Analysis flags
@@ -575,4 +698,76 @@ EOF
 alias tsf=funnel
 alias postfile=funnel
 alias openport="funnel -d -p"
+
+restore_original_mac() {
+    local interface_input="$1"
+    local interface_name
+    
+    # If interface is provided, convert friendly name to device name if needed
+    if [[ -n "$interface_input" ]]; then
+        if [[ "$interface_input" == "Wi-Fi" || "$interface_input" == "wifi" || "$interface_input" == "WIFI" ]]; then
+            # Look up the device name for Wi-Fi
+            interface_name=$(networksetup -listallhardwareports | grep -A 1 "Wi-Fi" | grep "Device:" | awk '{print $2}')
+            echo "Converting Wi-Fi to device name: $interface_name"
+        elif [[ "$interface_input" =~ ^en[0-9]+$ ]]; then
+            # Already a device name
+            interface_name="$interface_input"
+        else
+            # Try to find the device name for the given hardware port
+            interface_name=$(networksetup -listallhardwareports | grep -A 1 "$interface_input" | grep "Device:" | awk '{print $2}')
+            if [[ -z "$interface_name" ]]; then
+                echo "Error: Could not find device name for '$interface_input'"
+                echo "Available interfaces:"
+                networksetup -listallhardwareports | grep -E "Hardware Port:|Device:|Ethernet Address:" | sed 's/^/  /'
+                return 1
+            fi
+            echo "Converting '$interface_input' to device name: $interface_name"
+        fi
+    # If no interface specified, show available ones with saved MACs
+    else
+        local saved_interfaces=()
+        for file in "$HOME"/.mac_*; do
+            if [[ -f "$file" ]]; then
+                saved_interfaces+=($(basename "$file" | sed 's/^.mac_//'))
+            fi
+        done
+        
+        if [[ ${#saved_interfaces[@]} -eq 0 ]]; then
+            echo "No interfaces found with saved original MAC addresses."
+            return 1
+        fi
+        
+        echo "Select an interface to restore original MAC address:"
+        select interface_name in "${saved_interfaces[@]}"; do
+            if [[ -n "$interface_name" ]]; then
+                break
+            else
+                echo "Invalid selection. Please try again."
+            fi
+        done
+    fi
+    
+    # Check if we have a saved MAC for this interface
+    local mac_file="$HOME/.mac_$interface_name"
+    if [[ ! -f "$mac_file" ]]; then
+        echo "No saved original MAC address found for $interface_name"
+        return 1
+    fi
+    
+    # Get the original MAC address
+    local original_mac
+    original_mac=$(cat "$mac_file")
+    
+    echo "Restoring original MAC address ($original_mac) for $interface_name..."
+    
+    # Use our change_mac_address function to do the actual change
+    if change_mac_address "$original_mac" "$interface_name"; then
+        echo "Original MAC address successfully restored"
+        rm "$mac_file"  # Remove the saved file since we've restored the original
+        return 0
+    else
+        echo "Failed to restore original MAC address"
+        return 1
+    fi
+}
 
