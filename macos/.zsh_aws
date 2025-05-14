@@ -1,3 +1,27 @@
+# AWS Zsh helper functions for IAM management and environment loading
+
+# Load environment variables from .env
+load_env() {
+  if [[ -f .env ]]; then
+    export $(grep -v '^#' .env | xargs)
+    echo "Environment variables loaded from .env"
+  else
+    echo "⚠️  .env not found"
+    return 1
+  fi
+}
+aws_command_list(){
+    echo "List of commands:"
+    echo "List of users: aws_list_users"
+    echo "List of groups: aws_list_groups"
+    echo "List of users in group: aws_list_users_in_group"
+    echo "Create user: aws_create_user"
+    echo "Delete user: aws_delete_user"
+    echo "Reset password: aws_reset_password"
+    echo "Add user to group: aws_add_user_to_group"
+    echo "Create group: aws_create_group"
+    echo "Delete group: aws_delete_group"
+}
 
 #Install AWScLI and other packages
 aws_install(){
@@ -7,9 +31,177 @@ aws_install(){
 }
 
 aws_config(){
+    load_env
     echo "enter your Access Key & Secret"
-    echo "
     aws-vault add myprofile
-
     aws configure
 }
+
+# Create a new IAM group
+# Usage: create_group <group_name>
+aws_create_group() {
+    load_env
+    local group_name="$1"
+    if [[ -z "$group_name" ]]; then
+      echo "Usage: create_group <group_name>"
+      return 1
+    fi
+    aws iam create-group --group-name "$group_name" ${AWS_PROFILE:+--profile $AWS_PROFILE}
+    echo "✅ Group '$group_name' created."
+}
+
+
+# Reset an IAM user's console password using generate_password
+# Usage: reset_password <user_name>
+aws_reset_password() {
+    load_env
+  local user_name="$1"
+  if [[ -z "$user_name" ]]; then
+    echo "Usage: reset_password <user_name>"
+    return 1
+  fi
+  # Generate a compliant password
+  local password
+  password=$(generate_password -q)
+  aws iam update-login-profile \
+    --user-name "$user_name" \
+    --password "$password" \
+    --password-reset-required ${AWS_PROFILE:+--profile $AWS_PROFILE}
+  echo "🔐 Password for '$user_name' reset. New password: $password"
+}
+
+# Add a user to an existing IAM group (with interactive selection)
+# Usage: add_user_to_group
+aws_add_user_to_group() {
+    load_env
+  # Fetch list of groups
+  local groups
+  IFS=$'\n' read -rd '' -a groups < <(aws iam list-groups --query 'Groups[].GroupName' --output text ${AWS_PROFILE:+--profile $AWS_PROFILE})
+  if [[ ${#groups[@]} -eq 0 ]]; then
+    echo "⚠️  No IAM groups found."
+    return 1
+  fi
+  # Interactive selection
+  echo "Select a group to add a user to:"
+  select group in "${groups[@]}"; do
+    if [[ -n "$group" ]]; then
+      break
+    else
+      echo "Invalid selection."
+    fi
+  done
+  # Prompt for user name
+  local user_name
+  read -p "Enter the user name to add to '$group': " user_name
+  if [[ -z "$user_name" ]]; then
+    echo "Usage: add_user_to_group"
+    return 1
+  fi
+  aws iam add-user-to-group --group-name "$group" --user-name "$user_name" ${AWS_PROFILE:+--profile $AWS_PROFILE}
+  echo "✅ User '$user_name' added to group '$group'."
+}
+
+# Create a new IAM user
+# Usage: create_user <user_name> [--group|-g <group_name>]...
+aws_create_user() {
+    load_env
+  local user_name=""
+  local groups=()
+  local create_password=true
+  
+  # Parse arguments
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --group|-g)
+        if [[ -n "$2" ]]; then
+          groups+=("$2")
+          shift 2
+        else
+          echo "Error: Group name required after --group/-g"
+          return 1
+        fi
+        ;;
+      --password|-p)
+        create_password=true
+        shift
+        ;;
+      *)
+        if [[ -z "$user_name" ]]; then
+          user_name="$1"
+          shift
+        else
+          echo "Error: Unexpected argument '$1'"
+          echo "Usage: aws_create_user <user_name> [--group|-g <group_name>]... [--password|-p]"
+          return 1
+        fi
+        ;;
+    esac
+  done
+  
+  if [[ -z "$user_name" ]]; then
+    echo "Usage: aws_create_user <user_name> [--group|-g <group_name>]... [--password|-p]"
+    return 1
+  fi
+  
+  # Create the user
+  aws iam create-user --user-name "$user_name" ${AWS_PROFILE:+--profile $AWS_PROFILE}
+  echo ""
+  echo "✅ User '$user_name' created."
+  echo ""
+  
+  # Add user to specified groups
+  if [[ ${#groups[@]} -gt 0 ]]; then
+    echo "🔄 Adding user to groups..."
+    for group in "${groups[@]}"; do
+      aws iam add-user-to-group --group-name "$group" --user-name "$user_name" ${AWS_PROFILE:+--profile $AWS_PROFILE}
+      echo "  ✅ Added to group '$group'"
+    done
+    echo ""
+  fi
+  
+  # Create a login profile with password if requested
+  if [[ "$create_password" = true ]]; then
+    local password
+    password=$(generate_password -q)
+    aws iam create-login-profile \
+      --user-name "$user_name" \
+      --password "$password" \
+      --password-reset-required ${AWS_PROFILE:+--profile $AWS_PROFILE}
+    
+    # Get the organization ID from environment variables or use a default placeholder
+    local org_id="${AWS_ORG_ID:-your-org-id}"
+    
+    echo "────────────────────────────────────────────────────────"
+    echo "🔐 Console login details for '$user_name':"
+    echo ""
+    echo "  Username: $user_name"
+    echo "  Password: $password"
+    echo ""
+    echo "  Login URL: https://${org_id}.signin.aws.amazon.com/console"
+    echo "────────────────────────────────────────────────────────"
+  fi
+}
+aws_delete_user() {
+    load_env
+    local user_name="$1"
+    if [[ -z "$user_name" ]]; then
+        echo "Usage: aws_delete_user <user_name>"
+        #remind of aws list user function available 
+        aws_command_list
+        return 1
+    fi
+    aws iam delete-user --user-name "$user_name" ${AWS_PROFILE:+--profile $AWS_PROFILE}
+    echo "✅ User: '$user_name' deleted."
+}
+
+alias awsrmuser="aws_delete_user"
+
+
+aws_user_activation(){
+    #Allow Activation, Deactivation, Status for users. 
+}
+    
+
+# Aliases for convenience
+alias awslgroups="aws iam list-groups ${AWS_PROFILE:+--profile $AWS_PROFILE}"
+alias awslusers="aws iam list-users ${AWS_PROFILE:+--profile $AWS_PROFILE}"
