@@ -1,0 +1,15 @@
+
+#Install AWScLI and other packages
+aws_install(){
+    brew install awscli
+    brew install aws-vault
+    brew install jq
+}
+
+aws_config(){
+    echo "enter your Access Key & Secret"
+    echo "
+    aws-vault add myprofile
+
+    aws configure
+}
