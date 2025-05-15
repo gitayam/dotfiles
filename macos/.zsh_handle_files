@@ -1383,7 +1383,8 @@ convert_to_pdf() {
                         read -p "Install MacTeX now? (y/n): " install_mactex
                         if [[ "$install_mactex" =~ ^[Yy]$ ]]; then
                             echo "Installing BasicTeX (smaller package)..."
-                            brew install --cask basictex
+                            brew install --cask mactex # Install mactex
+                            eval "$(/usr/libexec/path_helper)" # Update PATH
                             echo "✅ After installation completes, you'll need to restart your terminal or run 'source ~/.zshrc'"
                         fi
                         ;;
