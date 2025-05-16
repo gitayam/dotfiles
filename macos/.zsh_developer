@@ -116,7 +116,7 @@ git_clone(){
         return 1
     fi
     #check if gh is setup
-    if [[ -z "$(gh auth status | grep "Logged in to GitHub as")" ]]; then
+    if [[ -z "$(gh auth status 2>&1 | grep -i "logged in to github")" ]]; then
         echo "GitHub CLI (gh) is not logged in."
         echo "Would you like to login? (y/n): "
         read login_gh
