@@ -1,26 +1,202 @@
+#!/bin/zsh
+
 # AWS Zsh helper functions for IAM management and environment loading
 
-# Load environment variables from .env
+# Load environment variables from .env file
 load_env() {
   if [[ -f .env ]]; then
-    export $(grep -v '^#' .env | xargs)
+    source .env
     echo "Environment variables loaded from .env"
   else
     echo "⚠️  .env not found"
     return 1
   fi
 }
+
+# Helper function to run AWS commands with proper profile handling
+run_aws_cmd() {
+    # First argument is the command, rest are passed through
+    local cmd="$1"
+    shift
+    
+    # Check if we have AWS credentials in the environment
+    if [[ -n "$AWS_ACCESS_KEY_ID" && -n "$AWS_SECRET_ACCESS_KEY" ]]; then
+        # Use the environment variables directly
+        aws "$cmd" "$@"
+        return $?
+    fi
+    
+    if [[ -n "$AWS_PROFILE" ]]; then
+        # Check if the profile exists
+        if ! aws configure list-profiles 2>/dev/null | grep -q "^${AWS_PROFILE}$"; then
+            echo "⚠️ The config profile ($AWS_PROFILE) could not be found"
+            echo "Available profiles:"
+            aws configure list-profiles 2>/dev/null || echo "No profiles found"
+            
+            echo -n "Would you like to enter temporary credentials? (y/n): "
+            read use_temp
+            if [[ "$use_temp" == "y" ]]; then
+                # Prompt for temporary credentials
+                echo "Enter temporary AWS credentials:"
+                echo -n "AWS Access Key ID: "
+                read temp_key
+                echo -n "AWS Secret Access Key: "
+                read -s temp_secret
+                echo ""
+                echo -n "AWS Session Token (optional, press Enter to skip): "
+                read temp_token
+                
+                # Export temporary credentials
+                export AWS_ACCESS_KEY_ID="$temp_key"
+                export AWS_SECRET_ACCESS_KEY="$temp_secret"
+                if [[ -n "$temp_token" ]]; then
+                    export AWS_SESSION_TOKEN="$temp_token"
+                fi
+                
+                # Unset profile to use environment variables instead
+                unset AWS_PROFILE
+                
+                echo "Using temporary credentials for this command"
+                aws "$cmd" "$@"
+                return $?
+            else
+                echo -n "Would you like to create this profile now? (y/n): "
+                read create_profile
+                if [[ "$create_profile" == "y" ]]; then
+                    aws configure --profile "$AWS_PROFILE"
+                    # Try again with the newly created profile
+                    aws "$cmd" "$@" --profile "$AWS_PROFILE"
+                    return $?
+                else
+                    echo "Operation cancelled. No valid AWS credentials available."
+                    return 1
+                fi
+            fi
+        else
+            # Profile exists, use it
+            aws "$cmd" "$@" --profile "$AWS_PROFILE"
+            return $?
+        fi
+    else
+        # No profile specified, use default credentials
+        aws "$cmd" "$@"
+        return $?
+    fi
+}
+
+# Function to check AWS profile and credentials
+aws_check_profile() {
+  local profile="$1"
+  
+  if [[ -z "$profile" ]]; then
+    # If no profile specified, use AWS_PROFILE from environment or "default"
+    profile="${AWS_PROFILE:-default}"
+  fi
+  
+  echo "Checking AWS profile: $profile"
+  
+  # Check if the profile is configured in credentials file
+  if ! aws configure list --profile "$profile" &>/dev/null; then
+    echo "❌ Profile '$profile' is not properly configured"
+    echo "Run 'aws configure --profile $profile' to set it up"
+    return 1
+  fi
+  
+  # Check if we can make authenticated calls
+  echo "Verifying credentials for profile '$profile'..."
+  if ! aws sts get-caller-identity --profile "$profile" &>/dev/null; then
+    echo "❌ Authentication failed for profile '$profile'"
+    echo "Your credentials might be expired or invalid"
+    return 1
+  fi
+  
+  # Display information about the profile
+  echo "✅ AWS profile '$profile' is properly configured"
+  echo "Current identity:"
+  aws sts get-caller-identity --profile "$profile"
+  
+  # Check if this profile has proper IAM permissions
+  echo "Testing IAM permissions..."
+  if ! aws iam list-users --max-items 1 --profile "$profile" &>/dev/null; then
+    echo "⚠️ This profile may not have IAM management permissions"
+    echo "IAM operations might fail with this profile"
+  else
+    echo "✅ Profile has IAM permissions"
+  fi
+  
+  # Export this profile for other functions to use
+  export AWS_PROFILE="$profile"
+  echo "Set AWS_PROFILE=$profile for this session"
+  return 0
+}
+
+# Function to list available AWS profiles
+aws_list_profiles() {
+  if [[ ! -f ~/.aws/credentials && ! -f ~/.aws/config ]]; then
+    echo "❌ No AWS configuration files found"
+    echo "Run 'aws configure' to set up your first profile"
+    return 1
+  fi
+  
+  echo "Available AWS profiles:"
+  aws configure list-profiles
+  
+  if [[ -n "$AWS_PROFILE" ]]; then
+    echo ""
+    echo "Current active profile: $AWS_PROFILE"
+  fi
+}
+
+# Function to set the active AWS profile for this session
+aws_use_profile() {
+  local profile="$1"
+  
+  if [[ -z "$profile" ]]; then
+    echo "Usage: aws_use_profile <profile_name>"
+    aws_list_profiles
+    return 1
+  fi
+  
+  # Check if profile exists
+  if ! aws configure list-profiles | grep -q "^$profile$"; then
+    echo "❌ Profile '$profile' not found"
+    aws_list_profiles
+    return 1
+  fi
+  
+  export AWS_PROFILE="$profile"
+  echo "✅ Now using AWS profile: $profile"
+  
+  # Verify profile works
+  aws_check_profile "$profile"
+}
+
 aws_command_list(){
     echo "List of commands:"
-    echo "List of users: aws_list_users"
-    echo "List of groups: aws_list_groups"
-    echo "List of users in group: aws_list_users_in_group"
-    echo "Create user: aws_create_user"
-    echo "Delete user: aws_delete_user"
-    echo "Reset password: aws_reset_password"
-    echo "Add user to group: aws_add_user_to_group"
-    echo "Create group: aws_create_group"
-    echo "Delete group: aws_delete_group"
+    echo "Profile and credential management:"
+    echo "  aws_list_profiles - List all available AWS profiles"
+    echo "  aws_use_profile <name> - Set and validate the active AWS profile"
+    echo "  aws_check_profile [name] - Verify a profile is working correctly"
+    echo "  aws_config [name] - Set up a new profile"
+    echo "  aws_temp_credentials - Set temporary credentials for this session"
+    echo "  aws_region [region] - Set or change AWS region"
+    echo "  aws_check_permissions - Test what AWS permissions you have"
+    echo "  aws_install - Install AWS CLI and related tools"
+    echo ""
+    echo "IAM user management:"
+    echo "  aws_list_users - List all IAM users"
+    echo "  aws_list_groups - List all IAM groups"
+    echo "  aws_list_users_in_group - List users in a group (interactive)"
+    echo "  aws_create_user <name> [-g group] - Create a new IAM user"
+    echo "  aws_delete_user <name> - Delete an IAM user"
+    echo "  aws_reset_password <name> - Reset a user's password"
+    echo "  aws_add_user_to_group - Add a user to a group (interactive)"
+    echo "  aws_create_group <name> - Create a new IAM group"
+    
+    echo ""
+    echo "Debugging tips:"
+    echo "  export AWS_DEBUG=1 - Enable AWS CLI debug mode"
+    echo "  unset AWS_PROFILE - Use environment credentials instead of profile"
 }
 
 #Install AWScLI and other packages
@@ -32,9 +208,41 @@ aws_install(){
 
 aws_config(){
     load_env
-    echo "enter your Access Key & Secret"
-    aws-vault add myprofile
-    aws configure
+    
+    # Allow specifying a profile
+    local profile="${1:-myprofile}"
+    
+    echo "Setting up AWS profile: $profile"
+    echo "You'll need your AWS Access Key ID and Secret Access Key"
+    
+    # First check if aws-vault is installed
+    if command -v aws-vault &> /dev/null; then
+        echo "Using aws-vault for secure credential storage"
+        aws-vault add "$profile"
+    else
+        # Fall back to regular aws configure
+        echo "Using standard AWS CLI configuration"
+        aws configure --profile "$profile"
+    fi
+    
+    # Set this as the active profile
+    export AWS_PROFILE="$profile"
+    echo "Profile $profile is now active"
+    
+    # Verify the new profile works
+    aws_check_profile "$profile"
+    
+    # Save the profile to .env if it exists
+    if [[ -f .env ]]; then
+        if grep -q "AWS_PROFILE=" .env; then
+            # Update existing AWS_PROFILE
+            sed -i '' "s/AWS_PROFILE=.*/AWS_PROFILE=$profile/" .env
+        else
+            # Add AWS_PROFILE if it doesn't exist
+            echo "AWS_PROFILE=$profile" >> .env
+        fi
+        echo "Updated .env with AWS_PROFILE=$profile"
+    fi
 }
 
 # Create a new IAM group
@@ -42,166 +250,489 @@ aws_config(){
 aws_create_group() {
     load_env
     local group_name="$1"
+    
     if [[ -z "$group_name" ]]; then
       echo "Usage: create_group <group_name>"
       return 1
     fi
-    aws iam create-group --group-name "$group_name" ${AWS_PROFILE:+--profile $AWS_PROFILE}
-    echo "✅ Group '$group_name' created."
+    
+    echo "Creating group '$group_name'..."
+    if ! run_aws_cmd iam create-group --group-name "$group_name"; then
+      echo "❌ Failed to create group '$group_name'"
+      return 1
+    fi
+    
+    echo "✅ Group '$group_name' created successfully."
+    return 0
 }
-
 
 # Reset an IAM user's console password using generate_password
 # Usage: reset_password <user_name>
 aws_reset_password() {
     load_env
-  local user_name="$1"
-  if [[ -z "$user_name" ]]; then
-    echo "Usage: reset_password <user_name>"
-    return 1
-  fi
-  # Generate a compliant password
-  local password
-  password=$(generate_password -q)
-  aws iam update-login-profile \
-    --user-name "$user_name" \
-    --password "$password" \
-    --password-reset-required ${AWS_PROFILE:+--profile $AWS_PROFILE}
-  echo "🔐 Password for '$user_name' reset. New password: $password"
-}
-
-# Add a user to an existing IAM group (with interactive selection)
-# Usage: add_user_to_group
-aws_add_user_to_group() {
-    load_env
-  # Fetch list of groups
-  local groups
-  IFS=$'\n' read -rd '' -a groups < <(aws iam list-groups --query 'Groups[].GroupName' --output text ${AWS_PROFILE:+--profile $AWS_PROFILE})
-  if [[ ${#groups[@]} -eq 0 ]]; then
-    echo "⚠️  No IAM groups found."
-    return 1
-  fi
-  # Interactive selection
-  echo "Select a group to add a user to:"
-  select group in "${groups[@]}"; do
-    if [[ -n "$group" ]]; then
-      break
-    else
-      echo "Invalid selection."
+    local user_name="$1"
+    
+    if [[ -z "$user_name" ]]; then
+      echo "Usage: reset_password <user_name>"
+      return 1
     fi
-  done
-  # Prompt for user name
-  local user_name
-  read -p "Enter the user name to add to '$group': " user_name
-  if [[ -z "$user_name" ]]; then
-    echo "Usage: add_user_to_group"
-    return 1
-  fi
-  aws iam add-user-to-group --group-name "$group" --user-name "$user_name" ${AWS_PROFILE:+--profile $AWS_PROFILE}
-  echo "✅ User '$user_name' added to group '$group'."
-}
-
-# Create a new IAM user
-# Usage: create_user <user_name> [--group|-g <group_name>]...
-aws_create_user() {
-    load_env
-  local user_name=""
-  local groups=()
-  local create_password=true
-  
-  # Parse arguments
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --group|-g)
-        if [[ -n "$2" ]]; then
-          groups+=("$2")
-          shift 2
-        else
-          echo "Error: Group name required after --group/-g"
-          return 1
-        fi
-        ;;
-      --password|-p)
-        create_password=true
-        shift
-        ;;
-      *)
-        if [[ -z "$user_name" ]]; then
-          user_name="$1"
-          shift
-        else
-          echo "Error: Unexpected argument '$1'"
-          echo "Usage: aws_create_user <user_name> [--group|-g <group_name>]... [--password|-p]"
-          return 1
-        fi
-        ;;
-    esac
-  done
-  
-  if [[ -z "$user_name" ]]; then
-    echo "Usage: aws_create_user <user_name> [--group|-g <group_name>]... [--password|-p]"
-    return 1
-  fi
-  
-  # Create the user
-  aws iam create-user --user-name "$user_name" ${AWS_PROFILE:+--profile $AWS_PROFILE}
-  echo ""
-  echo "✅ User '$user_name' created."
-  echo ""
-  
-  # Add user to specified groups
-  if [[ ${#groups[@]} -gt 0 ]]; then
-    echo "🔄 Adding user to groups..."
-    for group in "${groups[@]}"; do
-      aws iam add-user-to-group --group-name "$group" --user-name "$user_name" ${AWS_PROFILE:+--profile $AWS_PROFILE}
-      echo "  ✅ Added to group '$group'"
-    done
-    echo ""
-  fi
-  
-  # Create a login profile with password if requested
-  if [[ "$create_password" = true ]]; then
+    
+    # Generate a compliant password
     local password
     password=$(generate_password -q)
-    aws iam create-login-profile \
+    
+    echo "Resetting password for user '$user_name'..."
+    if ! run_aws_cmd iam update-login-profile \
       --user-name "$user_name" \
       --password "$password" \
-      --password-reset-required ${AWS_PROFILE:+--profile $AWS_PROFILE}
+      --password-reset-required; then
+        echo "❌ Failed to reset password for user '$user_name'"
+        return 1
+    fi
     
-    # Get the organization ID from environment variables or use a default placeholder
-    local org_id="${AWS_ORG_ID:-your-org-id}"
+    # Get the account ID from sts get-caller-identity
+    local org_id
+    if [[ -n "$AWS_ORG_ID" ]]; then
+        # Use environment variable if available
+        org_id="$AWS_ORG_ID"
+    else
+        # Get account ID from STS
+        org_id=$(run_aws_cmd sts get-caller-identity --query "Account" --output text 2>/dev/null)
+        if [[ -z "$org_id" ]]; then
+            # Fallback to placeholder if we couldn't get the ID
+            org_id="your-org-id"
+        fi
+    fi
     
     echo "────────────────────────────────────────────────────────"
-    echo "🔐 Console login details for '$user_name':"
+    echo "🔐 New password for '$user_name':"
     echo ""
     echo "  Username: $user_name"
     echo "  Password: $password"
     echo ""
     echo "  Login URL: https://${org_id}.signin.aws.amazon.com/console"
     echo "────────────────────────────────────────────────────────"
-  fi
+    
+    return 0
 }
+
+# Add a user to an existing IAM group (with interactive selection)
+# Usage: add_user_to_group [user_name] [group_name]
+aws_add_user_to_group() {
+    load_env
+    local user_name="$1"
+    local group_name="$2"
+    
+    # If no group provided, show interactive selection
+    if [[ -z "$group_name" ]]; then
+      # Fetch list of groups
+      echo "Fetching groups..."
+      local groups
+      if ! groups=$(run_aws_cmd iam list-groups --query 'Groups[].GroupName' --output text); then
+        echo "❌ Failed to fetch groups"
+        return 1
+      fi
+      
+      # Convert to array
+      IFS=$'\n' read -rd '' -a group_array <<< "$groups"
+      
+      # Check if we got any groups
+      if [[ ${#group_array[@]} -eq 0 ]]; then
+        echo "⚠️ No IAM groups found."
+        return 1
+      fi
+      
+      # Interactive selection
+      echo "Select a group to add a user to:"
+      select group_name in "${group_array[@]}"; do
+        if [[ -n "$group_name" ]]; then
+          break
+        else
+          echo "Invalid selection."
+        fi
+      done
+    fi
+    
+    # If no user provided, prompt for it
+    if [[ -z "$user_name" ]]; then
+      echo -n "Enter the user name to add to group '$group_name': "
+      read user_name
+      if [[ -z "$user_name" ]]; then
+        echo "No user name provided"
+        return 1
+      fi
+    fi
+    
+    echo "Adding user '$user_name' to group '$group_name'..."
+    if ! run_aws_cmd iam add-user-to-group --group-name "$group_name" --user-name "$user_name"; then
+      echo "❌ Failed to add user '$user_name' to group '$group_name'"
+      return 1
+    fi
+    
+    echo "✅ User '$user_name' added to group '$group_name' successfully."
+    return 0
+}
+
+# Create a new IAM user
+# Usage: create_user <user_name> [--group|-g <group_name>]... [--region|-r <region>] [--debug|-d]
+aws_create_user() {
+    load_env
+    local user_name=""
+    local groups=()
+    local create_password=true
+    local debug_mode=false
+    local region=""
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --group|-g)
+          if [[ -n "$2" ]]; then
+            groups+=("$2")
+            shift 2
+          else
+            echo "Error: Group name required after --group/-g"
+            return 1
+          fi
+          ;;
+        --region|-r)
+          if [[ -n "$2" ]]; then
+            region="$2"
+            shift 2
+          else
+            echo "Error: Region name required after --region/-r"
+            return 1
+          fi
+          ;;
+        --debug|-d)
+          debug_mode=true
+          shift
+          ;;
+        --password|-p)
+          create_password=true
+          shift
+          ;;
+        *)
+          if [[ -z "$user_name" ]]; then
+            user_name="$1"
+            shift
+          else
+            echo "Error: Unexpected argument '$1'"
+            echo "Usage: aws_create_user <user_name> [--group|-g <group_name>]... [--region|-r <region>] [--debug|-d]"
+            return 1
+          fi
+          ;;
+      esac
+    done
+    
+    if [[ -z "$user_name" ]]; then
+      echo "Usage: aws_create_user <user_name> [--group|-g <group_name>]... [--region|-r <region>] [--debug|-d]"
+      return 1
+    fi
+    
+    # Set region if specified
+    if [[ -n "$region" ]]; then
+      export AWS_DEFAULT_REGION="$region"
+      export AWS_REGION="$region"
+      echo "Using region: $region"
+    fi
+    
+    # Enable debug mode if requested
+    if [[ "$debug_mode" == true ]]; then
+      export AWS_DEBUG=1
+      echo "Debug mode enabled"
+    fi
+    
+    # Create the user
+    echo "Creating user '$user_name'..."
+    if ! run_aws_cmd iam create-user --user-name "$user_name"; then
+      echo "❌ Failed to create user '$user_name'"
+      if [[ "$debug_mode" != true ]]; then
+        echo "For more details, try adding --debug/-d to see the API error responses"
+      fi
+      # Clean up
+      unset AWS_DEBUG
+      return 1
+    fi
+    echo "✅ User '$user_name' created successfully."
+    
+    # Add user to specified groups
+    if [[ ${#groups[@]} -gt 0 ]]; then
+      echo "🔄 Adding user to groups..."
+      for group in "${groups[@]}"; do
+        echo "  Adding to group '$group'..."
+        if ! run_aws_cmd iam add-user-to-group --group-name "$group" --user-name "$user_name"; then
+          echo "  ❌ Failed to add user to group '$group'"
+        else
+          echo "  ✅ Added to group '$group' successfully"
+        fi
+      done
+    fi
+    
+    # Create a login profile with password if requested
+    if [[ "$create_password" = true ]]; then
+      local password
+      password=$(generate_password -q)
+      
+      echo "Creating login profile with password..."
+      if ! run_aws_cmd iam create-login-profile \
+        --user-name "$user_name" \
+        --password "$password" \
+        --password-reset-required; then
+          echo "❌ Failed to create login profile for user '$user_name'"
+      else
+          # Get the account ID from sts get-caller-identity
+          local org_id
+          if [[ -n "$AWS_ORG_ID" ]]; then
+              # Use environment variable if available
+              org_id="$AWS_ORG_ID"
+          else
+              # Get account ID from STS
+              org_id=$(run_aws_cmd sts get-caller-identity --query "Account" --output text 2>/dev/null)
+              if [[ -z "$org_id" ]]; then
+                  # Fallback to placeholder if we couldn't get the ID
+                  org_id="your-org-id"
+              fi
+          fi
+          
+          echo "────────────────────────────────────────────────────────"
+          echo "🔐 Console login details for '$user_name':"
+          echo ""
+          echo "  Username: $user_name"
+          echo "  Password: $password"
+          echo ""
+          echo "  Login URL: https://${org_id}.signin.aws.amazon.com/console"
+          echo "────────────────────────────────────────────────────────"
+      fi
+    fi
+    
+    # Clean up
+    unset AWS_DEBUG
+    
+    # Return to previous region if we changed it
+    if [[ -n "$region" ]]; then
+      unset AWS_DEFAULT_REGION AWS_REGION
+      if [[ -n "$AWS_PROFILE" ]]; then
+        echo "Restored region from profile"
+      fi
+    fi
+}
+
+# Delete an AWS user
 aws_delete_user() {
     load_env
     local user_name="$1"
+    
     if [[ -z "$user_name" ]]; then
         echo "Usage: aws_delete_user <user_name>"
         #remind of aws list user function available 
         aws_command_list
         return 1
     fi
-    aws iam delete-user --user-name "$user_name" ${AWS_PROFILE:+--profile $AWS_PROFILE}
-    echo "✅ User: '$user_name' deleted."
+    
+    # Confirm deletion
+    echo -n "Are you sure you want to delete user '$user_name'? (y/n): "
+    read confirm
+    if [[ "$confirm" != "y" ]]; then
+        echo "Operation cancelled."
+        return 0
+    fi
+    
+    echo "Deleting user '$user_name'..."
+    if ! run_aws_cmd iam delete-user --user-name "$user_name"; then
+        echo "❌ Failed to delete user '$user_name'"
+        return 1
+    fi
+    
+    echo "✅ User '$user_name' deleted successfully."
+    return 0
 }
 
 alias awsrmuser="aws_delete_user"
 
-
 aws_user_activation(){
     #Allow Activation, Deactivation, Status for users. 
+    echo "Function not yet implemented"
 }
-    
 
 # Aliases for convenience
-alias awslgroups="aws iam list-groups ${AWS_PROFILE:+--profile $AWS_PROFILE}"
-alias awslusers="aws iam list-users ${AWS_PROFILE:+--profile $AWS_PROFILE}"
+alias awslgroups="aws iam list-groups"
+alias awslusers="aws iam list-users"
+
+# Let users know AWS functions are loaded
+echo "Loading AWS functions..."
+
+# Create quick aliases for common AWS operations
+alias aws_list_users="run_aws_cmd iam list-users"
+alias aws_list_groups="run_aws_cmd iam list-groups"
+
+# Interactive function to list users in a group
+aws_list_users_in_group() {
+  local group="$1"
+  
+  # If no group provided, show interactive selection
+  if [[ -z "$group" ]]; then
+    # Fetch list of groups
+    echo "Fetching groups..."
+    local groups
+    if ! groups=$(run_aws_cmd iam list-groups --query 'Groups[].GroupName' --output text); then
+      echo "❌ Failed to fetch groups"
+      return 1
+    fi
+    
+    # Convert to array
+    IFS=$'\n' read -rd '' -a group_array <<< "$groups"
+    
+    # Check if we got any groups
+    if [[ ${#group_array[@]} -eq 0 ]]; then
+      echo "⚠️ No IAM groups found."
+      return 1
+    fi
+    
+    # Interactive selection
+    echo "Select a group to list users:"
+    select group in "${group_array[@]}"; do
+      if [[ -n "$group" ]]; then
+        break
+      else
+        echo "Invalid selection."
+      fi
+    done
+  fi
+  
+  # Now we have a group name, list users
+  echo "Users in group '$group':"
+  if ! run_aws_cmd iam get-group --group-name "$group" --query 'Users[].UserName' --output table; then
+    echo "❌ Failed to get users in group '$group'"
+    return 1
+  fi
+}
+
+# Add function to set temporary credentials for the session
+aws_temp_credentials() {
+    echo "Setting temporary AWS credentials for this session"
+    echo "Note: These will only last until you close your terminal"
+    
+    # Clear any existing credentials
+    unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE
+    
+    # Prompt for temporary credentials
+    echo "Enter AWS credentials:"
+    echo -n "AWS Access Key ID: "
+    read temp_key
+    echo -n "AWS Secret Access Key: "
+    read -s temp_secret
+    echo ""
+    echo -n "AWS Session Token (optional, press Enter to skip): "
+    read temp_token
+    
+    # Ask for region
+    echo -n "AWS Region (default: us-east-1): "
+    read temp_region
+    temp_region=${temp_region:-us-east-1}
+    
+    # Export temporary credentials
+    export AWS_ACCESS_KEY_ID="$temp_key"
+    export AWS_SECRET_ACCESS_KEY="$temp_secret"
+    if [[ -n "$temp_token" ]]; then
+        export AWS_SESSION_TOKEN="$temp_token"
+    fi
+    export AWS_DEFAULT_REGION="$temp_region"
+    export AWS_REGION="$temp_region"
+    
+    # Unset profile to use environment variables instead
+    unset AWS_PROFILE
+    
+    echo "✅ Temporary credentials set for this session"
+    echo "✅ Region set to: $temp_region"
+    echo "To verify they work, run: aws sts get-caller-identity"
+    
+    # Optionally, verify the credentials
+    echo -n "Would you like to verify the credentials now? (y/n): "
+    read verify
+    if [[ "$verify" == "y" ]]; then
+        if aws sts get-caller-identity; then
+            echo "✅ Credentials verified successfully"
+            echo -n "Would you like to test IAM permissions? (y/n): "
+            read test_iam
+            if [[ "$test_iam" == "y" ]]; then
+                aws_check_permissions
+            fi
+        else
+            echo "❌ Credential verification failed"
+        fi
+    fi
+    
+    # Ask if user wants debug mode
+    echo -n "Enable AWS debug mode? (y/n): "
+    read debug_mode
+    if [[ "$debug_mode" == "y" ]]; then
+        export AWS_DEBUG=1
+        echo "✅ AWS debug mode enabled"
+    fi
+}
+
+# Function to check AWS permissions
+aws_check_permissions() {
+    echo "Testing basic AWS permissions..."
+    
+    # Test listing users (read permission)
+    echo "Testing IAM user listing..."
+    if aws iam list-users --max-items 1 &>/dev/null; then
+        echo "✅ Can list IAM users"
+    else
+        echo "❌ Cannot list IAM users"
+    fi
+    
+    # Test listing groups (read permission)
+    echo "Testing IAM group listing..."
+    if aws iam list-groups --max-items 1 &>/dev/null; then
+        echo "✅ Can list IAM groups"
+    else
+        echo "❌ Cannot list IAM groups"
+    fi
+    
+    # Check if we have admin access using get-account-summary
+    echo "Testing for admin privileges..."
+    if aws iam get-account-summary &>/dev/null; then
+        echo "✅ Has administrative query permissions"
+    else
+        echo "❌ Limited administrative access"
+    fi
+    
+    # Get caller identity for role/user info
+    echo "Getting identity information..."
+    aws sts get-caller-identity
+    
+    # Summarize
+    echo ""
+    echo "If you're getting permission errors when creating users or groups:"
+    echo "1. Your IAM user/role may not have the required permissions"
+    echo "2. Try a different region (some operations are region-specific)"
+    echo "3. Check for any permission boundaries on your IAM user/role"
+    echo ""
+    echo "To see detailed permission errors, run with debug mode:"
+    echo "export AWS_DEBUG=1"
+}
+
+# Set AWS region
+aws_region() {
+    local region="$1"
+    
+    if [[ -z "$region" ]]; then
+        echo "Current AWS region: ${AWS_REGION:-not set}"
+        echo "Available regions:"
+        aws ec2 describe-regions --query "Regions[].RegionName" --output table 2>/dev/null || \
+        echo "us-east-1 us-east-2 us-west-1 us-west-2 eu-west-1 eu-west-2 eu-central-1 ap-northeast-1 ap-northeast-2 ap-southeast-1 ap-southeast-2 sa-east-1 ca-central-1"
+        
+        echo -n "Enter region to set: "
+        read region
+    fi
+    
+    if [[ -n "$region" ]]; then
+        export AWS_DEFAULT_REGION="$region"
+        export AWS_REGION="$region"
+        echo "✅ AWS region set to: $region"
+    fi
+}
+
