@@ -96,13 +96,27 @@ update_git_repos(){
 }
 
 ## Git Clone Function
-### Usage: git_clone repo_name or url
+### Usage: git_clone repo_name or url [destination_path]
 alias clone_repo="git_clone"
 ### from any directory will clone the repo to the correct directory in the ~/Documents/Git/ directory
 git_clone(){
     if [[ -z "$1" ]]; then
         echo "No repository name or URL provided"
+        echo "Usage: git_clone repo_name_or_url [destination_path]"
         return 1
+    fi
+
+    # Set default base directory
+    local base_dir="$HOME/Documents/Git"
+    
+    # Check if destination path is provided
+    local custom_path=""
+    if [[ -n "$2" ]]; then
+        custom_path="$2"
+        # If path is relative (doesn't start with /), make it absolute
+        if [[ ! "$custom_path" =~ ^/ ]]; then
+            custom_path="$(pwd)/$custom_path"
+        fi
     fi
 
     #check if gh is installed
@@ -116,7 +130,7 @@ git_clone(){
         return 1
     fi
     #check if gh is setup
-    if [[ -z "$(gh auth status 2>&1 | grep -i "logged in to github")" ]]; then
+    if ! gh auth status &>/dev/null; then
         echo "GitHub CLI (gh) is not logged in."
         echo "Would you like to login? (y/n): "
         read login_gh
@@ -127,86 +141,121 @@ git_clone(){
     fi
 
     # Process each argument as a separate repository
-    for input in "$@"; do
-        echo "Processing repository: $input"
-        repo_url=""
-        repo_name=""
+    local input="$1"
+    echo "Processing repository: $input"
+    repo_url=""
+    repo_name=""
 
-        # Handle 'gh repo clone user/repo' style
-        if [[ "$input" =~ ^gh[[:space:]]+repo[[:space:]]+clone[[:space:]]+([a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)$ ]]; then
-            if command -v gh &> /dev/null; then
-                user_repo=${BASH_REMATCH[1]}
-                repo_name=$(basename "$user_repo")
-                if [[ -d "$HOME/Documents/Git/$repo_name" ]]; then
-                    echo "Repository already exists: $repo_name"
-                    continue
+    # Handle 'gh repo clone user/repo' style
+    if [[ "$input" =~ ^gh[[:space:]]+repo[[:space:]]+clone[[:space:]]+([a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)$ ]]; then
+        if command -v gh &> /dev/null; then
+            user_repo=${BASH_REMATCH[1]}
+            repo_name=$(basename "$user_repo")
+            
+            # Determine target directory
+            local target_dir=""
+            if [[ -n "$custom_path" ]]; then
+                target_dir="$custom_path"
+                # If custom path is a directory, append repo name
+                if [[ -d "$custom_path" ]]; then
+                    target_dir="$custom_path/$repo_name"
                 fi
-                gh repo clone "$user_repo" "$HOME/Documents/Git/$repo_name" || {
-                    echo "Failed to clone repository with gh"
-                    continue
-                }
-                echo "Successfully cloned $repo_name"
-                continue
             else
-                echo "GitHub CLI (gh) is not installed."
-                continue
+                target_dir="$base_dir/$repo_name"
             fi
-        fi
-
-        # SSH URL (git@...)
-        if [[ "$input" =~ ^git@([^:]+):[^/]+/.+?(.git)?$ ]]; then
-            repo_url="$input"
-            repo_name=$(basename "$input")
-            repo_name="${repo_name%.git}"
-            ssh_host="${BASH_REMATCH[1]}"
-            # Only check known_hosts if file exists
-            if [[ -f "$HOME/.ssh/known_hosts" ]]; then
-                if ! ssh-keygen -F "$ssh_host" > /dev/null; then
-                    echo "\n[INFO] You are connecting to $ssh_host via SSH for the first time."
-                    echo "You may see an authenticity prompt. This is normal and is a security feature of SSH."
-                    echo "If you trust this host, type 'yes' at the prompt.\n"
-                fi
+            
+            if [[ -d "$target_dir" ]]; then
+                echo "Repository already exists: $target_dir"
+                return 1
             fi
-        # HTTPS URL
-        elif [[ "$input" =~ ^https?://github\.com/[^/]+/[^/]+(\.git)?$ ]]; then
-            repo_url="$input"
-            repo_name=$(basename "$input")
-            repo_name="${repo_name%.git}"
-        # user/repo shorthand
-        elif [[ "$input" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+(\.git)?$ ]]; then
-            repo_name=$(basename "$input")
-            # Only append .git if not already present
-            if [[ "$input" == *.git ]]; then
-                repo_url="https://github.com/$input"
-            else
-                repo_url="https://github.com/$input.git"
-            fi
-        # bare repo name
+            
+            gh repo clone "$user_repo" "$target_dir" || {
+                echo "Failed to clone repository with gh"
+                return 1
+            }
+            echo "Successfully cloned $repo_name to $target_dir"
+            return 0
         else
-            repo_name=$(basename "$input")
-            repo_url="https://github.com/your-username/$repo_name.git"
+            echo "GitHub CLI (gh) is not installed."
+            return 1
         fi
+    fi
 
-        # Check if the repo name is a valid directory name
-        if [[ ! "$repo_name" =~ ^[a-zA-Z0-9_.-]+$ ]]; then
-            echo "Invalid repository name: $repo_name"
-            continue
+    # SSH URL (git@...)
+    if [[ "$input" =~ ^git@([^:]+):[^/]+/.+?(.git)?$ ]]; then
+        repo_url="$input"
+        repo_name=$(basename "$input")
+        repo_name="${repo_name%.git}"
+        ssh_host="${BASH_REMATCH[1]}"
+        # Only check known_hosts if file exists
+        if [[ -f "$HOME/.ssh/known_hosts" ]]; then
+            if ! ssh-keygen -F "$ssh_host" > /dev/null; then
+                echo "\n[INFO] You are connecting to $ssh_host via SSH for the first time."
+                echo "You may see an authenticity prompt. This is normal and is a security feature of SSH."
+                echo "If you trust this host, type 'yes' at the prompt.\n"
+            fi
         fi
-
-        # Check if the repo name already exists in the ~/Documents/Git/ directory
-        if [[ -d "$HOME/Documents/Git/$repo_name" ]]; then
-            echo "Repository already exists: $repo_name"
-            continue
+    # HTTPS URL
+    elif [[ "$input" =~ ^https?://github\.com/[^/]+/[^/]+(\.git)?$ ]]; then
+        repo_url="$input"
+        repo_name=$(basename "$input")
+        repo_name="${repo_name%.git}"
+    # user/repo shorthand
+    elif [[ "$input" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+(\.git)?$ ]]; then
+        repo_name=$(basename "$input")
+        repo_name="${repo_name%.git}"
+        # Only append .git if not already present
+        if [[ "$input" == *.git ]]; then
+            repo_url="https://github.com/$input"
+        else
+            repo_url="https://github.com/$input.git"
         fi
+    # bare repo name
+    else
+        repo_name="$input"
+        repo_url="https://github.com/your-username/$repo_name.git"
+    fi
 
-        # Clone the repo to the ~/Documents/Git/ directory
-        echo "Cloning $repo_name..."
-        git clone "$repo_url" "$HOME/Documents/Git/$repo_name" || {
-            echo "Failed to clone repository: $repo_name"
-            continue
-        }
-        echo "Successfully cloned $repo_name"
-    done
+    # Check if the repo name is a valid directory name
+    if [[ ! "$repo_name" =~ ^[a-zA-Z0-9_.-]+$ ]]; then
+        echo "Invalid repository name: $repo_name"
+        return 1
+    fi
+
+    # Determine target directory
+    local target_dir=""
+    if [[ -n "$custom_path" ]]; then
+        target_dir="$custom_path"
+        # If custom path is a directory, append repo name
+        if [[ -d "$custom_path" ]]; then
+            target_dir="$custom_path/$repo_name"
+        fi
+    else
+        target_dir="$base_dir/$repo_name"
+    fi
+    
+    # Check if the target directory already exists
+    if [[ -d "$target_dir" ]]; then
+        echo "Repository already exists: $target_dir"
+        return 1
+    fi
+
+    # Create parent directory if it doesn't exist
+    mkdir -p "$(dirname "$target_dir")"
+
+    # Clone the repo to the target directory
+    echo "Cloning $repo_name to $target_dir..."
+    git clone "$repo_url" "$target_dir" || {
+        echo "Failed to clone repository: $repo_name"
+        return 1
+    }
+    echo "Successfully cloned $repo_name to $target_dir"
+    
+    # Change to the repository directory
+    cd "$target_dir" || return 1
+    
+    # Offer to open in an editor
+    open_repo_dir
 }
 
 # Helper to prompt and open repo dir in editor
