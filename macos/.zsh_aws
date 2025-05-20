@@ -232,6 +232,10 @@ aws_command_list() {
     echo "EC2 Instance management:"
     echo "  aws_list_instances [region] [filter] - List EC2 instances with optional region and name/ID filter"
     echo "  aws_instance_vpc_info <instance-id> [region] - Get VPC information for an EC2 instance"
+    
+    echo ""
+    echo "Security Group management:"
+    echo "  aws_secure_sg <security-group-id> [region] [your-ip-address] - Restrict SSH access to your IP only"
 }
 
 #Install AWScLI and other packages
@@ -2663,6 +2667,146 @@ aws_get_vpc_id() {
     echo ""
     echo "To list subnets in this VPC, run:"
     echo "AWS_REGION=$region aws ec2 describe-subnets --filters \"Name=vpc-id,Values=$vpc_id\""
+    
+    return 0
+}
+
+# Secure a security group by restricting SSH access
+aws_secure_sg() {
+    local sg_id="$1"
+    local region="$2"
+    local ip_address="$3"
+    
+    if [[ -z "$sg_id" ]]; then
+        echo "Usage: aws_secure_sg <security-group-id> [region] [your-ip-address]"
+        echo "Example: aws_secure_sg sg-048cf7e0b6433df0b us-east-2"
+        echo "If no IP address is provided, your current public IP will be used."
+        return 1
+    fi
+    
+    # Default to current region if not specified
+    if [[ -z "$region" ]]; then
+        region=$(aws configure get region)
+        if [[ -z "$region" ]]; then
+            region="us-east-1"  # Default AWS region
+        fi
+    fi
+    
+    # If IP address not provided, get the current public IP
+    if [[ -z "$ip_address" ]]; then
+        echo "Detecting your current public IP address..."
+        ip_address=$(curl -s https://checkip.amazonaws.com)
+        if [[ -z "$ip_address" ]]; then
+            echo "❌ Failed to detect your public IP address"
+            echo "Please provide your IP address manually"
+            return 1
+        fi
+        echo "Detected IP: $ip_address"
+    fi
+    
+    # Add /32 suffix if not already present (to create a single IP CIDR)
+    if [[ ! "$ip_address" =~ /[0-9]+$ ]]; then
+        ip_address="${ip_address}/32"
+    fi
+    
+    echo "Checking security group $sg_id in region $region..."
+    
+    # Check if the security group exists
+    if ! AWS_REGION=$region aws ec2 describe-security-groups --group-ids "$sg_id" &>/dev/null; then
+        echo "❌ Security group $sg_id not found in region $region"
+        return 1
+    fi
+    
+    # Check for wide-open SSH access
+    echo "Looking for unrestricted SSH access..."
+    local has_open_ssh=false
+    local ssh_rules
+    ssh_rules=$(AWS_REGION=$region aws ec2 describe-security-groups \
+        --group-ids "$sg_id" \
+        --query "SecurityGroups[0].IpPermissions[?FromPort==\`22\` && contains(IpRanges[].CidrIp, '0.0.0.0/0')]" \
+        --output json)
+    
+    if [[ "$ssh_rules" != "[]" && -n "$ssh_rules" ]]; then
+        has_open_ssh=true
+        echo "⚠️ Found unrestricted SSH access (0.0.0.0/0)"
+        
+        echo -n "Do you want to remove the unrestricted SSH rule? (y/n): "
+        read remove_rule
+        if [[ "$remove_rule" == "y" ]]; then
+            echo "Removing unrestricted SSH access..."
+            if AWS_REGION=$region aws ec2 revoke-security-group-ingress \
+                --group-id "$sg_id" \
+                --protocol tcp \
+                --port 22 \
+                --cidr 0.0.0.0/0; then
+                echo "✅ Unrestricted SSH access removed"
+            else
+                echo "❌ Failed to remove unrestricted SSH access"
+                return 1
+            fi
+        else
+            echo "⚠️ Keeping unrestricted SSH access (not recommended)"
+        fi
+    else
+        echo "✅ No unrestricted SSH access found"
+    fi
+    
+    # Check if SSH access from the specific IP already exists
+    local has_specific_rule=false
+    local specific_rules
+    specific_rules=$(AWS_REGION=$region aws ec2 describe-security-groups \
+        --group-ids "$sg_id" \
+        --query "SecurityGroups[0].IpPermissions[?FromPort==\`22\` && contains(IpRanges[].CidrIp, '$ip_address')]" \
+        --output json)
+    
+    if [[ "$specific_rules" != "[]" && -n "$specific_rules" ]]; then
+        has_specific_rule=true
+        echo "✅ SSH access already allowed from your IP ($ip_address)"
+    else
+        echo "No SSH access rule found for your IP ($ip_address)"
+        
+        echo -n "Do you want to add SSH access for your IP only? (y/n): "
+        read add_rule
+        if [[ "$add_rule" == "y" ]]; then
+            echo "Adding SSH access for your IP ($ip_address)..."
+            if AWS_REGION=$region aws ec2 authorize-security-group-ingress \
+                --group-id "$sg_id" \
+                --protocol tcp \
+                --port 22 \
+                --cidr "$ip_address"; then
+                echo "✅ SSH access added for your IP only"
+            else
+                echo "❌ Failed to add SSH access for your IP"
+                return 1
+            fi
+        else
+            echo "No SSH access added for your IP"
+        fi
+    fi
+    
+    # Final summary
+    echo ""
+    echo "Security Group: $sg_id"
+    echo "Region: $region"
+    
+    # Check current SSH rules to show final state
+    local current_ssh_rules
+    current_ssh_rules=$(AWS_REGION=$region aws ec2 describe-security-groups \
+        --group-ids "$sg_id" \
+        --query "SecurityGroups[0].IpPermissions[?FromPort==\`22\`].IpRanges[].CidrIp" \
+        --output json)
+    
+    echo "Current SSH access allowed from: $current_ssh_rules"
+    
+    # Verify if security group is now secure
+    if [[ "$current_ssh_rules" == "[]" ]]; then
+        echo "⚠️ No SSH access is currently allowed"
+    elif [[ "$current_ssh_rules" == *"0.0.0.0/0"* ]]; then
+        echo "⚠️ WARNING: SSH is still accessible from anywhere (0.0.0.0/0)"
+        echo "This is a security risk. Consider restricting access."
+    else
+        echo "✅ SSH access is properly restricted"
+    fi
     
     return 0
 }
