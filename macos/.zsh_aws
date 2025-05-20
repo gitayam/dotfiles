@@ -1,4 +1,7 @@
-#!/bin/zsh
+# Disable history expansion to prevent issues with ! in commands
+if [[ -n "$ZSH_VERSION" ]]; then # Only set for zsh
+  setopt NO_BANG_HIST
+fi
 
 # AWS Zsh helper functions for IAM management and environment loading
 
@@ -12,6 +15,8 @@ load_env() {
     return 1
   fi
 }
+
+alias awshelp="aws_command_list | less -R"
 
 # Helper function to run AWS commands with proper profile handling
 run_aws_cmd() {
@@ -171,7 +176,9 @@ aws_use_profile() {
   aws_check_profile "$profile"
 }
 
-aws_command_list(){
+# Update AWS command list
+aws_command_list() {
+    # Existing functionality
     echo "List of commands:"
     echo "Profile and credential management:"
     echo "  aws_list_profiles - List all available AWS profiles"
@@ -186,17 +193,45 @@ aws_command_list(){
     echo "IAM user management:"
     echo "  aws_list_users - List all IAM users"
     echo "  aws_list_groups - List all IAM groups"
-    echo "  aws_list_users_in_group - List users in a group (interactive)"
-    echo "  aws_create_user <name> [-g group] - Create a new IAM user"
-    echo "  aws_delete_user <name> - Delete an IAM user"
-    echo "  aws_reset_password <name> - Reset a user's password"
-    echo "  aws_add_user_to_group - Add a user to a group (interactive)"
-    echo "  aws_create_group <name> - Create a new IAM group"
+    echo "  aws_list_users_in_group [group] - List users in a group (interactive)"
+    echo "  aws_create_user <user_name> [--group/-g <group>] [--region/-r <region>] [--debug/-d] - Create a new IAM user"
+    echo "  aws_delete_user <user_name> - Delete an IAM user (alias: awsrmuser)"
+    echo "  aws_reset_password <user_name> - Reset a user's password"
+    echo "  aws_add_user_to_group [user_name] [group_name] - Add a user to a group (interactive)"
+    echo "  aws_create_group <group_name> - Create a new IAM group"
+    echo "  aws_user_activation - Show user activation options (placeholder)"
+    
+    echo ""
+    echo "VPC management:"
+    echo "  aws_vpc_list [region] [output_format] - List all VPCs"
+    echo "  aws_vpc_info <vpc_id> [region] - Show detailed information about a VPC"
+    echo "  aws_vpc_create [--cidr/-c <cidr>] [--name/-n <name>] [--region/-r <region>] [--subnets/-s <count>] [--internet-gateway/-i] - Create a new VPC"
+    echo "  aws_vpc_delete <vpc_id> [region] [force] - Delete a VPC and its dependencies"
+    echo "  aws_vpc_secure <vpc_id> [region] [force] - Secure a VPC by restricting public internet access"
+    
+    echo ""
+    echo "AWS Config management:"
+    echo "  aws_config_enable <region> [s3_bucket] [role_name] - Enable AWS Config in a region"
+    echo "  aws_config_add_rule <rule_name> <rule_id> [region] [description] - Add a managed Config rule"
+    echo "  aws_config_check_rule <rule_name> [region] - Check rule compliance status"
+    echo "  aws_config_list_rules [region] - List all Config rules in a region"
+    echo "  aws_config_restrict_ssh [region] - Quickly add the SSH restriction rule"
     
     echo ""
     echo "Debugging tips:"
     echo "  export AWS_DEBUG=1 - Enable AWS CLI debug mode"
     echo "  unset AWS_PROFILE - Use environment credentials instead of profile"
+    
+    echo ""
+    echo "MFA security management:"
+    echo "  aws_enforce_mfa <group_name> - Enforce MFA for users in a group"
+    echo "  aws_add_mfa <username> - Add MFA for a specific user"
+    echo "  aws_list_users_without_mfa - List users without MFA devices"
+    
+    echo ""
+    echo "EC2 Instance management:"
+    echo "  aws_list_instances [region] [filter] - List EC2 instances with optional region and name/ID filter"
+    echo "  aws_instance_vpc_info <instance-id> [region] - Get VPC information for an EC2 instance"
 }
 
 #Install AWScLI and other packages
@@ -795,7 +830,7 @@ aws_vpc_info() {
     echo "Getting details for VPC $vpc_id..."
     echo "--------------------------"
     echo "VPC Details:"
-    run_aws_cmd ec2 describe-vpcs --vpc-ids "$vpc_id" --output json
+    run_aws_cmd ec2 describe-vpcs --vpc-ids "$vpc_id" --output table
     
     echo "--------------------------"
     echo "Subnets in VPC:"
@@ -976,9 +1011,9 @@ aws_vpc_create() {
             --output text))
         
         # Split the VPC CIDR into subnet CIDRs
-        local vpc_octets prefix_size
-        vpc_octets=(${cidr_block/\// })  # Split at the '/'
-        prefix_size=${vpc_octets[1]}     # Get the prefix size
+        local vpc_ip prefix_size
+        IFS='/' read -r vpc_ip prefix_size <<< "$cidr_block"  # Split at the '/'
+        # prefix_size is already set by the read command
         
         # Calculate subnet size (increment prefix by 8 - log2(subnet_count))
         local subnet_increment=0
@@ -999,7 +1034,7 @@ aws_vpc_create() {
         
         # Create the subnets
         for ((i=0; i<subnet_count && i<${#azs[@]}; i++)); do
-            local subnet_cidr="${vpc_octets[0]}/$subnet_prefix"
+            local subnet_cidr="${vpc_ip}/$subnet_prefix"
             local subnet_name="${vpc_name}-subnet-$((i+1))"
             local is_public=$((i % 2 == 0))  # Alternate public/private
             
@@ -1016,7 +1051,12 @@ aws_vpc_create() {
                 echo "✅ Subnet created: $subnet_id"
                 
                 # Tag the subnet
-                local pub_priv=$([[ "$is_public" == true ]] && echo "Public" || echo "Private")
+                local pub_priv
+                if [[ "$is_public" == true ]]; then
+                    pub_priv="Public"
+                else
+                    pub_priv="Private"
+                fi
                 run_aws_cmd ec2 create-tags \
                     --resources "$subnet_id" \
                     --tags "Key=Name,Value=${subnet_name}" "Key=Type,Value=$pub_priv"
@@ -1126,7 +1166,7 @@ aws_vpc_delete() {
         local route_table_ids
         route_table_ids=$(run_aws_cmd ec2 describe-route-tables \
             --filters "Name=vpc-id,Values=$vpc_id" \
-            --query "RouteTables[?Associations[?!Main]].RouteTableId" \
+            --query "RouteTables[?Associations[?Main==\`false\`]].RouteTableId" \
             --output text)
         
         for rt_id in $route_table_ids; do
@@ -1139,7 +1179,7 @@ aws_vpc_delete() {
         echo "Checking for security groups..."
         local sg_ids
         sg_ids=$(run_aws_cmd ec2 describe-security-groups \
-            --filters "Name=vpc-id,Values=$vpc_id" "Name=group-name,Values=!default" \
+            --filters "Name=vpc-id,Values=$vpc_id" 'Name=group-name,Values=!default' \
             --query "SecurityGroups[].GroupId" \
             --output text)
         
@@ -1201,5 +1241,1428 @@ aws_vpc_delete() {
     return 0
 }
 
+# Secure a VPC by restricting public internet access
+aws_vpc_secure() {
+    local vpc_id="$1"
+    local region="$2"
+    local force="${3:-false}"
+    
+    if [[ -z "$vpc_id" ]]; then
+        echo "Usage: aws_vpc_secure <vpc-id> [region] [force]"
+        echo "Example: aws_vpc_secure vpc-1234abcd us-east-1 true"
+        echo ""
+        echo "Parameters:"
+        echo "  vpc-id    The ID of the VPC to secure"
+        echo "  region    Optional AWS region"
+        echo "  force     Set to 'true' to apply changes without confirmation (default: false)"
+        
+        # List VPCs to help user
+        echo ""
+        echo "Available VPCs:"
+        aws_vpc_list "$region"
+        return 1
+    fi
+    
+    # Set region if specified
+    if [[ -n "$region" ]]; then
+        export AWS_DEFAULT_REGION="$region"
+        export AWS_REGION="$region"
+        echo "Using region: $region"
+    fi
+    
+    # Check if VPC exists
+    if ! run_aws_cmd ec2 describe-vpcs --vpc-ids "$vpc_id" &>/dev/null; then
+        echo "❌ VPC $vpc_id does not exist in the current region"
+        return 1
+    fi
+    
+    echo "🔒 Securing VPC $vpc_id against public internet access"
+    echo "Running security assessment..."
+    
+    # Get VPC information
+    local vpc_info
+    vpc_info=$(run_aws_cmd ec2 describe-vpcs --vpc-ids "$vpc_id")
+    
+    # Check if it's the default VPC
+    local is_default
+    is_default=$(echo "$vpc_info" | grep -o '"IsDefault": true' || echo "false")
+    
+    if [[ "$is_default" == *"true"* ]]; then
+        echo "⚠️ This is the default VPC. Be careful as many AWS services use this by default."
+        echo "   Consider creating a new VPC for production workloads instead of modifying the default."
+    fi
+    
+    # Check for Internet Gateways
+    echo ""
+    echo "1. Checking for Internet Gateways..."
+    local igw_ids
+    igw_ids=$(run_aws_cmd ec2 describe-internet-gateways \
+        --filters "Name=attachment.vpc-id,Values=$vpc_id" \
+        --query "InternetGateways[].InternetGatewayId" \
+        --output text)
+    
+    if [[ -n "$igw_ids" ]]; then
+        echo "🚨 Found Internet Gateway(s): $igw_ids"
+        echo "   Internet Gateways allow traffic between your VPC and the public internet."
+        
+        if [[ "$force" == "true" ]]; then
+            local detach_igw="y"
+        else
+            echo -n "   Do you want to detach the Internet Gateway(s)? (y/n): "
+            read detach_igw
+        fi
+        
+        if [[ "$detach_igw" == "y" ]]; then
+            for igw_id in $igw_ids; do
+                echo "   Detaching Internet Gateway $igw_id..."
+                run_aws_cmd ec2 detach-internet-gateway \
+                    --internet-gateway-id "$igw_id" \
+                    --vpc-id "$vpc_id"
+                
+                echo "   ✅ Internet Gateway detached"
+                
+                # Optionally delete it
+                echo -n "   Do you want to delete this Internet Gateway? (y/n): "
+                read delete_igw
+                if [[ "$delete_igw" == "y" ]]; then
+                    run_aws_cmd ec2 delete-internet-gateway \
+                        --internet-gateway-id "$igw_id"
+                    echo "   ✅ Internet Gateway deleted"
+                fi
+            done
+        else
+            echo "   ⚠️ Leaving Internet Gateway(s) attached. VPC remains publicly accessible."
+        fi
+    else
+        echo "   ✅ No Internet Gateways found"
+    fi
+    
+    # Check route tables for internet routes
+    echo ""
+    echo "2. Checking route tables for internet routes..."
+    local route_tables
+    route_tables=$(run_aws_cmd ec2 describe-route-tables \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query "RouteTables[].RouteTableId" \
+        --output text)
+    
+    local found_internet_routes=false
+    
+    for rt_id in $route_tables; do
+        echo "   Checking route table $rt_id..."
+        local internet_routes
+        internet_routes=$(run_aws_cmd ec2 describe-route-tables \
+            --route-table-ids "$rt_id" \
+            --query "RouteTables[].Routes[?DestinationCidrBlock=='0.0.0.0/0']" \
+            --output text)
+        
+        if [[ -n "$internet_routes" ]]; then
+            found_internet_routes=true
+            echo "   🚨 Found internet route in $rt_id"
+            
+            if [[ "$force" == "true" ]]; then
+                local remove_route="y"
+            else
+                echo -n "   Do you want to remove the internet route? (y/n): "
+                read remove_route
+            fi
+            
+            if [[ "$remove_route" == "y" ]]; then
+                run_aws_cmd ec2 delete-route \
+                    --route-table-id "$rt_id" \
+                    --destination-cidr-block "0.0.0.0/0"
+                echo "   ✅ Internet route removed"
+            else
+                echo "   ⚠️ Leaving internet route. Subnets using this route table remain publicly accessible."
+            fi
+        else
+            echo "   ✅ No internet routes found in $rt_id"
+        fi
+    done
+    
+    if [[ "$found_internet_routes" == "false" ]]; then
+        echo "   ✅ No internet routes found in any route tables"
+    fi
+    
+    # Check security groups for overly permissive rules
+    echo ""
+    echo "3. Checking security groups for public access rules..."
+    local security_groups
+    security_groups=$(run_aws_cmd ec2 describe-security-groups \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query "SecurityGroups[].GroupId" \
+        --output text)
+    
+    for sg_id in $security_groups; do
+        local sg_name
+        sg_name=$(run_aws_cmd ec2 describe-security-groups \
+            --group-ids "$sg_id" \
+            --query "SecurityGroups[].GroupName" \
+            --output text)
+            
+        echo "   Checking security group $sg_name ($sg_id)..."
+        
+        # Check for public inbound rules (0.0.0.0/0)
+        local public_rules
+        public_rules=$(run_aws_cmd ec2 describe-security-groups \
+            --group-ids "$sg_id" \
+            --query "SecurityGroups[].IpPermissions[?contains(IpRanges[].CidrIp, '0.0.0.0/0')]" \
+            --output json)
+        
+        if [[ "$public_rules" != "[]" && "$public_rules" != "" ]]; then
+            echo "   🚨 Found public access rules in security group $sg_name"
+            echo "$public_rules" | grep -o "FromPort\".*ToPort\".*" | sed 's/,/\n/g' | sed 's/"//g' | grep -v "IpRanges"
+            
+            if [[ "$force" == "true" ]]; then
+                local restrict_sg="y"
+            else
+                echo -n "   Do you want to restrict this security group? (y/n): "
+                read restrict_sg
+            fi
+            
+            if [[ "$restrict_sg" == "y" ]]; then
+                echo "   Creating new rules to replace public access..."
+                
+                echo -n "   Enter CIDR to restrict access to (e.g., 10.0.0.0/8 or your office IP): "
+                read restricted_cidr
+                
+                if [[ -z "$restricted_cidr" ]]; then
+                    echo "   ⚠️ No CIDR provided, skipping security group restriction"
+                    continue
+                fi
+                
+                # Extract all the public rules to be replaced
+                local ports_to_restrict
+                ports_to_restrict=$(echo "$public_rules" | grep -o "\"FromPort\": [0-9]*,.*\"ToPort\": [0-9]*" | sed 's/.*: //g' | sed 's/,//g')
+                
+                # For each port range, create new restricted rule and remove the public one
+                while read -r from_port && read -r to_port; do
+                    if [[ -n "$from_port" && -n "$to_port" ]]; then
+                        # Get protocol
+                        local protocol
+                        protocol=$(echo "$public_rules" | grep -A 2 "\"FromPort\": $from_port" | grep "IpProtocol" | head -1 | awk -F '"' '{print $4}')
+                        
+                        echo "   Creating restricted rule for ports $from_port-$to_port ($protocol)..."
+                        
+                        # Add the restricted rule first
+                        run_aws_cmd ec2 authorize-security-group-ingress \
+                            --group-id "$sg_id" \
+                            --protocol "$protocol" \
+                            --port "$from_port-$to_port" \
+                            --cidr "$restricted_cidr"
+                        
+                        # Remove the public rule
+                        run_aws_cmd ec2 revoke-security-group-ingress \
+                            --group-id "$sg_id" \
+                            --protocol "$protocol" \
+                            --port "$from_port-$to_port" \
+                            --cidr "0.0.0.0/0"
+                        
+                        echo "   ✅ Rule updated to restrict access to $restricted_cidr"
+                    fi
+                done <<< "$ports_to_restrict"
+            else
+                echo "   ⚠️ Leaving public access rules in place"
+            fi
+        else
+            echo "   ✅ No public access rules found in security group $sg_name"
+        fi
+    done
+    
+    # Check network ACLs for public access
+    echo ""
+    echo "4. Checking Network ACLs for public access rules..."
+    local nacls
+    nacls=$(run_aws_cmd ec2 describe-network-acls \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query "NetworkAcls[].NetworkAclId" \
+        --output text)
+    
+    for nacl_id in $nacls; do
+        echo "   Checking NACL $nacl_id..."
+        
+        # Check for open inbound rules
+        local public_nacl_rules
+        public_nacl_rules=$(run_aws_cmd ec2 describe-network-acls \
+            --network-acl-ids "$nacl_id" \
+            --query "NetworkAcls[].Entries[?CidrBlock=='0.0.0.0/0' && Egress==\`false\` && RuleAction=='allow']" \
+            --output json)
+        
+        if [[ "$public_nacl_rules" != "[]" && "$public_nacl_rules" != "" ]]; then
+            echo "   🚨 Found public inbound rules in NACL $nacl_id"
+            
+            if [[ "$force" == "true" ]]; then
+                local restrict_nacl="y"
+            else
+                echo -n "   Do you want to restrict this NACL? (y/n): "
+                read restrict_nacl
+            fi
+            
+            if [[ "$restrict_nacl" == "y" ]]; then
+                echo "   Creating restricted rules to replace public access..."
+                
+                echo -n "   Enter CIDR to restrict access to (e.g., 10.0.0.0/8 or your office IP): "
+                read restricted_nacl_cidr
+                
+                if [[ -z "$restricted_nacl_cidr" ]]; then
+                    echo "   ⚠️ No CIDR provided, skipping NACL restriction"
+                    continue
+                fi
+                
+                # Find all rule numbers
+                local rule_numbers
+                rule_numbers=$(echo "$public_nacl_rules" | grep -o "\"RuleNumber\": [0-9]*" | awk '{print $2}' | sed 's/,//g')
+                
+                for rule_number in $rule_numbers; do
+                    if [[ -n "$rule_number" ]]; then
+                        # Get the port range
+                        local port_range
+                        port_range=$(echo "$public_nacl_rules" | grep -A 5 "\"RuleNumber\": $rule_number" | grep "PortRange" -A 2 | grep "From\|To" | awk '{print $2}' | sed 's/,//g')
+                        
+                        # Get the protocol
+                        local nacl_protocol
+                        nacl_protocol=$(echo "$public_nacl_rules" | grep -A 5 "\"RuleNumber\": $rule_number" | grep "Protocol" | awk '{print $2}' | sed 's/,//g')
+                        
+                        # Delete the public rule
+                        run_aws_cmd ec2 delete-network-acl-entry \
+                            --network-acl-id "$nacl_id" \
+                            --rule-number "$rule_number" \
+                            --egress false
+                        
+                        # Create new restricted rule
+                        # For simplicity we're using rule number + 1
+                        run_aws_cmd ec2 create-network-acl-entry \
+                            --network-acl-id "$nacl_id" \
+                            --rule-number $((rule_number + 1)) \
+                            --protocol "$nacl_protocol" \
+                            --port-range "From=${port_range%-*},To=${port_range#*-}" \
+                            --cidr-block "$restricted_nacl_cidr" \
+                            --rule-action allow \
+                            --egress false
+                        
+                        echo "   ✅ NACL rule $rule_number updated to restrict access to $restricted_nacl_cidr"
+                    fi
+                done
+            else
+                echo "   ⚠️ Leaving public NACL rules in place"
+            fi
+        else
+            echo "   ✅ No public inbound rules found in NACL $nacl_id"
+        fi
+    done
+    
+    # Check subnets with public IP assignment
+    echo ""
+    echo "5. Checking for subnets with automatic public IP assignment..."
+    local public_subnets
+    public_subnets=$(run_aws_cmd ec2 describe-subnets \
+        --filters "Name=vpc-id,Values=$vpc_id" "Name=map-public-ip-on-launch,Values=true" \
+        --query "Subnets[].SubnetId" \
+        --output text)
+    
+    if [[ -n "$public_subnets" ]]; then
+        echo "   🚨 Found subnets that automatically assign public IPs:"
+        
+        for subnet_id in $public_subnets; do
+            local subnet_az
+            subnet_az=$(run_aws_cmd ec2 describe-subnets \
+                --subnet-ids "$subnet_id" \
+                --query "Subnets[].AvailabilityZone" \
+                --output text)
+                
+            local subnet_cidr
+            subnet_cidr=$(run_aws_cmd ec2 describe-subnets \
+                --subnet-ids "$subnet_id" \
+                --query "Subnets[].CidrBlock" \
+                --output text)
+                
+            echo "     - $subnet_id ($subnet_cidr in $subnet_az)"
+        done
+        
+        if [[ "$force" == "true" ]]; then
+            local disable_public_ip="y"
+        else
+            echo -n "   Do you want to disable public IP assignment for these subnets? (y/n): "
+            read disable_public_ip
+        fi
+        
+        if [[ "$disable_public_ip" == "y" ]]; then
+            for subnet_id in $public_subnets; do
+                run_aws_cmd ec2 modify-subnet-attribute \
+                    --subnet-id "$subnet_id" \
+                    --no-map-public-ip-on-launch
+                    
+                echo "   ✅ Disabled public IP assignment for subnet $subnet_id"
+            done
+        else
+            echo "   ⚠️ Leaving public IP assignment enabled"
+        fi
+    else
+        echo "   ✅ No subnets with automatic public IP assignment"
+    fi
+    
+    # Final summary
+    echo ""
+    echo "🔒 VPC Security Assessment Complete"
+    echo "===================================="
+    
+    # Check for remaining issues
+    igw_ids=$(run_aws_cmd ec2 describe-internet-gateways \
+        --filters "Name=attachment.vpc-id,Values=$vpc_id" \
+        --query "InternetGateways[].InternetGatewayId" \
+        --output text)
+        
+    if [[ -n "$igw_ids" ]]; then
+        echo "⚠️ VPC still has Internet Gateway(s) attached"
+    fi
+    
+    found_internet_routes=$(run_aws_cmd ec2 describe-route-tables \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query "RouteTables[].Routes[?DestinationCidrBlock=='0.0.0.0/0']" \
+        --output text)
+        
+    if [[ -n "$found_internet_routes" ]]; then
+        echo "⚠️ VPC still has internet routes in route tables"
+    fi
+    
+    public_rules=$(run_aws_cmd ec2 describe-security-groups \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query "SecurityGroups[].IpPermissions[?contains(IpRanges[].CidrIp, '0.0.0.0/0')]" \
+        --output text)
+        
+    if [[ -n "$public_rules" ]]; then
+        echo "⚠️ VPC still has public access rules in security groups"
+    fi
+    
+    public_subnets=$(run_aws_cmd ec2 describe-subnets \
+        --filters "Name=vpc-id,Values=$vpc_id" "Name=map-public-ip-on-launch,Values=true" \
+        --query "Subnets[].SubnetId" \
+        --output text)
+        
+    if [[ -n "$public_subnets" ]]; then
+        echo "⚠️ VPC still has subnets with automatic public IP assignment"
+    fi
+    
+    if [[ -z "$igw_ids" && -z "$found_internet_routes" && -z "$public_rules" && -z "$public_subnets" ]]; then
+        echo "✅ VPC is now secured against public internet access"
+    else
+        echo "⚠️ VPC may still have public internet access. Review the warnings above."
+    fi
+    
+    # Return to previous region if we changed it
+    if [[ -n "$region" ]]; then
+        unset AWS_DEFAULT_REGION AWS_REGION
+    fi
+    
+    return 0
+}
+
+# ----------------------------------------
+# AWS Config Management Functions
 # ----------------------------------------
 
+# Enable AWS Config in a region
+aws_config_enable() {
+    local region="$1"
+    local s3_bucket="$2"
+    local role_name="$3"
+    
+    if [[ -z "$region" ]]; then
+        echo "Usage: aws_config_enable <region> [s3_bucket] [role_name]"
+        echo ""
+        echo "Parameters:"
+        echo "  region      AWS region to enable Config in"
+        echo "  s3_bucket   Optional S3 bucket for AWS Config (created if not specified)"
+        echo "  role_name   Optional IAM role name for AWS Config (created if not specified)"
+        
+        # Get current region to suggest
+        local current_region="${AWS_REGION:-us-east-1}"
+        echo ""
+        echo "Example: aws_config_enable $current_region"
+        return 1
+    fi
+    
+    # Set region
+    export AWS_DEFAULT_REGION="$region"
+    export AWS_REGION="$region"
+    echo "Using region: $region"
+    
+    # Get account ID
+    local account_id
+    account_id=$(run_aws_cmd sts get-caller-identity --query "Account" --output text)
+    if [[ -z "$account_id" ]]; then
+        echo "❌ Failed to get AWS account ID"
+        return 1
+    fi
+    
+    # Set default role name if not provided
+    if [[ -z "$role_name" ]]; then
+        role_name="AWS-ConfigRole"
+        echo "Using default role name: $role_name"
+    fi
+    
+    # Check if role exists, create if not
+    if ! run_aws_cmd iam get-role --role-name "$role_name" &>/dev/null; then
+        echo "Creating AWS Config service role: $role_name"
+        
+        # Create trust policy document for the role
+        local trust_policy='{
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Sid": "",
+                    "Effect": "Allow",
+                    "Principal": {
+                        "Service": "config.amazonaws.com"
+                    },
+                    "Action": "sts:AssumeRole"
+                }
+            ]
+        }'
+        
+        # Save trust policy to temporary file
+        local tmp_file
+        tmp_file=$(mktemp)
+        echo "$trust_policy" > "$tmp_file"
+        
+        # Create the role
+        if ! run_aws_cmd iam create-role --role-name "$role_name" --assume-role-policy-document "file://$tmp_file"; then
+            echo "❌ Failed to create AWS Config role"
+            rm "$tmp_file"
+            return 1
+        fi
+        
+        # Attach necessary policies to the role
+        echo "Attaching policies to AWS Config role..."
+        run_aws_cmd iam attach-role-policy \
+            --role-name "$role_name" \
+            --policy-arn "arn:aws:iam::aws:policy/service-role/AWS_ConfigRole"
+        
+        # Clean up temp file
+        rm "$tmp_file"
+    else
+        echo "✅ Using existing AWS Config role: $role_name"
+    fi
+    
+    # Get role ARN
+    local role_arn
+    role_arn=$(run_aws_cmd iam get-role --role-name "$role_name" --query "Role.Arn" --output text)
+    
+    # Handle S3 bucket for AWS Config
+    if [[ -z "$s3_bucket" ]]; then
+        s3_bucket="config-bucket-$account_id-$region"
+        echo "Using default S3 bucket name: $s3_bucket"
+    fi
+    
+    # Check if bucket exists
+    if ! run_aws_cmd s3api head-bucket --bucket "$s3_bucket" 2>/dev/null; then
+        echo "Creating S3 bucket for AWS Config: $s3_bucket"
+        # Create the bucket with SSE encryption
+        run_aws_cmd s3 mb "s3://$s3_bucket" \
+            --region "$region"
+        
+        # Apply bucket policy for AWS Config
+        local bucket_policy='{
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Sid": "AWSConfigBucketPermissionsCheck",
+                    "Effect": "Allow",
+                    "Principal": {
+                        "Service": "config.amazonaws.com"
+                    },
+                    "Action": "s3:GetBucketAcl",
+                    "Resource": "arn:aws:s3:::'$s3_bucket'"
+                },
+                {
+                    "Sid": "AWSConfigBucketDelivery",
+                    "Effect": "Allow",
+                    "Principal": {
+                        "Service": "config.amazonaws.com"
+                    },
+                    "Action": "s3:PutObject",
+                    "Resource": "arn:aws:s3:::'$s3_bucket'/AWSLogs/'$account_id'/Config/*",
+                    "Condition": {
+                        "StringEquals": {
+                            "s3:x-amz-acl": "bucket-owner-full-control"
+                        }
+                    }
+                }
+            ]
+        }'
+        
+        # Save bucket policy to temporary file
+        local bucket_policy_file
+        bucket_policy_file=$(mktemp)
+        echo "$bucket_policy" > "$bucket_policy_file"
+        
+        # Apply the bucket policy
+        run_aws_cmd s3api put-bucket-policy \
+            --bucket "$s3_bucket" \
+            --policy "file://$bucket_policy_file"
+        
+        # Clean up temp file
+        rm "$bucket_policy_file"
+    else
+        echo "✅ Using existing S3 bucket: $s3_bucket"
+    fi
+    
+    # Enable AWS Config
+    echo "Enabling AWS Config in region $region..."
+    
+    # Create configuration recorder
+    echo "Setting up configuration recorder..."
+    run_aws_cmd configservice put-configuration-recorder \
+        --configuration-recorder "name=default,roleARN=$role_arn" \
+        --recording-group '{"allSupported":true,"includeGlobalResourceTypes":true}'
+    
+    # Set up delivery channel
+    echo "Setting up delivery channel..."
+    run_aws_cmd configservice put-delivery-channel \
+        --delivery-channel "name=default,s3BucketName=$s3_bucket,configSnapshotDeliveryProperties={deliveryFrequency=One_Hour}"
+    
+    # Start the configuration recorder
+    echo "Starting configuration recorder..."
+    run_aws_cmd configservice start-configuration-recorder \
+        --configuration-recorder-name default
+    
+    echo "✅ AWS Config enabled successfully in region $region"
+    echo "Delivery channel configured to write to S3 bucket: $s3_bucket"
+    
+    return 0
+}
+
+# Add a managed rule to AWS Config
+aws_config_add_rule() {
+    local rule_name="$1"
+    local rule_id="$2"
+    local region="$3"
+    local description="${4:-AWS Managed Config Rule}"
+    
+    if [[ -z "$rule_name" || -z "$rule_id" ]]; then
+        echo "Usage: aws_config_add_rule <rule_name> <rule_id> [region] [description]"
+        echo ""
+        echo "Parameters:"
+        echo "  rule_name     Name for the AWS Config rule"
+        echo "  rule_id       AWS managed rule identifier (e.g., INCOMING_SSH_DISABLED)"
+        echo "  region        Optional AWS region (uses current region if not specified)"
+        echo "  description   Optional description for the rule"
+        echo ""
+        echo "Example: aws_config_add_rule restricted-ssh INCOMING_SSH_DISABLED us-east-1"
+        echo ""
+        echo "Common AWS Managed Rules:"
+        echo "  INCOMING_SSH_DISABLED     - Checks for unrestricted SSH access"
+        echo "  RESTRICTED_INCOMING_TRAFFIC - Checks for unrestricted access on specific ports"
+        echo "  S3_BUCKET_PUBLIC_READ_PROHIBITED - Prevents public read access for S3 buckets"
+        echo "  IAM_PASSWORD_POLICY - Checks if password policy meets specified requirements"
+        echo "  ROOT_ACCOUNT_MFA_ENABLED - Checks if root account has MFA enabled"
+        return 1
+    fi
+    
+    # Set region if specified
+    if [[ -n "$region" ]]; then
+        export AWS_DEFAULT_REGION="$region"
+        export AWS_REGION="$region"
+        echo "Using region: $region"
+    fi
+    
+    # Check if AWS Config is enabled
+    if ! run_aws_cmd configservice describe-configuration-recorders &>/dev/null; then
+        echo "❌ AWS Config is not enabled in this region"
+        echo "Please enable AWS Config first with: aws_config_enable <region>"
+        return 1
+    fi
+    
+    # Create rule JSON
+    local rule_json='{
+        "ConfigRuleName": "'$rule_name'",
+        "Description": "'$description'",
+        "Scope": {
+            "ComplianceResourceTypes": []
+        },
+        "Source": {
+            "Owner": "AWS",
+            "SourceIdentifier": "'$rule_id'"
+        },
+        "MaximumExecutionFrequency": "TwentyFour_Hours"
+    }'
+    
+    # Set resource types based on rule ID
+    case "$rule_id" in
+        INCOMING_SSH_DISABLED|RESTRICTED_INCOMING_TRAFFIC)
+            rule_json=${rule_json/"ComplianceResourceTypes": \[\]/"ComplianceResourceTypes": \["AWS::EC2::SecurityGroup"\]}
+            ;;
+        S3_BUCKET_PUBLIC_READ_PROHIBITED|S3_BUCKET_PUBLIC_WRITE_PROHIBITED)
+            rule_json=${rule_json/"ComplianceResourceTypes": \[\]/"ComplianceResourceTypes": \["AWS::S3::Bucket"\]}
+            ;;
+        IAM_PASSWORD_POLICY|ROOT_ACCOUNT_MFA_ENABLED)
+            # These are account-level checks, so we leave resource types empty
+            ;;
+        *)
+            # Default: keep empty array for all resource types
+            ;;
+    esac
+    
+    # Save rule JSON to temporary file
+    local tmp_file
+    tmp_file=$(mktemp)
+    echo "$rule_json" > "$tmp_file"
+    
+    # Add the rule to AWS Config
+    echo "Adding AWS Config rule: $rule_name ($rule_id)"
+    if run_aws_cmd configservice put-config-rule --config-rule "file://$tmp_file"; then
+        echo "✅ AWS Config rule '$rule_name' added successfully"
+    else
+        echo "❌ Failed to add AWS Config rule '$rule_name'"
+        rm "$tmp_file"
+        return 1
+    fi
+    
+    # Clean up temporary file
+    rm "$tmp_file"
+    
+    # Check the rule status
+    echo "Checking rule status..."
+    run_aws_cmd configservice describe-config-rules \
+        --config-rule-names "$rule_name" \
+        --query "ConfigRules[0].[ConfigRuleName,ConfigRuleState]" \
+        --output table
+    
+    echo "Note: It may take up to 24 hours for the initial compliance evaluation"
+    echo "To check compliance status later, use: aws_config_check_rule $rule_name"
+    
+    # Return to previous region if we changed it
+    if [[ -n "$region" ]]; then
+        unset AWS_DEFAULT_REGION AWS_REGION
+    fi
+    
+    return 0
+}
+
+# Check the compliance status of a Config rule
+aws_config_check_rule() {
+    local rule_name="$1"
+    local region="$2"
+    
+    if [[ -z "$rule_name" ]]; then
+        echo "Usage: aws_config_check_rule <rule_name> [region]"
+        echo ""
+        echo "Parameters:"
+        echo "  rule_name    Name of the AWS Config rule to check"
+        echo "  region       Optional AWS region"
+        
+        # List all rules if none specified
+        echo ""
+        echo "Available Config rules:"
+        run_aws_cmd configservice describe-config-rules \
+            --query "ConfigRules[*].[ConfigRuleName,Description]" \
+            --output table 2>/dev/null || echo "No Config rules found or AWS Config not enabled"
+            
+        return 1
+    fi
+    
+    # Set region if specified
+    if [[ -n "$region" ]]; then
+        export AWS_DEFAULT_REGION="$region"
+        export AWS_REGION="$region"
+        echo "Using region: $region"
+    fi
+    
+    # Check if rule exists
+    if ! run_aws_cmd configservice describe-config-rules --config-rule-names "$rule_name" &>/dev/null; then
+        echo "❌ Config rule '$rule_name' not found"
+        return 1
+    fi
+    
+    # Get rule details
+    echo "Details for Config rule '$rule_name':"
+    run_aws_cmd configservice describe-config-rules \
+        --config-rule-names "$rule_name" \
+        --output json
+    
+    # Get compliance status
+    echo ""
+    echo "Compliance status:"
+    local compliance_json
+    compliance_json=$(run_aws_cmd configservice describe-compliance-by-config-rule \
+        --config-rule-names "$rule_name" \
+        --output json)
+    
+    # Extract compliance type using jq-like approach with sed
+    local compliance_type
+    compliance_type=$(echo "$compliance_json" | sed -n 's/.*"ComplianceType": "\([^"]*\)".*/\1/p')
+    
+    # Show compliance results based on what we found
+    echo "Summary:"
+    if [[ -z "$compliance_type" ]]; then
+        echo "EVALUATION IN PROGRESS or INSUFFICIENT_DATA"
+    elif [[ "$compliance_type" == *"NOT_APPLICABLE"* ]]; then
+        echo "⚠️ Rule evaluation not applicable to any resources"
+    else
+        echo "$compliance_type"
+    fi
+    
+    # Get non-compliant resources if applicable
+    if [[ "$compliance_type" == *"NON_COMPLIANT"* ]]; then
+        echo ""
+        echo "Non-compliant resources:"
+        run_aws_cmd configservice get-compliance-details-by-config-rule \
+            --config-rule-name "$rule_name" \
+            --compliance-types NON_COMPLIANT \
+            --query "EvaluationResults[*].{ResourceID:EvaluationResultIdentifier.EvaluationResultQualifier.ResourceId, ResourceType:EvaluationResultIdentifier.EvaluationResultQualifier.ResourceType, Status:ComplianceType, Reason:Annotation}" \
+            --output table
+    fi
+    
+    # Return to previous region if we changed it
+    if [[ -n "$region" ]]; then
+        unset AWS_DEFAULT_REGION AWS_REGION
+    fi
+    
+    return 0
+}
+
+# List all AWS Config rules in a region
+aws_config_list_rules() {
+    local region="$1"
+    
+    # Set region if specified
+    if [[ -n "$region" ]]; then
+        export AWS_DEFAULT_REGION="$region"
+        export AWS_REGION="$region"
+        echo "Using region: $region"
+    fi
+    
+    # Check if AWS Config is enabled
+    if ! run_aws_cmd configservice describe-configuration-recorders &>/dev/null; then
+        echo "❌ AWS Config is not enabled in this region"
+        echo "Please enable AWS Config first with: aws_config_enable <region>"
+        return 1
+    fi
+    
+    # List all Config rules
+    echo "AWS Config rules in region ${AWS_REGION:-default}:"
+    run_aws_cmd configservice describe-config-rules \
+        --query "ConfigRules[*].{Rule:ConfigRuleName, Type:Source.Owner, ManagedRule:Source.SourceIdentifier, State:ConfigRuleState}" \
+        --output table
+    
+    # Return to previous region if we changed it
+    if [[ -n "$region" ]]; then
+        unset AWS_DEFAULT_REGION AWS_REGION
+    fi
+    
+    return 0
+}
+
+# Setup the restricted-ssh AWS Config rule (convenience function)
+aws_config_restrict_ssh() {
+    local region="$1"
+    
+    echo "===================================================="
+    echo "🔒 Setting up SSH security monitoring for your AWS environment"
+    echo "===================================================="
+    echo "This function sets up automated monitoring to detect security groups"
+    echo "that allow unrestricted SSH access from the internet (0.0.0.0/0)."
+    echo "Think of it as a security camera for your AWS account that alerts"
+    echo "you to potential insecure configurations."
+    echo ""
+    
+    # First ensure AWS Config is enabled
+    if ! run_aws_cmd configservice describe-configuration-recorders &>/dev/null; then
+        echo "Step 1: AWS Config needs to be enabled first"
+        echo "AWS Config is the security monitoring service that will track your resources"
+        echo ""
+        echo "AWS Config is not enabled. Would you like to enable it now? (y/n): "
+        read enable_config
+        if [[ "$enable_config" == "y" ]]; then
+            echo "Enabling AWS Config - this sets up the security monitoring service..."
+            aws_config_enable "$region"
+        else
+            echo "AWS Config must be enabled to add security monitoring rules."
+            return 1
+        fi
+    else
+        echo "✅ Step 1: AWS Config is already enabled"
+    fi
+    
+    echo ""
+    echo "Step 2: Creating SSH security monitoring rule"
+    echo "This rule will continuously check for and report any security groups"
+    echo "that allow unrestricted SSH access from the internet"
+    echo ""
+    
+    # Create the rule
+    aws_config_add_rule "restricted-ssh" "INCOMING_SSH_DISABLED" "$region" \
+        "Checks whether security groups allow unrestricted incoming SSH traffic from 0.0.0.0/0 or ::/0"
+    
+    echo ""
+    echo "===================================================="
+    echo "✅ SSH security monitoring successfully set up!"
+    echo "===================================================="
+    echo "What this means:"
+    echo "- AWS is now continuously checking your security groups"
+    echo "- Any security groups allowing unrestricted SSH access will be flagged"
+    echo "- This helps prevent unauthorized access to your systems"
+    echo ""
+    echo "To verify the rule configuration:"
+    echo "  aws_config_check_rule restricted-ssh"
+    echo ""
+    echo "To find non-compliant security groups (after evaluation):"
+    echo "  aws configservice get-compliance-details-by-config-rule \\"
+    echo "    --config-rule-name restricted-ssh \\"
+    echo "    --compliance-types NON_COMPLIANT"
+    echo ""
+    echo "Note: The initial evaluation may take up to 24 hours to complete"
+}
+
+# Test function to check for syntax issues
+test_syntax() {
+    echo "If this function runs, the file has no syntax errors."
+}
+
+# ----------------------------------------
+# IAM MFA Security Functions 
+# ----------------------------------------
+
+# Enforce MFA for users in an IAM group
+aws_enforce_mfa() {
+    local group_name="$1"
+    local force="${2:-false}"
+    
+    if [[ -z "$group_name" ]]; then
+        echo "Usage: aws_enforce_mfa <group_name> [force]"
+        echo "Example: aws_enforce_mfa Mil-Dev true"
+        echo ""
+        echo "Available groups:"
+        aws_list_groups
+        return 1
+    fi
+    
+    # Check if group exists
+    if ! run_aws_cmd iam get-group --group-name "$group_name" &>/dev/null; then
+        echo "❌ Group '$group_name' not found"
+        return 1
+    fi
+    
+    echo "Creating MFA enforcement policy for group: $group_name"
+    
+    # Generate a policy name
+    local policy_name="Require-MFA-${group_name}"
+    
+    # Create the MFA enforcement policy document
+    local policy_json='{
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Sid": "AllowViewAccountInfo",
+                "Effect": "Allow",
+                "Action": [
+                    "iam:GetAccountPasswordPolicy",
+                    "iam:GetAccountSummary",
+                    "iam:ListVirtualMFADevices"
+                ],
+                "Resource": "*"
+            },
+            {
+                "Sid": "AllowManageOwnPasswords",
+                "Effect": "Allow",
+                "Action": [
+                    "iam:ChangePassword",
+                    "iam:GetUser"
+                ],
+                "Resource": "arn:aws:iam::*:user/${aws:username}"
+            },
+            {
+                "Sid": "AllowManageOwnAccessKeys",
+                "Effect": "Allow",
+                "Action": [
+                    "iam:CreateAccessKey",
+                    "iam:DeleteAccessKey",
+                    "iam:ListAccessKeys",
+                    "iam:UpdateAccessKey"
+                ],
+                "Resource": "arn:aws:iam::*:user/${aws:username}"
+            },
+            {
+                "Sid": "AllowManageOwnSigningCertificates",
+                "Effect": "Allow",
+                "Action": [
+                    "iam:DeleteSigningCertificate",
+                    "iam:ListSigningCertificates",
+                    "iam:UpdateSigningCertificate",
+                    "iam:UploadSigningCertificate"
+                ],
+                "Resource": "arn:aws:iam::*:user/${aws:username}"
+            },
+            {
+                "Sid": "AllowManageOwnSSHPublicKeys",
+                "Effect": "Allow",
+                "Action": [
+                    "iam:DeleteSSHPublicKey",
+                    "iam:GetSSHPublicKey",
+                    "iam:ListSSHPublicKeys",
+                    "iam:UpdateSSHPublicKey",
+                    "iam:UploadSSHPublicKey"
+                ],
+                "Resource": "arn:aws:iam::*:user/${aws:username}"
+            },
+            {
+                "Sid": "AllowManageOwnVirtualMFADevice",
+                "Effect": "Allow",
+                "Action": [
+                    "iam:CreateVirtualMFADevice",
+                    "iam:DeleteVirtualMFADevice"
+                ],
+                "Resource": "arn:aws:iam::*:mfa/${aws:username}"
+            },
+            {
+                "Sid": "AllowManageOwnUserMFA",
+                "Effect": "Allow",
+                "Action": [
+                    "iam:DeactivateMFADevice",
+                    "iam:EnableMFADevice",
+                    "iam:ListMFADevices",
+                    "iam:ResyncMFADevice"
+                ],
+                "Resource": "arn:aws:iam::*:user/${aws:username}"
+            },
+            {
+                "Sid": "DenyAllExceptListedIfNoMFA",
+                "Effect": "Deny",
+                "NotAction": [
+                    "iam:CreateVirtualMFADevice",
+                    "iam:EnableMFADevice",
+                    "iam:GetUser",
+                    "iam:ListMFADevices",
+                    "iam:ListVirtualMFADevices",
+                    "iam:ResyncMFADevice",
+                    "iam:ChangePassword",
+                    "sts:GetSessionToken"
+                ],
+                "Resource": "*",
+                "Condition": {
+                    "BoolIfExists": {
+                        "aws:MultiFactorAuthPresent": "false"
+                    }
+                }
+            }
+        ]
+    }'
+    
+    # Create temporary policy file
+    local tmp_file
+    tmp_file=$(mktemp)
+    echo "$policy_json" > "$tmp_file"
+    
+    # Check if policy already exists
+    local policy_exists=false
+    local policy_arn=""
+    
+    # Try to get policy
+    policy_output=$(run_aws_cmd iam list-policies --scope Local --query "Policies[?PolicyName=='$policy_name']" --output json 2>/dev/null)
+    if [[ "$policy_output" != *"[]"* && "$policy_output" != "" ]]; then
+        policy_exists=true
+        policy_arn=$(echo "$policy_output" | grep -o '"Arn": "[^"]*' | head -1 | cut -d'"' -f4)
+        echo "✅ MFA enforcement policy already exists: $policy_name"
+    fi
+    
+    # Create policy if it doesn't exist
+    if [[ "$policy_exists" == "false" ]]; then
+        echo "Creating new MFA enforcement policy: $policy_name"
+        policy_output=$(run_aws_cmd iam create-policy --policy-name "$policy_name" --policy-document "file://$tmp_file" --output json)
+        if [[ $? -ne 0 || -z "$policy_output" ]]; then
+            echo "❌ Failed to create MFA policy"
+            rm "$tmp_file"
+            return 1
+        fi
+        policy_arn=$(echo "$policy_output" | grep -o '"Arn": "[^"]*' | head -1 | cut -d'"' -f4)
+        echo "✅ Created MFA enforcement policy: $policy_name"
+    fi
+    
+    # Clean up temp file
+    rm "$tmp_file"
+    
+    if [[ -z "$policy_arn" ]]; then
+        echo "❌ Failed to get policy ARN"
+        return 1
+    fi
+    
+    # Check if policy is already attached to the group
+    attached_check=$(run_aws_cmd iam list-attached-group-policies --group-name "$group_name" --output json)
+    if [[ "$attached_check" == *"$policy_arn"* ]]; then
+        echo "✅ MFA policy is already attached to group: $group_name"
+    else
+        # Attach policy to group
+        echo "Attaching MFA enforcement policy to group: $group_name"
+        if run_aws_cmd iam attach-group-policy --group-name "$group_name" --policy-arn "$policy_arn"; then
+            echo "✅ Successfully attached MFA enforcement policy to group: $group_name"
+        else
+            echo "❌ Failed to attach MFA policy to group"
+            return 1
+        fi
+    fi
+    
+    # Get users in the group
+    local users
+    users=$(run_aws_cmd iam get-group --group-name "$group_name" --query "Users[].UserName" --output text)
+    
+    echo ""
+    echo "◎ Users in group '$group_name' will now be required to set up MFA"
+    echo "◎ Users without MFA will only be able to access enough permissions to set up MFA"
+    
+    # List users without MFA
+    echo ""
+    echo "Checking MFA status for users in group $group_name:"
+    echo "------------------------------------------------------"
+    for user in $users; do
+        # Check if user has MFA enabled
+        mfa_devices=$(run_aws_cmd iam list-mfa-devices --user-name "$user" --query "MFADevices[*]" --output text)
+        if [[ -z "$mfa_devices" ]]; then
+            echo "⚠️ $user: No MFA device configured"
+        else
+            echo "✅ $user: MFA enabled"
+        fi
+    done
+    
+    echo ""
+    echo "To add MFA for users, use: aws_add_mfa <username>"
+    
+    return 0
+}
+
+# Add MFA for a specific user
+aws_add_mfa() {
+    local user_name="$1"
+    
+    if [[ -z "$user_name" ]]; then
+        echo "Usage: aws_add_mfa <username>"
+        echo "Example: aws_add_mfa john.doe"
+        
+        # List users to help user
+        echo ""
+        echo "Available users:"
+        aws_list_users
+        return 1
+    fi
+    
+    # Check if user exists
+    if ! run_aws_cmd iam get-user --user-name "$user_name" &>/dev/null; then
+        echo "❌ User '$user_name' not found"
+        return 1
+    fi
+    
+    # Check if user already has MFA
+    local mfa_devices
+    mfa_devices=$(run_aws_cmd iam list-mfa-devices --user-name "$user_name" --query "MFADevices[*]" --output text)
+    if [[ -n "$mfa_devices" ]]; then
+        echo "User '$user_name' already has MFA devices configured:"
+        run_aws_cmd iam list-mfa-devices --user-name "$user_name" --output table
+        
+        echo -n "Do you want to add an additional MFA device? (y/n): "
+        read add_additional
+        if [[ "$add_additional" != "y" ]]; then
+            echo "Operation cancelled."
+            return 0
+        fi
+    fi
+    
+    # Prompt for MFA type
+    echo "Select MFA type to add:"
+    echo "1. Virtual MFA device (like Google Authenticator or Authy)"
+    echo "2. Hardware MFA device (like YubiKey)"
+    echo -n "Enter choice (1/2): "
+    read mfa_type
+    
+    case "$mfa_type" in
+        1)
+            # Create virtual MFA device
+            echo "Creating a virtual MFA device for user: $user_name"
+            
+            # Generate a unique name for the device
+            local device_name="$user_name-mfa-device-$(date +%s)"
+            
+            # Create the virtual MFA device
+            local create_output
+            create_output=$(run_aws_cmd iam create-virtual-mfa-device \
+                --virtual-mfa-device-name "$device_name" \
+                --outfile "/tmp/qrcode.png" \
+                --bootstrap-method QRCodePNG \
+                --output json)
+                
+            if [[ $? -ne 0 || -z "$create_output" ]]; then
+                echo "❌ Failed to create virtual MFA device"
+                return 1
+            fi
+            
+            # Extract the ARN of the virtual MFA device
+            local virtual_mfa_arn
+            virtual_mfa_arn=$(echo "$create_output" | grep -o '"SerialNumber": "[^"]*' | cut -d'"' -f4)
+            
+            if [[ -z "$virtual_mfa_arn" ]]; then
+                echo "❌ Failed to extract virtual MFA device ARN"
+                return 1
+            fi
+            
+            echo "✅ Virtual MFA device created: $device_name"
+            echo "✅ QR code saved to: /tmp/qrcode.png"
+            echo "   Please open this file with an image viewer and scan with authenticator app"
+            
+            echo ""
+            echo "After scanning the QR code with your authenticator app (like Google Authenticator),"
+            echo "you'll need to enter two consecutive one-time passwords (OTPs)"
+            echo ""
+            
+            echo -n "Enter the first one-time password from your app: "
+            read -r auth_code1
+            echo -n "Enter the second one-time password from your app: "
+            read -r auth_code2
+            
+            # Attach the virtual MFA device to the user
+            if run_aws_cmd iam enable-mfa-device \
+                --user-name "$user_name" \
+                --serial-number "$virtual_mfa_arn" \
+                --authentication-code1 "$auth_code1" \
+                --authentication-code2 "$auth_code2"; then
+                
+                echo "✅ Successfully enabled MFA for user: $user_name"
+                echo "✅ The user can now authenticate with MFA"
+                
+                # Clean up the QR code file
+                rm -f "/tmp/qrcode.png"
+            else
+                echo "❌ Failed to enable MFA device"
+                echo "The codes may have been incorrect or expired. Please try again."
+                return 1
+            fi
+            ;;
+            
+        2)
+            # Hardware MFA device
+            echo "To add a hardware MFA device like a YubiKey:"
+            echo "1. Get the serial number or ARN of your hardware MFA device"
+            echo -n "Enter hardware MFA device serial number or ARN: "
+            read hardware_mfa_arn
+            
+            if [[ -z "$hardware_mfa_arn" ]]; then
+                echo "No serial number provided. Operation cancelled."
+                return 1
+            fi
+            
+            echo "You'll need to generate two consecutive MFA codes from your hardware device:"
+            echo -n "Enter the first code from your hardware MFA device: "
+            read -r auth_code1
+            echo -n "Enter the second code from your hardware MFA device: "
+            read -r auth_code2
+            
+            # Enable the hardware MFA device
+            if run_aws_cmd iam enable-mfa-device \
+                --user-name "$user_name" \
+                --serial-number "$hardware_mfa_arn" \
+                --authentication-code1 "$auth_code1" \
+                --authentication-code2 "$auth_code2"; then
+                
+                echo "✅ Successfully enabled hardware MFA for user: $user_name"
+                echo "✅ The user can now authenticate with their hardware MFA device"
+            else
+                echo "❌ Failed to enable hardware MFA device"
+                echo "The codes may have been incorrect or the device serial number is invalid."
+                return 1
+            fi
+            ;;
+            
+        *)
+            echo "Invalid choice. Operation cancelled."
+            return 1
+            ;;
+    esac
+    
+    return 0
+}
+
+# List users without MFA
+aws_list_users_without_mfa() {
+    echo "Identifying users without MFA devices..."
+    
+    # Get all users
+    local users
+    users=$(run_aws_cmd iam list-users --query "Users[].UserName" --output text)
+    
+    echo "Users without MFA:"
+    echo "------------------"
+    local found_users_without_mfa=false
+    
+    for user in $users; do
+        # Check if user has MFA enabled
+        mfa_devices=$(run_aws_cmd iam list-mfa-devices --user-name "$user" --query "MFADevices[*]" --output text)
+        if [[ -z "$mfa_devices" ]]; then
+            echo "$user"
+            found_users_without_mfa=true
+        fi
+    done
+    
+    if [[ "$found_users_without_mfa" == "false" ]]; then
+        echo "✅ All users have MFA enabled"
+    else
+        echo ""
+        echo "To add MFA for a user, use: aws_add_mfa <username>"
+    fi
+    
+    return 0
+}
+
+# Get VPC info for an EC2 instance
+aws_instance_vpc_info() {
+    local instance_id="$1"
+    local region="$2"
+    
+    if [[ -z "$instance_id" ]]; then
+        echo "Usage: aws_instance_vpc_info <instance-id> [region]"
+        echo "Example: aws_instance_vpc_info i-038fb3978b3f8f5ca us-east-1"
+        return 1
+    fi
+    
+    # Set region if specified
+    if [[ -n "$region" ]]; then
+        export AWS_DEFAULT_REGION="$region"
+        export AWS_REGION="$region"
+        echo "Using region: $region"
+    fi
+    
+    echo "Looking up VPC for instance $instance_id..."
+    
+    # Get the VPC ID directly using the query parameter
+    local vpc_id
+    vpc_id=$(aws ec2 describe-instances \
+              --instance-ids "$instance_id" \
+              --query "Reservations[0].Instances[0].VpcId" \
+              --output text 2>/dev/null)
+    
+    # Check if the command failed or returned empty/None
+    if [[ $? -ne 0 || -z "$vpc_id" || "$vpc_id" == "None" ]]; then
+        echo "❌ Could not find VPC ID for instance $instance_id"
+        echo "Please check if the instance exists in this region."
+        return 1
+    fi
+    
+    echo "✅ Found VPC: $vpc_id for instance $instance_id"
+    echo ""
+    
+    echo "Gathering information about VPC $vpc_id..."
+    echo "--------------------------"
+    echo "VPC Details:"
+    aws ec2 describe-vpcs --vpc-ids "$vpc_id" --output table
+    
+    echo "--------------------------"
+    echo "Subnets in VPC:"
+    aws ec2 describe-subnets \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query "Subnets[].{ID:SubnetId,CIDR:CidrBlock,AZ:AvailabilityZone,Public:MapPublicIpOnLaunch,Name:Tags[?Key=='Name'].Value|[0]}" \
+        --output table
+    
+    echo "--------------------------"
+    echo "Route Tables:"
+    aws ec2 describe-route-tables \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query "RouteTables[].{ID:RouteTableId,Main:Associations[?Main].RouteTableAssociationId|[0],Name:Tags[?Key=='Name'].Value|[0]}" \
+        --output table
+    
+    echo "--------------------------"
+    echo "Security Groups:"
+    aws ec2 describe-security-groups \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query "SecurityGroups[].{ID:GroupId,Name:GroupName,Description:Description}" \
+        --output table
+    
+    echo "--------------------------"
+    echo "NACL Details:"
+    aws ec2 describe-network-acls \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query "NetworkAcls[].{ID:NetworkAclId,Default:IsDefault}" \
+        --output table
+    
+    echo "--------------------------"
+    echo "Instance Details in the VPC:"
+    aws ec2 describe-instances \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query "Reservations[].Instances[].{ID:InstanceId,Type:InstanceType,State:State.Name,Name:Tags[?Key=='Name'].Value|[0],PrivateIP:PrivateIpAddress,PublicIP:PublicIpAddress}" \
+        --output table
+    
+    # Return to previous region if we changed it
+    if [[ -n "$region" ]]; then
+        unset AWS_DEFAULT_REGION AWS_REGION
+    fi
+    
+    return 0
+}
+
+# List EC2 instances with basic info
+aws_list_instances() {
+    local region="$1"
+    local filter="$2"
+    
+    if [[ -n "$region" ]]; then
+        export AWS_DEFAULT_REGION="$region"
+        export AWS_REGION="$region"
+        echo "Using region: $region"
+    fi
+    
+    echo "Listing EC2 instances..."
+    
+    # Check if a filter was provided
+    local filter_args=""
+    if [[ -n "$filter" ]]; then
+        echo "Filtering by: $filter"
+        filter_args="--filters Name=tag:Name,Values=*${filter}* Name=instance-id,Values=*${filter}*"
+    fi
+    
+    # Use eval to properly handle the filter arguments
+    eval "aws ec2 describe-instances $filter_args --query \"Reservations[].Instances[].{InstanceId:InstanceId,Name:Tags[?Key=='Name'].Value|[0],Type:InstanceType,State:State.Name,PrivateIP:PrivateIpAddress,PublicIP:PublicIpAddress,VPC:VpcId,AZ:Placement.AvailabilityZone}\" --output text"
+    
+    # Return to previous region if we changed it
+    if [[ -n "$region" ]]; then
+        unset AWS_DEFAULT_REGION AWS_REGION
+    fi
+}
+
+# Simple function to get the VPC ID for an EC2 instance
+aws_get_vpc_id() {
+    local instance_id="$1"
+    local region="$2"
+    
+    if [[ -z "$instance_id" ]]; then
+        echo "Usage: aws_get_vpc_id <instance-id> [region]"
+        echo "Example: aws_get_vpc_id i-038fb3978b3f8f5ca us-east-2"
+        return 1
+    fi
+    
+    # Default to current region if not specified
+    if [[ -z "$region" ]]; then
+        region=$(aws configure get region)
+        if [[ -z "$region" ]]; then
+            region="us-east-1"  # Default AWS region
+        fi
+    fi
+    
+    echo "Looking up instance $instance_id in region $region..."
+    
+    # Try to get the instance information
+    local vpc_id
+    vpc_id=$(AWS_REGION=$region aws ec2 describe-instances --instance-ids "$instance_id" --query "Reservations[0].Instances[0].VpcId" --output text 2>/dev/null)
+    
+    # Check the result
+    if [[ $? -ne 0 || -z "$vpc_id" || "$vpc_id" == "None" ]]; then
+        echo "❌ Could not find instance $instance_id in region $region"
+        return 1
+    fi
+    
+    echo "✅ Instance $instance_id is in VPC: $vpc_id"
+    
+    # Add command suggestions for next steps
+    echo ""
+    echo "To view more information about this VPC, run:"
+    echo "AWS_REGION=$region aws ec2 describe-vpcs --vpc-ids $vpc_id"
+    echo ""
+    echo "To list subnets in this VPC, run:"
+    echo "AWS_REGION=$region aws ec2 describe-subnets --filters \"Name=vpc-id,Values=$vpc_id\""
+    
+    return 0
+}
