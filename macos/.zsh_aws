@@ -198,7 +198,7 @@ aws_command_list() {
     echo "  aws_delete_user <user_name> - Delete an IAM user (alias: awsrmuser)"
     echo "  aws_reset_password <user_name> - Reset a user's password"
     echo "  aws_add_user_to_group [user_name] [group_name] - Add a user to a group (interactive)"
-    echo "  aws_create_group <group_name> - Create a new IAM group"
+    echo "  aws_create_group <group_name> [--type <role-type>] [--policies <policies>] - Create IAM group with predefined permissions"
     echo "  aws_user_activation - Show user activation options (placeholder)"
     
     echo ""
@@ -284,24 +284,203 @@ aws_config(){
     fi
 }
 
-# Create a new IAM group
-# Usage: create_group <group_name>
+# Create a new IAM group with optional predefined permissions
+# Usage: aws_create_group <group_name> [--type <permission-type>] [--policies <policy1,policy2>]
 aws_create_group() {
     load_env
-    local group_name="$1"
+    local group_name=""
+    local permission_type=""
+    local custom_policies=""
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --type|-t)
+                if [[ -n "$2" ]]; then
+                    permission_type="$2"
+                    shift 2
+                else
+                    echo "Error: Permission type required after --type"
+                    return 1
+                fi
+                ;;
+            --policies|-p)
+                if [[ -n "$2" ]]; then
+                    custom_policies="$2"
+                    shift 2
+                else
+                    echo "Error: Policy list required after --policies"
+                    return 1
+                fi
+                ;;
+            *)
+                if [[ -z "$group_name" ]]; then
+                    group_name="$1"
+                    shift
+                else
+                    echo "Error: Unexpected argument '$1'"
+                    echo "Usage: aws_create_group <group_name> [--type <permission-type>] [--policies <policy1,policy2>]"
+                    return 1
+                fi
+                ;;
+        esac
+    done
     
     if [[ -z "$group_name" ]]; then
-      echo "Usage: create_group <group_name>"
-      return 1
+        echo "Usage: aws_create_group <group_name> [--type <permission-type>] [--policies <policy1,policy2>]"
+        echo ""
+        echo "Available permission types:"
+        echo "  readonly       - Read-only access to most AWS resources"
+        echo "  fullstack      - Broad access for full stack developers"
+        echo "  frontend       - Access for frontend developers (S3, CloudFront, Route53)"
+        echo "  backend        - Access for backend developers (EC2, Lambda, API Gateway, DynamoDB)"
+        echo "  devops         - Access for DevOps engineers (EC2, ECS, CloudFormation, etc.)"
+        echo "  database       - Access for database administrators (RDS, DynamoDB, etc.)"
+        echo "  security       - Access for security engineers (IAM, Config, Security Hub)"
+        echo ""
+        echo "Example: aws_create_group dev-team --type fullstack"
+        echo "Example: aws_create_group custom-group --policies 'AmazonS3ReadOnlyAccess,AmazonDynamoDBReadOnlyAccess'"
+        return 1
     fi
     
     echo "Creating group '$group_name'..."
     if ! run_aws_cmd iam create-group --group-name "$group_name"; then
-      echo "❌ Failed to create group '$group_name'"
-      return 1
+        echo "❌ Failed to create group '$group_name'"
+        return 1
     fi
     
     echo "✅ Group '$group_name' created successfully."
+    
+    # If a permission type is specified, attach the corresponding policies
+    if [[ -n "$permission_type" ]]; then
+        echo "Adding '$permission_type' permissions to the group..."
+        
+        local policies=()
+        
+        case "$permission_type" in
+            readonly)
+                policies=(
+                    "ReadOnlyAccess"  # Provides read-only access to all AWS services
+                )
+                ;;
+            fullstack)
+                policies=(
+                    "AmazonS3FullAccess"
+                    "AmazonDynamoDBFullAccess"
+                    "AmazonEC2FullAccess"
+                    "AmazonRDSFullAccess"
+                    "AmazonRoute53FullAccess"
+                    "AmazonAPIGatewayAdministrator"
+                    "AWSLambda_FullAccess"
+                    "CloudFrontFullAccess"
+                )
+                ;;
+            frontend)
+                policies=(
+                    "AmazonS3FullAccess"
+                    "CloudFrontFullAccess"
+                    "AmazonRoute53ReadOnlyAccess"
+                    "AWSLambda_ReadOnlyAccess"
+                    "AmazonAPIGatewayInvokeFullAccess"
+                )
+                ;;
+            backend)
+                policies=(
+                    "AmazonEC2ReadOnlyAccess"
+                    "AmazonRDSDataFullAccess"
+                    "AmazonDynamoDBFullAccess"
+                    "AWSLambda_FullAccess"
+                    "AmazonAPIGatewayAdministrator"
+                    "AmazonSQSFullAccess"
+                    "AmazonSNSFullAccess"
+                )
+                ;;
+            devops)
+                policies=(
+                    "AmazonEC2FullAccess"
+                    "AmazonECR-FullAccess"
+                    "AmazonECS-FullAccess"
+                    "AmazonS3FullAccess"
+                    "AmazonRDSFullAccess"
+                    "AmazonRoute53FullAccess"
+                    "CloudWatchFullAccess"
+                    "AWSCloudFormationFullAccess"
+                    "AmazonVPCFullAccess"
+                )
+                ;;
+            database)
+                policies=(
+                    "AmazonRDSFullAccess"
+                    "AmazonDynamoDBFullAccess"
+                    "AmazonRedshiftFullAccess"
+                    "AmazonElastiCacheFullAccess"
+                )
+                ;;
+            security)
+                policies=(
+                    "IAMReadOnlyAccess"
+                    "AmazonInspector2FullAccess"
+                    "AWSSecurityHubFullAccess"
+                    "AmazonGuardDutyFullAccess"
+                    "AWSConfigUserAccess"
+                )
+                ;;
+            *)
+                echo "❌ Unknown permission type: $permission_type"
+                echo "Available types: readonly, fullstack, frontend, backend, devops, database, security"
+                return 1
+                ;;
+        esac
+        
+        # Attach each policy
+        for policy in "${policies[@]}"; do
+            echo "Attaching policy: $policy"
+            if run_aws_cmd iam attach-group-policy --group-name "$group_name" --policy-arn "arn:aws:iam::aws:policy/$policy"; then
+                echo "✅ Attached $policy"
+            else
+                echo "❌ Failed to attach $policy"
+            fi
+        done
+    fi
+    
+    # If custom policies are specified, attach them
+    if [[ -n "$custom_policies" ]]; then
+        echo "Adding custom policies to the group..."
+        
+        # Split the comma-separated list
+        IFS=',' read -ra policy_array <<< "$custom_policies"
+        
+        for policy in "${policy_array[@]}"; do
+            # Trim whitespace
+            policy=$(echo "$policy" | xargs)
+            
+            echo "Attaching policy: $policy"
+            if [[ "$policy" == arn:* ]]; then
+                # If full ARN is provided
+                if run_aws_cmd iam attach-group-policy --group-name "$group_name" --policy-arn "$policy"; then
+                    echo "✅ Attached $policy"
+                else
+                    echo "❌ Failed to attach $policy"
+                fi
+            else
+                # If just the policy name is provided
+                if run_aws_cmd iam attach-group-policy --group-name "$group_name" --policy-arn "arn:aws:iam::aws:policy/$policy"; then
+                    echo "✅ Attached $policy"
+                else
+                    echo "❌ Failed to attach $policy"
+                fi
+            fi
+        done
+    fi
+    
+    # Summary
+    echo ""
+    echo "Group '$group_name' created successfully."
+    
+    # List attached policies
+    echo "Policies attached to the group:"
+    run_aws_cmd iam list-attached-group-policies --group-name "$group_name" --output table
+    
     return 0
 }
 
