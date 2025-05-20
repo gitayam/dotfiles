@@ -736,3 +736,470 @@ aws_region() {
     fi
 }
 
+# ----------------------------------------
+# VPC Management Functions
+# ----------------------------------------
+
+# List all VPCs in the account with details
+aws_vpc_list() {
+    local region="$1"
+    local output_format="${2:-table}"
+    
+    # Set region if specified
+    if [[ -n "$region" ]]; then
+        export AWS_DEFAULT_REGION="$region"
+        export AWS_REGION="$region"
+        echo "Using region: $region"
+    fi
+    
+    echo "Listing VPCs..."
+    if [[ "$output_format" == "table" ]]; then
+        # For table format, show selected fields in a readable format
+        run_aws_cmd ec2 describe-vpcs \
+            --query "Vpcs[].{ID:VpcId,CIDR:CidrBlock,Name:Tags[?Key=='Name'].Value|[0],State:State,Default:IsDefault}" \
+            --output table
+    else
+        # For other formats (json, text, yaml), show all fields
+        run_aws_cmd ec2 describe-vpcs --output "$output_format"
+    fi
+    
+    # Return to previous region if we changed it
+    if [[ -n "$region" ]]; then
+        unset AWS_DEFAULT_REGION AWS_REGION
+    fi
+}
+
+# Get detailed information about a specific VPC
+aws_vpc_info() {
+    local vpc_id="$1"
+    local region="$2"
+    
+    if [[ -z "$vpc_id" ]]; then
+        echo "Usage: aws_vpc_info <vpc-id> [region]"
+        echo "Example: aws_vpc_info vpc-1234abcd us-east-1"
+        
+        # List VPCs to help user
+        echo ""
+        echo "Available VPCs:"
+        aws_vpc_list "$region"
+        return 1
+    fi
+    
+    # Set region if specified
+    if [[ -n "$region" ]]; then
+        export AWS_DEFAULT_REGION="$region"
+        export AWS_REGION="$region"
+        echo "Using region: $region"
+    fi
+    
+    echo "Getting details for VPC $vpc_id..."
+    echo "--------------------------"
+    echo "VPC Details:"
+    run_aws_cmd ec2 describe-vpcs --vpc-ids "$vpc_id" --output json
+    
+    echo "--------------------------"
+    echo "Subnets in VPC:"
+    run_aws_cmd ec2 describe-subnets \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query "Subnets[].{ID:SubnetId,CIDR:CidrBlock,AZ:AvailabilityZone,Public:MapPublicIpOnLaunch,Name:Tags[?Key=='Name'].Value|[0]}" \
+        --output table
+    
+    echo "--------------------------"
+    echo "Route Tables:"
+    run_aws_cmd ec2 describe-route-tables \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query "RouteTables[].{ID:RouteTableId,Main:Associations[?Main].RouteTableAssociationId|[0],Name:Tags[?Key=='Name'].Value|[0]}" \
+        --output table
+    
+    echo "--------------------------"
+    echo "Security Groups:"
+    run_aws_cmd ec2 describe-security-groups \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query "SecurityGroups[].{ID:GroupId,Name:GroupName,Description:Description}" \
+        --output table
+    
+    echo "--------------------------"
+    echo "NACL Details:"
+    run_aws_cmd ec2 describe-network-acls \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query "NetworkAcls[].{ID:NetworkAclId,Default:IsDefault}" \
+        --output table
+    
+    echo "--------------------------"
+    echo "VPC Endpoints:"
+    run_aws_cmd ec2 describe-vpc-endpoints \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query "VpcEndpoints[].{ID:VpcEndpointId,Type:VpcEndpointType,Service:ServiceName,State:State}" \
+        --output table 2>/dev/null || echo "No VPC endpoints found"
+    
+    # Return to previous region if we changed it
+    if [[ -n "$region" ]]; then
+        unset AWS_DEFAULT_REGION AWS_REGION
+    fi
+}
+
+# Create a new VPC with customizable settings
+aws_vpc_create() {
+    local cidr_block="10.0.0.0/16"  # Default CIDR
+    local vpc_name="MyVPC"
+    local region=""
+    local subnet_count=2
+    local enable_dns=true
+    local create_igw=false
+    
+    # Process named arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --cidr|-c)
+                cidr_block="$2"
+                shift 2
+                ;;
+            --name|-n)
+                vpc_name="$2"
+                shift 2
+                ;;
+            --region|-r)
+                region="$2"
+                shift 2
+                ;;
+            --subnets|-s)
+                subnet_count="$2"
+                shift 2
+                ;;
+            --internet-gateway|-i)
+                create_igw=true
+                shift
+                ;;
+            --help|-h)
+                echo "Usage: aws_vpc_create [options]"
+                echo "Options:"
+                echo "  --cidr, -c <cidr>          CIDR block for VPC (default: 10.0.0.0/16)"
+                echo "  --name, -n <name>          Name for the VPC (default: MyVPC)"
+                echo "  --region, -r <region>      AWS region to create VPC in"
+                echo "  --subnets, -s <count>      Number of subnets to create (default: 2)"
+                echo "  --internet-gateway, -i     Create and attach an Internet Gateway"
+                echo "  --help, -h                 Show this help message"
+                echo ""
+                echo "Example: aws_vpc_create --name 'Production VPC' --cidr 172.16.0.0/16 --region us-west-2 -i"
+                return 0
+                ;;
+            *)
+                echo "Unknown option: $1"
+                echo "Use --help for usage information"
+                return 1
+                ;;
+        esac
+    done
+    
+    # Set region if specified
+    if [[ -n "$region" ]]; then
+        export AWS_DEFAULT_REGION="$region"
+        export AWS_REGION="$region"
+        echo "Using region: $region"
+    fi
+    
+    # Validate CIDR block format
+    if ! [[ "$cidr_block" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$ ]]; then
+        echo "❌ Invalid CIDR block format: $cidr_block"
+        echo "Expected format: x.x.x.x/y (e.g., 10.0.0.0/16)"
+        return 1
+    fi
+    
+    # Create VPC
+    echo "Creating VPC '$vpc_name' with CIDR block $cidr_block..."
+    local vpc_id
+    vpc_id=$(run_aws_cmd ec2 create-vpc \
+        --cidr-block "$cidr_block" \
+        --query "Vpc.VpcId" \
+        --output text)
+    
+    if [[ -z "$vpc_id" ]]; then
+        echo "❌ Failed to create VPC"
+        return 1
+    fi
+    
+    echo "✅ VPC created: $vpc_id"
+    
+    # Tag the VPC with a name
+    echo "Tagging VPC with name: $vpc_name"
+    run_aws_cmd ec2 create-tags \
+        --resources "$vpc_id" \
+        --tags "Key=Name,Value=$vpc_name"
+    
+    # Enable DNS hostnames and support
+    if [[ "$enable_dns" == true ]]; then
+        echo "Enabling DNS hostnames and support..."
+        run_aws_cmd ec2 modify-vpc-attribute \
+            --vpc-id "$vpc_id" \
+            --enable-dns-hostnames "{\"Value\":true}"
+        
+        run_aws_cmd ec2 modify-vpc-attribute \
+            --vpc-id "$vpc_id" \
+            --enable-dns-support "{\"Value\":true}"
+    fi
+    
+    # Create and attach Internet Gateway if requested
+    if [[ "$create_igw" == true ]]; then
+        echo "Creating Internet Gateway..."
+        local igw_id
+        igw_id=$(run_aws_cmd ec2 create-internet-gateway \
+            --query "InternetGateway.InternetGatewayId" \
+            --output text)
+        
+        if [[ -n "$igw_id" ]]; then
+            echo "✅ Internet Gateway created: $igw_id"
+            
+            echo "Attaching Internet Gateway to VPC..."
+            run_aws_cmd ec2 attach-internet-gateway \
+                --vpc-id "$vpc_id" \
+                --internet-gateway-id "$igw_id"
+            
+            echo "✅ Internet Gateway attached to VPC"
+            
+            # Tag the IGW
+            run_aws_cmd ec2 create-tags \
+                --resources "$igw_id" \
+                --tags "Key=Name,Value=${vpc_name}-IGW"
+        else
+            echo "❌ Failed to create Internet Gateway"
+        fi
+    fi
+    
+    # Create subnets if requested
+    if [[ "$subnet_count" -gt 0 ]]; then
+        echo "Creating $subnet_count subnets..."
+        
+        # Get available AZs
+        local azs
+        azs=($(run_aws_cmd ec2 describe-availability-zones \
+            --query "AvailabilityZones[].ZoneName" \
+            --output text))
+        
+        # Split the VPC CIDR into subnet CIDRs
+        local vpc_octets prefix_size
+        vpc_octets=(${cidr_block/\// })  # Split at the '/'
+        prefix_size=${vpc_octets[1]}     # Get the prefix size
+        
+        # Calculate subnet size (increment prefix by 8 - log2(subnet_count))
+        local subnet_increment=0
+        case $subnet_count in
+            1) subnet_increment=0 ;;
+            2) subnet_increment=1 ;;
+            3|4) subnet_increment=2 ;;
+            5|6|7|8) subnet_increment=3 ;;
+            9|10|11|12|13|14|15|16) subnet_increment=4 ;;
+            *) 
+                echo "❌ Subnet count too large, defaulting to 4 subnets"
+                subnet_count=4
+                subnet_increment=2
+                ;;
+        esac
+        
+        local subnet_prefix=$((prefix_size + subnet_increment))
+        
+        # Create the subnets
+        for ((i=0; i<subnet_count && i<${#azs[@]}; i++)); do
+            local subnet_cidr="${vpc_octets[0]}/$subnet_prefix"
+            local subnet_name="${vpc_name}-subnet-$((i+1))"
+            local is_public=$((i % 2 == 0))  # Alternate public/private
+            
+            echo "Creating subnet $subnet_name in ${azs[$i]}..."
+            local subnet_id
+            subnet_id=$(run_aws_cmd ec2 create-subnet \
+                --vpc-id "$vpc_id" \
+                --cidr-block "$subnet_cidr" \
+                --availability-zone "${azs[$i]}" \
+                --query "Subnet.SubnetId" \
+                --output text)
+            
+            if [[ -n "$subnet_id" ]]; then
+                echo "✅ Subnet created: $subnet_id"
+                
+                # Tag the subnet
+                local pub_priv=$([[ "$is_public" == true ]] && echo "Public" || echo "Private")
+                run_aws_cmd ec2 create-tags \
+                    --resources "$subnet_id" \
+                    --tags "Key=Name,Value=${subnet_name}" "Key=Type,Value=$pub_priv"
+            else
+                echo "❌ Failed to create subnet"
+            fi
+        done
+    fi
+    
+    echo ""
+    echo "✅ VPC setup completed successfully"
+    echo "VPC ID: $vpc_id"
+    echo ""
+    echo "To view details about your new VPC:"
+    echo "aws_vpc_info $vpc_id"
+    
+    # Return to previous region if we changed it
+    if [[ -n "$region" ]]; then
+        unset AWS_DEFAULT_REGION AWS_REGION
+    fi
+    
+    return 0
+}
+
+# Delete a VPC and its dependencies
+aws_vpc_delete() {
+    local vpc_id="$1"
+    local region="$2"
+    local force="${3:-false}"
+    
+    if [[ -z "$vpc_id" ]]; then
+        echo "Usage: aws_vpc_delete <vpc-id> [region] [force]"
+        echo "Example: aws_vpc_delete vpc-1234abcd us-east-1 true"
+        echo ""
+        echo "Parameters:"
+        echo "  vpc-id    The ID of the VPC to delete"
+        echo "  region    Optional AWS region"
+        echo "  force     Set to 'true' to force deletion of dependencies (default: false)"
+        
+        # List VPCs to help user
+        echo ""
+        echo "Available VPCs:"
+        aws_vpc_list "$region"
+        return 1
+    fi
+    
+    # Set region if specified
+    if [[ -n "$region" ]]; then
+        export AWS_DEFAULT_REGION="$region"
+        export AWS_REGION="$region"
+        echo "Using region: $region"
+    fi
+    
+    # Check if VPC exists
+    if ! run_aws_cmd ec2 describe-vpcs --vpc-ids "$vpc_id" &>/dev/null; then
+        echo "❌ VPC $vpc_id does not exist in the current region"
+        return 1
+    fi
+    
+    # Confirm deletion
+    echo -n "Are you sure you want to delete VPC $vpc_id? This cannot be undone. (y/n): "
+    read confirm
+    if [[ "$confirm" != "y" ]]; then
+        echo "Operation cancelled."
+        return 0
+    fi
+    
+    # Delete dependencies if forced
+    if [[ "$force" == "true" ]]; then
+        echo "Force deletion enabled, removing dependencies..."
+        
+        # Detach and delete Internet Gateways
+        echo "Checking for Internet Gateways..."
+        local igw_ids
+        igw_ids=$(run_aws_cmd ec2 describe-internet-gateways \
+            --filters "Name=attachment.vpc-id,Values=$vpc_id" \
+            --query "InternetGateways[].InternetGatewayId" \
+            --output text)
+        
+        for igw_id in $igw_ids; do
+            echo "Detaching Internet Gateway $igw_id..."
+            run_aws_cmd ec2 detach-internet-gateway \
+                --internet-gateway-id "$igw_id" \
+                --vpc-id "$vpc_id"
+            
+            echo "Deleting Internet Gateway $igw_id..."
+            run_aws_cmd ec2 delete-internet-gateway \
+                --internet-gateway-id "$igw_id"
+        done
+        
+        # Delete subnets
+        echo "Checking for subnets..."
+        local subnet_ids
+        subnet_ids=$(run_aws_cmd ec2 describe-subnets \
+            --filters "Name=vpc-id,Values=$vpc_id" \
+            --query "Subnets[].SubnetId" \
+            --output text)
+        
+        for subnet_id in $subnet_ids; do
+            echo "Deleting subnet $subnet_id..."
+            run_aws_cmd ec2 delete-subnet \
+                --subnet-id "$subnet_id"
+        done
+        
+        # Delete route tables (except main)
+        echo "Checking for custom route tables..."
+        local route_table_ids
+        route_table_ids=$(run_aws_cmd ec2 describe-route-tables \
+            --filters "Name=vpc-id,Values=$vpc_id" \
+            --query "RouteTables[?Associations[?!Main]].RouteTableId" \
+            --output text)
+        
+        for rt_id in $route_table_ids; do
+            echo "Deleting route table $rt_id..."
+            run_aws_cmd ec2 delete-route-table \
+                --route-table-id "$rt_id"
+        done
+        
+        # Delete security groups (except default)
+        echo "Checking for security groups..."
+        local sg_ids
+        sg_ids=$(run_aws_cmd ec2 describe-security-groups \
+            --filters "Name=vpc-id,Values=$vpc_id" "Name=group-name,Values=!default" \
+            --query "SecurityGroups[].GroupId" \
+            --output text)
+        
+        for sg_id in $sg_ids; do
+            echo "Deleting security group $sg_id..."
+            run_aws_cmd ec2 delete-security-group \
+                --group-id "$sg_id"
+        done
+        
+        # Delete NAT Gateways
+        echo "Checking for NAT Gateways..."
+        local nat_ids
+        nat_ids=$(run_aws_cmd ec2 describe-nat-gateways \
+            --filter "Name=vpc-id,Values=$vpc_id" \
+            --query "NatGateways[].NatGatewayId" \
+            --output text 2>/dev/null) || true
+        
+        for nat_id in $nat_ids; do
+            echo "Deleting NAT Gateway $nat_id..."
+            run_aws_cmd ec2 delete-nat-gateway \
+                --nat-gateway-id "$nat_id"
+            
+            echo "Waiting for NAT Gateway to delete (this may take a few minutes)..."
+            run_aws_cmd ec2 wait nat-gateway-deleted \
+                --nat-gateway-ids "$nat_id"
+        done
+        
+        # Delete VPC endpoints
+        echo "Checking for VPC endpoints..."
+        local endpoint_ids
+        endpoint_ids=$(run_aws_cmd ec2 describe-vpc-endpoints \
+            --filters "Name=vpc-id,Values=$vpc_id" \
+            --query "VpcEndpoints[].VpcEndpointId" \
+            --output text 2>/dev/null) || true
+        
+        for endpoint_id in $endpoint_ids; do
+            echo "Deleting VPC endpoint $endpoint_id..."
+            run_aws_cmd ec2 delete-vpc-endpoints \
+                --vpc-endpoint-ids "$endpoint_id"
+        done
+    fi
+    
+    # Finally delete the VPC
+    echo "Deleting VPC $vpc_id..."
+    if run_aws_cmd ec2 delete-vpc --vpc-id "$vpc_id"; then
+        echo "✅ VPC $vpc_id deleted successfully"
+    else
+        echo "❌ Failed to delete VPC $vpc_id"
+        echo "This may be because the VPC still has dependencies. Try using the force option:"
+        echo "aws_vpc_delete $vpc_id $region true"
+        return 1
+    fi
+    
+    # Return to previous region if we changed it
+    if [[ -n "$region" ]]; then
+        unset AWS_DEFAULT_REGION AWS_REGION
+    fi
+    
+    return 0
+}
+
+# ----------------------------------------
+
