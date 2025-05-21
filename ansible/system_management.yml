@@ -167,19 +167,19 @@
           --------
           # Run system updates on all hosts:
           ansible-playbook system_management.yml --tags "update,upgrade,cleanup"
-          
+
           # Perform a fresh installation on a single host:
           ansible-playbook system_management.yml -l proxmox-main --tags "fresh_install"
-          
+
           # Update Docker services on a specific group:
           ansible-playbook system_management.yml -l my_servers --tags "docker,docker_compose_update"
-          
+
           # Apply security hardening to multiple specific hosts:
           ansible-playbook system_management.yml -l "proxmox-main,irregularchat-information" --tags "hardening,firewall,ssh_hardening"
-          
+
           # Check mode (dry run) for upgrades on a single host:
           ansible-playbook system_management.yml -l matrix_server --check --tags "upgrade,security"
-          
+
           # Run monitoring setup on all hosts except one:
           ansible-playbook system_management.yml -l "all:!prod_matrix_server" --tags "monitoring"
       tags: always
