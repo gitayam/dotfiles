@@ -13,7 +13,7 @@ fi
 
 # Loop through this list checking if the application is installed and if not then install it
 install_terminal_apps() {
-  terminal_apps=("coreutils" "diceware" "git" "gh" "python" "ansible" "docker" "kubectl" "gpg" "age" "magic-wormhole" "wireguard-tools" "ocrmypdf" "pandoc" "tesseract" "clamav" "ghostscript")
+  terminal_apps=("coreutils" "diceware" "git" "gh" "tree" "python" "ansible" "docker" "kubectl" "gpg" "age" "magic-wormhole" "wireguard-tools" "ocrmypdf" "pandoc" "tesseract" "clamav" "ghostscript")
   for app in "${terminal_apps[@]}"; do
     # Capitalize the first letter of the app name
     capitalized_app="$(echo "${app:0:1}" | tr '[:lower:]' '[:upper:]')${app:1}"
@@ -121,7 +121,7 @@ install_gui_apps() {
   done
 
   # GUI Apps
-  gui_apps=("element" "firefox" "keepassxc" "obsidian" "qbittorrent" "simplex" "tailscale" "docker")
+  gui_apps=("element" "firefox" "keepassxc" "obsidian" "qbittorrent" "simplex" "tailscale" "docker" "warp" )
 
   for app in "${gui_apps[@]}"; do
     if [[ -d "/Applications/$app.app" ]]; then

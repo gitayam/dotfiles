@@ -416,7 +416,7 @@ alias to_pdf="convert_to_pdf"
 handle_pdf() {
     # Create a forcecopy function that bypasses interactive prompts
     # This will be local to the function only
-    local forcecopy() {
+    forcecopy() {
         command cp -f "$@"
     }
     
@@ -1294,7 +1294,7 @@ ensure_tex_path() {
 
 convert_to_pdf() {
     # Define local forcecopy function
-    local forcecopy() {
+    forcecopy() {
         command cp -f "$@"
     }
     
@@ -1383,7 +1383,8 @@ convert_to_pdf() {
                         read -p "Install MacTeX now? (y/n): " install_mactex
                         if [[ "$install_mactex" =~ ^[Yy]$ ]]; then
                             echo "Installing BasicTeX (smaller package)..."
-                            brew install --cask basictex
+                            brew install --cask mactex # Install mactex
+                            eval "$(/usr/libexec/path_helper)" # Update PATH
                             echo "✅ After installation completes, you'll need to restart your terminal or run 'source ~/.zshrc'"
                         fi
                         ;;

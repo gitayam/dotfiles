@@ -32,6 +32,21 @@ git_add(){
     fi
 }
 
+# Undo last local commit, keep changes staged
+git_undo() {
+  git reset --soft HEAD~1
+}
+
+# Delete all merged local branches (except main)
+git_clean_merged() {
+  git branch --merged | grep -vE '(^\*|main|master|develop)' | xargs -r git branch -d
+}
+
+# Show list of branches sorted by last commit date
+git_recent_branches() {
+  git for-each-ref --sort=-committerdate refs/heads/ --format='%(refname:short) — %(committerdate:relative)'
+}
+
 update_git_repos(){
     # Default variables
     search_path="$HOME/Documents/Git/"  # Default search path
@@ -81,16 +96,53 @@ update_git_repos(){
 }
 
 ## Git Clone Function
-### Usage: git_clone repo_name or url
+### Usage: git_clone repo_name or url [destination_path]
 alias clone_repo="git_clone"
 ### from any directory will clone the repo to the correct directory in the ~/Documents/Git/ directory
 git_clone(){
     if [[ -z "$1" ]]; then
         echo "No repository name or URL provided"
+        echo "Usage: git_clone repo_name_or_url [destination_path]"
         return 1
     fi
 
-    input="$1"
+    # Set default base directory
+    local base_dir="$HOME/Documents/Git"
+    
+    # Check if destination path is provided
+    local custom_path=""
+    if [[ -n "$2" ]]; then
+        custom_path="$2"
+        # If path is relative (doesn't start with /), make it absolute
+        if [[ ! "$custom_path" =~ ^/ ]]; then
+            custom_path="$(pwd)/$custom_path"
+        fi
+    fi
+
+    #check if gh is installed
+    if [[ -z "$(command -v gh)" ]]; then
+        echo "GitHub CLI (gh) is not installed."
+        echo "Would you like to install it? (y/n): "
+        read install_gh
+        if [[ $install_gh =~ ^[Yy]$ ]]; then
+            brew install gh
+        fi
+        return 1
+    fi
+    #check if gh is setup
+    if ! gh auth status &>/dev/null; then
+        echo "GitHub CLI (gh) is not logged in."
+        echo "Would you like to login? (y/n): "
+        read login_gh
+        if [[ $login_gh =~ ^[Yy]$ ]]; then
+            gh auth login
+        fi
+        return 1
+    fi
+
+    # Process each argument as a separate repository
+    local input="$1"
+    echo "Processing repository: $input"
     repo_url=""
     repo_name=""
 
@@ -99,21 +151,29 @@ git_clone(){
         if command -v gh &> /dev/null; then
             user_repo=${BASH_REMATCH[1]}
             repo_name=$(basename "$user_repo")
-            if [[ -d "$HOME/Documents/Git/$repo_name" ]]; then
-                echo "Repository already exists: $repo_name"
+            
+            # Determine target directory
+            local target_dir=""
+            if [[ -n "$custom_path" ]]; then
+                target_dir="$custom_path"
+                # If custom path is a directory, append repo name
+                if [[ -d "$custom_path" ]]; then
+                    target_dir="$custom_path/$repo_name"
+                fi
+            else
+                target_dir="$base_dir/$repo_name"
+            fi
+            
+            if [[ -d "$target_dir" ]]; then
+                echo "Repository already exists: $target_dir"
                 return 1
             fi
-            gh repo clone "$user_repo" "$HOME/Documents/Git/$repo_name" || {
+            
+            gh repo clone "$user_repo" "$target_dir" || {
                 echo "Failed to clone repository with gh"
                 return 1
             }
-            cd "$HOME/Documents/Git/$repo_name" || {
-                echo "Failed to access $repo_name directory"
-                return 1
-            }
-            pwd
-            ls -l
-            open_repo_dir
+            echo "Successfully cloned $repo_name to $target_dir"
             return 0
         else
             echo "GitHub CLI (gh) is not installed."
@@ -136,13 +196,14 @@ git_clone(){
             fi
         fi
     # HTTPS URL
-    elif [[ "$input" =~ ^https?:// ]]; then
+    elif [[ "$input" =~ ^https?://github\.com/[^/]+/[^/]+(\.git)?$ ]]; then
         repo_url="$input"
         repo_name=$(basename "$input")
         repo_name="${repo_name%.git}"
     # user/repo shorthand
     elif [[ "$input" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+(\.git)?$ ]]; then
         repo_name=$(basename "$input")
+        repo_name="${repo_name%.git}"
         # Only append .git if not already present
         if [[ "$input" == *.git ]]; then
             repo_url="https://github.com/$input"
@@ -151,7 +212,7 @@ git_clone(){
         fi
     # bare repo name
     else
-        repo_name=$(basename "$input")
+        repo_name="$input"
         repo_url="https://github.com/your-username/$repo_name.git"
     fi
 
@@ -161,25 +222,39 @@ git_clone(){
         return 1
     fi
 
-    # Check if the repo name already exists in the ~/Documents/Git/ directory
-    if [[ -d "$HOME/Documents/Git/$repo_name" ]]; then
-        echo "Repository already exists: $repo_name"
+    # Determine target directory
+    local target_dir=""
+    if [[ -n "$custom_path" ]]; then
+        target_dir="$custom_path"
+        # If custom path is a directory, append repo name
+        if [[ -d "$custom_path" ]]; then
+            target_dir="$custom_path/$repo_name"
+        fi
+    else
+        target_dir="$base_dir/$repo_name"
+    fi
+    
+    # Check if the target directory already exists
+    if [[ -d "$target_dir" ]]; then
+        echo "Repository already exists: $target_dir"
         return 1
     fi
 
-    # Clone the repo to the ~/Documents/Git/ directory
-    git clone "$repo_url" "$HOME/Documents/Git/$repo_name" || {
-        echo "Failed to clone repository"
-        return 1
-    }
+    # Create parent directory if it doesn't exist
+    mkdir -p "$(dirname "$target_dir")"
 
-    # Change to the cloned repository directory
-    cd "$HOME/Documents/Git/$repo_name" || {
-        echo "Failed to access $repo_name directory"
+    # Clone the repo to the target directory
+    echo "Cloning $repo_name to $target_dir..."
+    git clone "$repo_url" "$target_dir" || {
+        echo "Failed to clone repository: $repo_name"
         return 1
     }
-    pwd
-    ls -l
+    echo "Successfully cloned $repo_name to $target_dir"
+    
+    # Change to the repository directory
+    cd "$target_dir" || return 1
+    
+    # Offer to open in an editor
     open_repo_dir
 }
 
@@ -272,7 +347,9 @@ create_repo(){
         echo "2) Node/JavaScript"
         echo "3) Markdown"
         echo "4) Shell"
-        echo "5) None (basic repo setup)"
+        echo "5) Python + Node/JavaScript"
+        echo "6) Rust"
+        echo "7) None (basic repo setup)"
         
         echo -n "Select a template (1-5): "
         read template_choice
@@ -289,6 +366,12 @@ create_repo(){
                 ;;
             4)
                 gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Shell || return 1
+                ;;
+            5)
+                gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Python,Node || return 1
+                ;;
+            6)
+                gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Rust || return 1
                 ;;
             *)
                 gh repo create --add-readme "$repo_name" --private --license=mit || return 1
@@ -308,6 +391,27 @@ create_repo(){
 
     echo "Repository $repo_name created and initialized successfully in $base_dir."
 } 
+
+# ----------------------
+# Project Management
+# ----------------------
+cdproj() {
+    # Usage: cdproj [repo_name]
+    # check if fzf is installed
+    if ! command -v fzf &> /dev/null; then
+        echo "Error: fzf is not installed."
+        echo "Would you like to install it? (y/n): "
+        read install_fzf
+        if [[ $install_fzf =~ ^[Yy]$ ]]; then
+            brew install fzf
+        fi
+        return 1
+    fi
+    local dir
+    dir=$(find ~/Documents/Git -maxdepth 2 -type d | fzf +m)
+    cd "$dir"
+    echo "Current directory: $(pwd)"
+}
 
 # ----------------------
 # Python Virtual Environment Management
