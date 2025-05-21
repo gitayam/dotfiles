@@ -7,13 +7,411 @@ alias ports='netstat -tulanp'  # List open ports
 alias myip='curl ifconfig.me'  # Check external IP address
 alias http="curl -I"           # Check HTTP headers
 
+# lookup your public IP via multiple services
+check_ip() {
+    for svc in ifconfig.me ipinfo.io/ip; do
+        echo -n "$svc → " && curl -s "$svc"
+    done
+}
+
+# flush DNS cache
+flushdns() {
+    # flush DNS cache -  can be helpful when you have a new IP address
+    sudo killall -HUP mDNSResponder
+}
+
+# faster DNS lookup with caching
+digc() {
+    # flush DNS cache
+    flushdns
+    
+    # if no arg is passed use default google DNS if arg is passed use that arg
+    if [[ -z "$1" ]]; then
+        dig @8.8.8.8
+    else
+        # Use array to prevent word splitting issues
+        local args=("$@")
+        dig "${args[@]}"
+    fi
+}
+
+# quick ping summary
+pings() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: pings hostname [count]"
+        return 1
+    fi
+    ping -c "${2:-5}" "$1" | tail -2
+}
+
+# MAC address management
+gen_mac_addr() {
+    local mac
+    mac=$(openssl rand -hex 6 | sed 's/\(..\)/\1:/g; s/.$//')
+    echo "$mac"
+}
+
+show_current_mac() {
+    local interface_input="$1"
+    local interface_name
+    
+    if [[ -z "$interface_input" ]]; then
+        echo "Usage: show_current_mac <device_name>"
+        echo "Available interfaces:"
+        networksetup -listallhardwareports | grep -E "Hardware Port:|Device:|Ethernet Address:" | sed 's/^/  /'
+        return 1
+    fi
+    
+    # Convert friendly name to device name if needed
+    if [[ "$interface_input" == "Wi-Fi" || "$interface_input" == "wifi" || "$interface_input" == "WIFI" ]]; then
+        # Look up the device name for Wi-Fi
+        interface_name=$(networksetup -listallhardwareports | grep -A 1 "Wi-Fi" | grep "Device:" | awk '{print $2}')
+        echo "Converting Wi-Fi to device name: $interface_name"
+    elif [[ "$interface_input" =~ ^en[0-9]+$ ]]; then
+        # Already a device name
+        interface_name="$interface_input"
+    else
+        # Try to find the device name for the given hardware port
+        interface_name=$(networksetup -listallhardwareports | grep -A 1 "$interface_input" | grep "Device:" | awk '{print $2}')
+        if [[ -z "$interface_name" ]]; then
+            echo "Error: Could not find device name for '$interface_input'"
+            echo "Available interfaces:"
+            networksetup -listallhardwareports | grep -E "Hardware Port:|Device:|Ethernet Address:" | sed 's/^/  /'
+            return 1
+        fi
+        echo "Converting '$interface_input' to device name: $interface_name"
+    fi
+    
+    networksetup -getmacaddress "$interface_name"
+}
+
+change_mac_address() {
+    local mac_address="$1"
+    local interface_input="$2"
+    local interface_name
+    
+    # Generate random MAC if none provided
+    if [[ -z "$mac_address" ]]; then
+        mac_address=$(gen_mac_addr)
+        echo "No MAC address provided. Using generated MAC: $mac_address"
+    fi
+    
+    # Check if interface name is provided
+    if [[ -z "$interface_input" ]]; then
+        echo "No interface name provided. Available interfaces:"
+        networksetup -listallhardwareports | grep -E "Hardware Port:|Device:|Ethernet Address:" | sed 's/^/  /'
+        echo "Usage: change_mac_address <mac_address> <interface_name>"
+        return 1
+    fi
+    
+    # Convert friendly name to device name if needed
+    if [[ "$interface_input" == "Wi-Fi" || "$interface_input" == "wifi" || "$interface_input" == "WIFI" ]]; then
+        # Look up the device name for Wi-Fi
+        interface_name=$(networksetup -listallhardwareports | grep -A 1 "Wi-Fi" | grep "Device:" | awk '{print $2}')
+        echo "Converting Wi-Fi to device name: $interface_name"
+    elif [[ "$interface_input" =~ ^en[0-9]+$ ]]; then
+        # Already a device name
+        interface_name="$interface_input"
+    else
+        # Try to find the device name for the given hardware port
+        interface_name=$(networksetup -listallhardwareports | grep -A 1 "$interface_input" | grep "Device:" | awk '{print $2}')
+        if [[ -z "$interface_name" ]]; then
+            echo "Error: Could not find device name for '$interface_input'"
+            echo "Available interfaces:"
+            networksetup -listallhardwareports | grep -E "Hardware Port:|Device:|Ethernet Address:" | sed 's/^/  /'
+            return 1
+        fi
+        echo "Converting '$interface_input' to device name: $interface_name"
+    fi
+    
+    # Get current MAC for this interface
+    local current_info
+    current_info=$(networksetup -getmacaddress "$interface_name" 2>/dev/null)
+    
+    # Check if the interface exists
+    if [[ $? -ne 0 || "$current_info" == *"does not exist"* ]]; then
+        echo "Error: Interface $interface_name not found."
+        return 1
+    fi
+    
+    # Extract current MAC address
+    local current_mac
+    current_mac=$(echo "$current_info" | awk '{print $3}')
+    
+    # Save original MAC if not already saved
+    local mac_file="$HOME/.mac_$interface_name"
+    if [[ ! -f "$mac_file" ]]; then
+        echo "$current_mac" > "$mac_file"
+        echo "Original MAC address saved: $current_mac"
+    fi
+    
+    # Change MAC address
+    echo "Changing MAC address for $interface_name to $mac_address..."
+    
+    # Turn off the interface
+    echo "Disabling interface..."
+    sudo ifconfig "$interface_name" down
+    
+    # Set the new MAC address
+    sudo ifconfig "$interface_name" ether "$mac_address"
+    
+    # Turn the interface back on
+    echo "Re-enabling interface..."
+    sudo ifconfig "$interface_name" up
+    
+    # Verify the change
+    local new_mac
+    new_mac=$(ifconfig "$interface_name" | grep ether | awk '{print $2}')
+    
+    if [[ "$new_mac" == "$mac_address" ]]; then
+        echo "MAC address successfully changed to $mac_address"
+        return 0
+    else
+        echo "Failed to change MAC address. Current MAC is $new_mac"
+        return 1
+    fi
+}
+
+change_mac_menu() {
+    local choice mac_address interface_name
+    
+    # First show available interfaces
+    echo "Available network interfaces:"
+    networksetup -listallhardwareports | grep -E "Hardware Port:|Device:|Ethernet Address:" | sed 's/^/  /'
+    echo ""
+    echo "You can use either the device name (e.g., en0) or the friendly name (e.g., Wi-Fi)"
+    echo ""
+    
+    echo "Choose an option:"
+    echo "0. Show current MAC address"
+    echo "1. Set a specific MAC address"
+    echo "2. Set a random MAC address"
+    echo "3. Restore original MAC address"
+    echo -n "Enter your choice (0/1/2/3): "
+    read -r choice
+
+    case $choice in
+        0)
+            echo -n "Enter interface name (e.g., en0 or Wi-Fi): "
+            read -r interface_name
+            show_current_mac "$interface_name"
+            ;;
+        1)
+            echo -n "Enter the new MAC address (e.g., E6:B8:BA:D2:41:07): "
+            read -r mac_address
+            echo -n "Enter the interface name (e.g., en0 or Wi-Fi): "
+            read -r interface_name
+            change_mac_address "$mac_address" "$interface_name"
+            ;;
+        2)
+            echo -n "Enter the interface name (e.g., en0 or Wi-Fi): "
+            read -r interface_name
+            mac_address=$(gen_mac_addr)
+            change_mac_address "$mac_address" "$interface_name"
+            ;;
+        3)
+            echo -n "Enter the interface name to restore (press enter to see available): "
+            read -r interface_name
+            restore_original_mac "$interface_name"
+            ;;
+        *)
+            echo "Invalid choice. Exiting."
+            return 1
+            ;;
+    esac
+}
+
+analyze_network_traffic() {
+    local help=false pcap_file=""
+    # Analysis flags
+    local want_top=false want_proto=false want_io=false want_http=false
+    local want_dns=false want_tls=false want_expert=false want_resp=false
+    local export_fields=""
+
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help)       help=true; shift ;;
+            -f|--file)       pcap_file="$2"; shift 2 ;;
+            -t|--top-talkers) want_top=true; shift ;;
+            -p|--proto-hierarchy) want_proto=true; shift ;;
+            -s|--io-stats)   want_io=true; shift ;;
+            -H|--http)       want_http=true; shift ;;
+            -D|--dns-summary) want_dns=true; shift ;;
+            -L|--tls-handshake) want_tls=true; shift ;;
+            -E|--expert)     want_expert=true; shift ;;
+            -R|--response-times) want_resp=true; shift ;;
+            -x|--export-fields) export_fields="$2"; shift 2 ;;
+            *) echo "Unknown option: $1"; echo "Try: analyze_network_traffic -h"; return 1 ;;
+        esac
+    done
+
+    # Help or missing file
+    if $help || [[ -z "$pcap_file" ]]; then
+        echo "Usage: analyze_network_traffic -f FILE [options]"
+        echo
+        echo "Options:"
+        echo "  -f, --file FILE           PCAP file to analyze (required)"
+        echo "  -t, --top-talkers         Show IP conversation stats"
+        echo "  -p, --proto-hierarchy     Show protocol hierarchy"
+        echo "  -s, --io-stats            Show packet I/O rates"
+        echo "  -H, --http                Extract HTTP host/URI list"
+        echo "  -D, --dns-summary         Summarize DNS qtypes/qclasses"
+        echo "  -L, --tls-handshake       Count TLS handshake packets"
+        echo "  -E, --expert              Show expert errors/warnings"
+        echo "  -R, --response-times      Show DNS/HTTP response times"
+        echo "  -x, --export-fields F1,F2 Export fields F1,F2,... as CSV"
+        return 0
+    fi
+
+    # Validate file exists
+    if [[ ! -f "$pcap_file" ]]; then
+        echo "Error: PCAP file '$pcap_file' not found"
+        return 1
+    fi
+
+    echo "Analyzing $pcap_file..."
+
+    # Top Talkers (IP conversations)
+    if $want_top; then
+        echo "== Top Talkers =="
+        tshark -r "$pcap_file" -q -z conv,ip      #  [oai_citation:11‡Wireshark Q&A](https://osqa-ask.wireshark.org/questions/6430/analyze-per-ip/?utm_source=chatgpt.com)
+    fi
+
+    # Protocol Hierarchy
+    if $want_proto; then
+        echo "== Protocol Hierarchy =="
+        tshark -r "$pcap_file" -q -z io,phs        #  [oai_citation:12‡Chris Sanders](https://chrissanders.org/2018/05/large-captures2-proto-hierarchy/?utm_source=chatgpt.com)
+    fi
+
+    # I/O Statistics (per-second)
+    if $want_io; then
+        echo "== I/O Statistics =="
+        tshark -r "$pcap_file" -q -z io,stat,1     #  [oai_citation:13‡Stack Overflow](https://stackoverflow.com/questions/14451599/how-to-save-tshark-statistics-in-variables?utm_source=chatgpt.com) [oai_citation:14‡GitHub](https://github.com/Cthfm/Azure/blob/main/packet-analysis/tshark-cheatsheet.md?utm_source=chatgpt.com)
+    fi
+
+    # HTTP Requests Extraction
+    if $want_http; then
+        echo "== HTTP Requests =="
+        tshark -r "$pcap_file" -Y http.request \
+               -T fields -e http.host -e http.request.uri  #  [oai_citation:15‡CellStream, Inc.](https://www.cellstream.com/2014/05/12/t-shark-usage-examples/?utm_source=chatgpt.com) [oai_citation:16‡Gist](https://gist.github.com/githubfoam/6c9e07f95c2eb03ec4ae9709252c713f?utm_source=chatgpt.com)
+    fi
+
+    # DNS Summary
+    if $want_dns; then
+        echo "== DNS Summary =="
+        tshark -r "$pcap_file" -q -z dns,tree      #  [oai_citation:17‡Wireshark](https://www.wireshark.org/docs/man-pages/tshark.html?utm_source=chatgpt.com)
+    fi
+
+    # TLS Handshake Count
+    if $want_tls; then
+        echo "== TLS Handshakes =="
+        tshark -r "$pcap_file" -Y tls.handshake \
+               -q -z io,stat,0                    #  [oai_citation:18‡CLI Wiki](https://cli.wiki/TShark---Terminal-Wireshark-Network-Analyzer-Guide?utm_source=chatgpt.com)
+    fi
+
+    # Expert Info (errors/warnings)
+    if $want_expert; then
+        echo "== Expert Info =="
+        tshark -r "$pcap_file" -q -z "expert,error"  #  [oai_citation:19‡Gist](https://gist.github.com/donovanrodriguez/87dacb99caefa56d98d7e35b7d4a2539?utm_source=chatgpt.com)
+    fi
+
+    # Service Response Times (DNS & HTTP)
+    if $want_resp; then
+        echo "== Response Times =="
+        tshark -r "$pcap_file" -q -z srt,dns        #  [oai_citation:20‡Gist](https://gist.github.com/donovanrodriguez/87dacb99caefa56d98d7e35b7d4a2539?utm_source=chatgpt.com)
+        tshark -r "$pcap_file" -q -z srt,http
+    fi
+
+    # CSV Field Export
+    if [[ -n "$export_fields" ]]; then
+        echo "== Exporting Fields: $export_fields =="
+        # convert comma list to multiple -e args
+        IFS=',' read -ra F <<< "$export_fields"
+        tshark -r "$pcap_file" -T fields -E header=y -E separator=, "${F[@]/#/-e }"
+    fi
+}
+
+capture_network_traffic() {
+	local iface duration size count prefix filter help=false
+
+	# Default prefix
+	prefix="capture"
+
+	# Parse options
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		-h|--help)
+			help=true; shift
+			;;
+		-i|--interface)
+			iface="$2"; shift 2
+			;;
+		-d|--duration)
+			duration="$2"; shift 2
+			;;
+		-s|--size)
+			size="$2"; shift 2
+			;;
+		-c|--count)
+			count="$2"; shift 2
+			;;
+		-o|--prefix)
+			prefix="$2"; shift 2
+			;;
+		-p|--filter)
+			filter="$2"; shift 2
+			;;
+		*)
+			echo "Unknown option: $1"
+			echo "Use: capture_network_traffic --help"
+			return 1
+			;;
+		esac
+	done
+
+	# Show help or error if interface missing
+	if [[ "$help" == true ]] || [[ -z "$iface" ]]; then
+		echo "Usage: capture_network_traffic -i interface [options]"
+		echo "	-i, --interface IFACE    (required) e.g. en0"
+		echo "	-d, --duration SEC       rotate every SEC seconds"
+		echo "	-s, --size MB            rotate after MB megabytes"
+		echo "	-c, --count N            keep up to N files"
+		echo "	-o, --prefix PREFIX      filename prefix (default: capture)"
+		echo "	-p, --filter BPF         e.g. 'port 443 and host 1.2.3.4'"
+		echo "	-h, --help               show this message"
+		return 0
+	fi
+
+	# Build timestamped filename
+	local ts file cmd
+	ts=$(date +%Y%m%d_%H%M%S)
+	file="${prefix}_${ts}.pcap"
+
+	# Assemble tcpdump command
+	cmd=( sudo tcpdump -i "$iface" -s 0 -n -w "$file" )
+	[[ -n "$size"     ]] && cmd+=( -C "$size" )       # size-based rotate  [oai_citation:8‡Kudithipudi](https://kudithipudi.org/2013/02/14/how-to-configure-tcpdump-to-rotate-capture-files-based-on-size/?utm_source=chatgpt.com)
+	[[ -n "$duration" ]] && cmd+=( -G "$duration" )   # time-based rotate  [oai_citation:9‡discoveringsystems.com](https://discoveringsystems.com/how-to-rotate-packet-capture-files-using-tcpdump/?utm_source=chatgpt.com)
+	[[ -n "$count"    ]] && cmd+=( -W "$count" )      # limit file count  [oai_citation:10‡Super User](https://superuser.com/questions/904786/tcpdump-rotate-capture-files-using-g-w-and-c?utm_source=chatgpt.com)
+	[[ -n "$filter"   ]] && cmd+=( $filter )          # BPF filter  [oai_citation:11‡myF5](https://my.f5.com/manage/s/article/K65251607?utm_source=chatgpt.com)
+
+	# Execute
+	echo "Capturing on $iface → $file"
+	printf '› %q ' "${cmd[@]}"
+	echo
+	"${cmd[@]}"
+}
+
+
 # Scan network ports
-scan_ports(){
-    #usage: scan_ports ip_or_host
+scan_ports() {
+    local ip_or_host local_ip install_nmap
+    
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
         echo "usage: scan_ports ip_or_host"
         return 0
     fi
+    
     # if no ip_or_host is passed then use the router ip 
     if [[ -z "$1" ]]; then
         local_ip=$(ifconfig | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -n 1)
@@ -21,13 +419,12 @@ scan_ports(){
     else
         ip_or_host=$1
     fi
+    
     #check if package is installed
     if ! command -v nmap &> /dev/null; then
         echo "Error: nmap is not installed"
-        #prompt to install if yes install and continue else return 1
-        install_nmap="n"
         echo -n "Do you want to install nmap? (y/n): " 
-        read install_nmap
+        read -r install_nmap
         if [[ $install_nmap =~ ^[Yy]$ ]]; then
             brew install nmap
             echo "nmap installed, continuing with scan"
@@ -35,16 +432,18 @@ scan_ports(){
             return 1
         fi
     fi
-    sudo nmap -sS -Pn $1
+    sudo nmap -sS -Pn "$ip_or_host"
 }
 
 # Python HTTP server
-pyserver(){
-    # usage: pyserver file1 file2 ...
+pyserver() {
+    local port=8000 local_ip file original_dir
+    
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
         echo "Usage: pyserver file1 file2 ..."
         return 0
     fi
+    
     # check if python3 is installed
     if ! command -v python3 &> /dev/null; then
         echo "Error: Python 3 is not installed"
@@ -52,56 +451,57 @@ pyserver(){
         echo 'brew install python'
         return 1
     fi
-    # set port for the python server
-    local port=8000
-    # create a python server for the passed files or dir
+    
     #get local ip
     local_ip=$(hostname -I | awk '{print $1}')
-    # path for the server else use current dir
+    original_dir=$(pwd)
+    
     # if multiple files passed in arg then create tmp dir and add those passed files or dir via ln to the temp server dir
-    # if no files passed in arg then use current dir
-    if [ -n "$1" ]; then # if there are files passed in arg
+    if [ -n "$1" ]; then
         # create temp dir
         mkdir -p /tmp/pyserver
         # add files or dir to the temp dir
         for file in "$@"; do
-            ln -s "$file" /tmp/pyserver
+            ln -s "$file" /tmp/pyserver/
         done
         # change dir to the temp dir
-        cd /tmp/pyserver
-        # start the python server
-        python3 -m http.server $port
-    else
-        # use current dir
-        cd .
-        # start the python server
-        python3 -m http.server $port
+        cd /tmp/pyserver || return 1
     fi
+    
+    # start the python server
+    python3 -m http.server "$port"
+    
+    # Return to original directory
+    cd "$original_dir" || return 1
 }
 
 # Tailscale funnel for sharing files or services over the internet
 funnel() {
-    # Default port and allow override with FUNNEL_PORT env variable
     local port=${FUNNEL_PORT:-8080}
     local use_python=true
     local direct_service=false
+    local target
+    local server_pid
+    local original_dir
     
     # Process options
     while [[ "$1" == -* ]]; do
         case "$1" in
             -h|--help)
-                echo "Usage: funnel [OPTIONS] [target]"
-                echo "Funnel enables you to share local files or services over the internet using Tailscale."
-                echo ""
-                echo "Options:"
-                echo "  -h, --help            Show this help message"
-                echo "  -d, --direct          Directly funnel to a port without using Python server"
-                echo "  -p, --port PORT       Specify port (default: 8080 or FUNNEL_PORT env variable)"
-                echo ""
-                echo "Examples:"
-                echo "  funnel file.txt              # Share a file using Python HTTP server"
-                echo "  funnel -d -p 3000            # Directly funnel localhost:3000"
-                echo "  funnel -d redis://localhost:6379  # Directly funnel a Redis service"
+                cat << 'EOF'
+Usage: funnel [OPTIONS] [target]
+Funnel enables you to share local files or services over the internet using Tailscale.
+
+Options:
+  -h, --help            Show this help message
+  -d, --direct          Directly funnel to a port without using Python server
+  -p, --port PORT       Specify port (default: 8080 or FUNNEL_PORT env variable)
+
+Examples:
+  funnel file.txt              # Share a file using Python HTTP server
+  funnel -d -p 3000            # Directly funnel localhost:3000
+  funnel -d redis://localhost:6379  # Directly funnel a Redis service
+EOF
                 return 0
                 ;;
             -d|--direct)
@@ -129,7 +529,7 @@ funnel() {
         # Check again if tailscale is running after attempting to start it
         if ! tailscale status &> /dev/null; then
             echo "Error: Failed to start Tailscale. Please start it manually."
-        return 1
+            return 1
         fi
         echo "Tailscale started successfully. Continuing..."
     fi
@@ -139,14 +539,15 @@ funnel() {
         echo "No target specified. Using current directory as target."
         target="."
     else
-        target="$@"
+        target="$*"
     fi
 
     # Kill any existing Python HTTP servers on our port
-    local existing_pid=$(lsof -ti:$port)
+    local existing_pid
+    existing_pid=$(lsof -ti:"$port")
     if [[ -n "$existing_pid" ]]; then
         echo "Killing existing process on port $port (PID: $existing_pid)"
-        kill -9 $existing_pid 2>/dev/null
+        kill -9 "$existing_pid" 2>/dev/null
         sleep 1
     fi
 
@@ -156,15 +557,16 @@ funnel() {
         # Find and kill the Python HTTP server process
         if [[ -n "$server_pid" ]]; then
             echo "Killing server process (PID: $server_pid)"
-            kill -9 $server_pid 2>/dev/null
-            wait $server_pid 2>/dev/null
+            kill -9 "$server_pid" 2>/dev/null
+            wait "$server_pid" 2>/dev/null
         fi
         
         # Also try to find any process using our port
-        local port_pid=$(lsof -ti:$port)
+        local port_pid
+        port_pid=$(lsof -ti:"$port")
         if [[ -n "$port_pid" ]]; then
             echo "Killing process on port $port (PID: $port_pid)"
-            kill -9 $port_pid 2>/dev/null
+            kill -9 "$port_pid" 2>/dev/null
         fi
         
         # Clean up temp directory
@@ -175,7 +577,7 @@ funnel() {
         
         # Return to original directory
         if [[ -n "$original_dir" ]]; then
-            cd "$original_dir"
+            cd "$original_dir" || return 1
         fi
         
         return 0
@@ -197,7 +599,7 @@ funnel() {
             tailscale funnel "$target"
         else
             echo "Funneling localhost:$port"
-            tailscale funnel localhost:$port
+            tailscale funnel "localhost:$port"
         fi
         
         # Keep the process alive until Ctrl+C
@@ -240,7 +642,7 @@ funnel() {
         done
         
         # Change dir to the temp dir
-        cd /tmp/funnel
+        cd /tmp/funnel || return 1
         
         # List the contents to verify
         echo "Files available for sharing:"
@@ -248,45 +650,44 @@ funnel() {
         
         if $use_python; then
             # Start the python server
-            python3 -m http.server $port &
+            python3 -m http.server "$port" &
             server_pid=$!
             
             # Wait a moment to ensure server starts
             sleep 1
             
             # Check if server started successfully
-            if ! lsof -ti:$port >/dev/null 2>&1; then
+            if ! lsof -ti:"$port" >/dev/null 2>&1; then
                 echo "Error: Failed to start Python HTTP server on port $port"
                 cleanup
                 return 1
             fi
             
             # Start the funnel
-            tailscale funnel localhost:$port
+            tailscale funnel "localhost:$port"
         else
             # Start the funnel
             tailscale funnel "$target"
         fi
     else
         # Use current dir
-        cd .
         if $use_python; then
             # Start the python server
-            python3 -m http.server $port &
+            python3 -m http.server "$port" &
             server_pid=$!
             
             # Wait a moment to ensure server starts
             sleep 1
             
             # Check if server started successfully
-            if ! lsof -ti:$port >/dev/null 2>&1; then
+            if ! lsof -ti:"$port" >/dev/null 2>&1; then
                 echo "Error: Failed to start Python HTTP server on port $port"
                 cleanup
                 return 1
             fi
             
             # Start the funnel
-            tailscale funnel localhost:$port
+            tailscale funnel "localhost:$port"
         else
             # Start the funnel
             tailscale funnel "$target"
@@ -298,39 +699,74 @@ alias tsf=funnel
 alias postfile=funnel
 alias openport="funnel -d -p"
 
-# MAC address management
-gen_mac_addr(){
-    local mac=$(openssl rand -hex 6 | sed 's/\(..\)/\1:/g; s/.$//')
-    echo "$mac"
+restore_original_mac() {
+    local interface_input="$1"
+    local interface_name
+    
+    # If interface is provided, convert friendly name to device name if needed
+    if [[ -n "$interface_input" ]]; then
+        if [[ "$interface_input" == "Wi-Fi" || "$interface_input" == "wifi" || "$interface_input" == "WIFI" ]]; then
+            # Look up the device name for Wi-Fi
+            interface_name=$(networksetup -listallhardwareports | grep -A 1 "Wi-Fi" | grep "Device:" | awk '{print $2}')
+            echo "Converting Wi-Fi to device name: $interface_name"
+        elif [[ "$interface_input" =~ ^en[0-9]+$ ]]; then
+            # Already a device name
+            interface_name="$interface_input"
+        else
+            # Try to find the device name for the given hardware port
+            interface_name=$(networksetup -listallhardwareports | grep -A 1 "$interface_input" | grep "Device:" | awk '{print $2}')
+            if [[ -z "$interface_name" ]]; then
+                echo "Error: Could not find device name for '$interface_input'"
+                echo "Available interfaces:"
+                networksetup -listallhardwareports | grep -E "Hardware Port:|Device:|Ethernet Address:" | sed 's/^/  /'
+                return 1
+            fi
+            echo "Converting '$interface_input' to device name: $interface_name"
+        fi
+    # If no interface specified, show available ones with saved MACs
+    else
+        local saved_interfaces=()
+        for file in "$HOME"/.mac_*; do
+            if [[ -f "$file" ]]; then
+                saved_interfaces+=($(basename "$file" | sed 's/^.mac_//'))
+            fi
+        done
+        
+        if [[ ${#saved_interfaces[@]} -eq 0 ]]; then
+            echo "No interfaces found with saved original MAC addresses."
+            return 1
+        fi
+        
+        echo "Select an interface to restore original MAC address:"
+        select interface_name in "${saved_interfaces[@]}"; do
+            if [[ -n "$interface_name" ]]; then
+                break
+            else
+                echo "Invalid selection. Please try again."
+            fi
+        done
+    fi
+    
+    # Check if we have a saved MAC for this interface
+    local mac_file="$HOME/.mac_$interface_name"
+    if [[ ! -f "$mac_file" ]]; then
+        echo "No saved original MAC address found for $interface_name"
+        return 1
+    fi
+    
+    # Get the original MAC address
+    local original_mac
+    original_mac=$(cat "$mac_file")
+    
+    echo "Restoring original MAC address ($original_mac) for $interface_name..."
+    
+    # Use our change_mac_address function to do the actual change
+    if change_mac_address "$original_mac" "$interface_name"; then
+        echo "Original MAC address successfully restored"
+        rm "$mac_file"  # Remove the saved file since we've restored the original
+        return 0
+    else
+        echo "Failed to restore original MAC address"
+        return 1
+    fi
 }
-
-change_mac_menu(){
-    echo "Choose an option:"
-    echo "1. Set a specific MAC address"
-    echo "2. Set a random MAC address"
-    echo "3. Restore original MAC address"
-    echo -n "Enter your choice (1/2/3): "
-    read choice
-
-    case $choice in
-        1)
-            echo -n "Enter the new MAC address (e.g., E6:B8:BA:D2:41:07): "
-            read mac_address
-            echo -n "Enter the name of the new network location: "
-            read location_name
-            change_mac_address "$mac_address" "$location_name"
-            ;;
-        2)
-            echo -n "Enter the name of the new network location: "
-            read location_name
-            mac_address=$(gen_mac_addr)
-            change_mac_address "$mac_address" "$location_name"
-            ;;
-        3)
-            restore_original_mac
-            ;;
-        *)
-            echo "Invalid choice. Exiting."
-            ;;
-    esac
-} 

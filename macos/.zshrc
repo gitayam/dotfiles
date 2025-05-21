@@ -13,7 +13,7 @@ export PS1="%n@%m %1~ %# "
 # autoload -U compinit && compinit
 
 # Load zsh configuration files
-for config_file in ~/.zsh_{aliases,functions,developer,apps,network,transfer,security,utils,docker,dev,handle_files}; do
+for config_file in ~/.zsh_{aliases,aws,functions,developer,apps,network,transfer,security,utils,docker,handle_files,encryption,git}; do
   if [ -f "$config_file" ]; then
     source "$config_file"
   fi
@@ -75,7 +75,7 @@ sudotouch() {
   fi
 }
 # alias for initial-setup.sh
-alias initial-install="./initial-setup.sh"
+alias initial-install="./initial_macos_setup.sh"
 # call sudotouch to enable Touch ID for sudo if not already enabled
 sudotouch
 
