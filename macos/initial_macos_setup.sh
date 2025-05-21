@@ -32,7 +32,96 @@ install_terminal_apps() {
 }
 
 install_gui_apps() {
-  gui_apps=("element" "firefox" "keepassxc" "obsidian" "qbittorrent" "simplex" "tailscale")
+  # Prompt user for which Code Editor to install
+  echo "Which code editor would you like to install?"
+  echo "1. Visual Studio Code"
+  echo "2. Cursor (Default)"
+  echo "3. Windsurf"
+  echo "4. None"
+  echo -n "Enter your choice (1-4)(Default: 2) (multiple choices separated by commas): "
+  read editor_choice
+  editor_choice=${editor_choice:-2}
+
+  # Convert comma separated choices to array, trim whitespace, remove duplicates (zsh compatible)
+  raw_choices=()
+  local IFS=','
+  for item in $editor_choice; do
+    raw_choices+=("$item")
+  done
+
+  typeset -A seen_editors
+  editor_choices=()
+  for raw in "${raw_choices[@]}"; do
+    choice=$(echo "$raw" | xargs)
+    if [[ -n "$choice" && -z "${seen_editors[$choice]}" ]]; then
+      editor_choices+=("$choice")
+      seen_editors[$choice]=1
+    fi
+  done
+
+  # If '4' (None) is selected, skip all installations
+  if [[ " ${editor_choices[@]} " =~ " 4 " ]]; then
+    echo "No code editor selected. Skipping code editor installation."
+  else
+    for choice in "${editor_choices[@]}"; do
+      case $choice in
+        1)
+          if command -v code &>/dev/null; then
+            echo "Visual Studio Code is already installed. Skipping."
+          else
+            echo "Installing Visual Studio Code..."
+            brew install --cask visual-studio-code
+          fi
+          ;;
+        2)
+          if command -v cursor &>/dev/null; then
+            echo "Cursor is already installed. Skipping."
+          else
+            echo "Installing Cursor..."
+            brew install --cask cursor
+          fi
+          ;;
+        3)
+          if command -v windsurf &>/dev/null; then
+            echo "Windsurf is already installed. Skipping."
+          else
+            echo "Installing Windsurf..."
+            brew install --cask windsurf
+          fi
+          ;;
+        *)
+          echo "Invalid choice: $choice"
+          ;;
+      esac
+    done
+  fi
+
+  # Install selected code editors
+  for choice in "${editor_choices[@]}"; do
+    case $choice in
+      1)
+        echo "Installing Visual Studio Code..."
+        brew install --cask visual-studio-code
+        ;;
+      2)
+        echo "Installing Cursor..."
+        brew install --cask cursor
+        ;;
+      3)
+        echo "Installing Windsurf..."
+        brew install --cask windsurf
+        ;;
+      4)
+        echo "No code editor selected."
+        ;;
+      *)
+        echo "Invalid choice: $choice"
+        ;;
+    esac
+  done
+
+  # GUI Apps
+  gui_apps=("element" "firefox" "keepassxc" "obsidian" "qbittorrent" "simplex" "tailscale" "docker")
 
   for app in "${gui_apps[@]}"; do
     if [[ -d "/Applications/$app.app" ]]; then
@@ -69,6 +158,114 @@ install_gui_apps() {
   fi
 }
 
+add_bookmarks() {
+  # Parallel arrays for browser names and their application paths
+  browser_names=(
+    "Google Chrome"
+    "Brave Browser"
+    "Firefox"
+    "Safari"
+    "Mullvad Browser"
+    "Microsoft Edge"
+  )
+  browser_paths=(
+    "/Applications/Google Chrome.app"
+    "/Applications/Brave Browser.app"
+    "/Applications/Firefox.app"
+    "/Applications/Safari.app"
+    "/Applications/Mullvad Browser.app"
+    "/Applications/Microsoft Edge.app"
+  )
+
+  # Detect installed browsers
+  detected_browsers=()
+  for ((i=0; i<${#browser_names[@]}; i++)); do
+    if [[ -d "${browser_paths[$i]}" ]]; then
+      detected_browsers+=("${browser_names[$i]}")
+    fi
+  done
+
+  echo "Detected browsers: ${detected_browsers[*]}"
+
+  # Bookmarks: parallel arrays for labels and URLs
+  bookmark_labels=(
+    "Irregular Forum"
+    "Irregularpedia"
+    "Irregular Matrix"
+    "Irregular Videos"
+  )
+  bookmark_urls=(
+    "https://forum.irregularchat.com"
+    "https://irregularpedia.org"
+    "https://matrix.irregularchat.com"
+    "https://videos.irregularchat.com"
+  )
+
+  # Open bookmarks in new tabs in Safari (AppleScript cannot add bookmarks directly)
+  if [[ " ${detected_browsers[*]} " == *"Safari"* ]]; then
+    echo "Opening bookmarks in Safari tabs (AppleScript cannot add bookmarks directly)..."
+    for ((i=0; i<${#bookmark_labels[@]}; i++)); do
+      url="${bookmark_urls[$i]}"
+      osascript <<EOD
+      tell application "Safari"
+        make new document
+        delay 1
+        tell front document
+          set current tab to (make new tab with properties {URL:"$url"})
+        end tell
+      end tell
+EOD
+    done
+  fi
+
+  # Add bookmarks to Chromium-based browsers (Chrome, Brave, Edge)
+  # This modifies the Bookmarks file in all profiles. The browser must be closed!
+  for chromium in "Google Chrome" "Brave Browser" "Microsoft Edge"; do
+    if [[ " ${detected_browsers[*]} " == *"$chromium"* ]]; then
+      echo "Adding bookmarks to $chromium..."
+      case "$chromium" in
+        "Google Chrome")
+          base_dir="$HOME/Library/Application Support/Google/Chrome" ;;
+        "Brave Browser")
+          base_dir="$HOME/Library/Application Support/BraveSoftware/Brave-Browser" ;;
+        "Microsoft Edge")
+          base_dir="$HOME/Library/Application Support/Microsoft Edge" ;;
+      esac
+      found_any=false
+      if [[ -d "$base_dir" ]]; then
+        while IFS= read -r -d '' bookmarks_file; do
+          found_any=true
+          profile_dir="$(dirname "$bookmarks_file")"
+          echo "  Found profile: $profile_dir"
+          # Backup bookmarks file
+          cp "$bookmarks_file" "$bookmarks_file.bak"
+          # Insert bookmarks using jq (must be installed)
+          for ((i=0; i<${#bookmark_labels[@]}; i++)); do
+            label="${bookmark_labels[$i]}"
+            url="${bookmark_urls[$i]}"
+            jq --arg name "$label" --arg url "$url" \
+              '(.roots.bookmark_bar.children) += [{"type": "url", "name": $name, "url": $url}]' \
+              "$bookmarks_file" > "$bookmarks_file.tmp" && mv "$bookmarks_file.tmp" "$bookmarks_file"
+          done
+        done < <(find "$base_dir" -type f -name "Bookmarks" -print0)
+      fi
+      if [[ "$found_any" = false ]]; then
+        echo "Could not find any bookmarks file for $chromium. Make sure you have run $chromium at least once."
+      fi
+    fi
+  done
+
+  # TODO: Add bookmarks to Firefox and Mullvad Browser (requires sqlite3 manipulation of places.sqlite)
+  if [[ " ${detected_browsers[*]} " == *"Firefox"* ]]; then
+    echo "[TODO] Firefox detected, but adding bookmarks programmatically requires sqlite3 manipulation of places.sqlite."
+  fi
+  if [[ " ${detected_browsers[*]} " == *"Mullvad Browser"* ]]; then
+    echo "[TODO] Mullvad Browser detected, but adding bookmarks programmatically requires sqlite3 manipulation of places.sqlite."
+  fi
+}
+
+
+
 main() {
     # Check if Homebrew is installed
     
@@ -80,6 +277,8 @@ main() {
     echo "Starting initial install..."
     install_terminal_apps
     install_gui_apps
+    #add_bookmarks
+    # add bookmarks to all chromium based browsers
     echo "Syncing mac aliases and functions to ~/.zshrc"
     ./sync_mac_dotfiles.sh
     echo "Initial install complete."
