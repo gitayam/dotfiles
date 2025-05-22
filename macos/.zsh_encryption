@@ -406,30 +406,47 @@ decrypt_file_simple() {
 # Securely delete a file (macOS-compatible)
 secure_delete() {
     if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
-        echo "Usage: secure_delete [file]"
-        echo "  Securely delete a file using srm if available, or rm with overwrite."
+        echo "Usage: secure_delete [file1] [file2] ..."
+        echo "  Securely delete files using srm if available, or rm with overwrite."
+        echo "  Supports multiple files and wildcards."
         return 0
     fi
     
-    local file="$1"
-    
-    # Check if file exists
-    if [[ ! -f "$file" ]]; then
-        echo "Error: File '$file' not found."
-        return 1
-    fi
-    
-    # Try to use secure_rm if available
+    # Check if srm is available
+    local use_srm=false
     if command -v srm &> /dev/null; then
-        srm -z "$file"
-        echo "File securely deleted using srm: $file"
-    else
-        # Fallback to overwriting the file before deletion
-        local filesize=$(stat -f "%z" "$file")
-        dd if=/dev/urandom of="$file" bs=1 count="$filesize" conv=notrunc status=none
-        rm -f "$file"
-        echo "File overwritten and deleted: $file"
+        use_srm=true
     fi
+    
+    # Process all arguments
+    local status=0
+    for file in "$@"; do
+        # Skip help flags (already handled above)
+        if [[ "$file" == "-h" || "$file" == "--help" ]]; then
+            continue
+        fi
+        
+        # Check if file exists
+        if [[ ! -f "$file" ]]; then
+            echo "Error: File '$file' not found."
+            status=1
+            continue
+        fi
+        
+        # Delete the file securely
+        if $use_srm; then
+            srm -z "$file"
+            echo "File securely deleted using srm: $file"
+        else
+            # Fallback to overwriting the file before deletion
+            local filesize=$(stat -f "%z" "$file")
+            dd if=/dev/urandom of="$file" bs=1 count="$filesize" conv=notrunc status=none
+            rm -f "$file"
+            echo "File overwritten and deleted: $file"
+        fi
+    done
+    
+    return $status
 }
 
 # Create a password-protected zip archive
