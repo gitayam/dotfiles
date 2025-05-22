@@ -419,7 +419,7 @@ secure_delete() {
     fi
     
     # Process all arguments
-    local status=0
+    local exit_code=0
     for file in "$@"; do
         # Skip help flags (already handled above)
         if [[ "$file" == "-h" || "$file" == "--help" ]]; then
@@ -429,7 +429,7 @@ secure_delete() {
         # Check if file exists
         if [[ ! -f "$file" ]]; then
             echo "Error: File '$file' not found."
-            status=1
+            exit_code=1
             continue
         fi
         
@@ -446,7 +446,7 @@ secure_delete() {
         fi
     done
     
-    return $status
+    return $exit_code
 }
 
 # Create a password-protected zip archive
