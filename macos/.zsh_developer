@@ -420,7 +420,7 @@ create_repo(){
         echo "6) Rust"
         echo "7) None (basic repo setup)"
         
-        echo -n "Select a template (1-5): "
+        echo -n "Select a template (1-7): "
         read template_choice
 
         case $template_choice in
@@ -437,7 +437,9 @@ create_repo(){
                 gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Shell || return 1
                 ;;
             5)
-                gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Python,Node || return 1
+                # Create with Python template first, then add Node content
+                gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Python || return 1
+                echo "Note: Will add Node.js gitignore content after cloning..."
                 ;;
             6)
                 gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Rust || return 1
@@ -452,8 +454,131 @@ create_repo(){
 
     git clone "https://github.com/$(gh api user | jq -r '.login')/$repo_name.git" "$base_dir/$repo_name" || return 1
     cd "$base_dir/$repo_name" || return 1
+    
+    # Add Node.js gitignore content if Python + Node was selected
+    if [[ "$template_choice" == "5" ]]; then
+        echo "Adding Node.js gitignore content..."
+        cat >> .gitignore << 'EOF'
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+*.lcov
+
+# nyc test coverage
+.nyc_output
+
+# Grunt intermediate storage (https://gruntjs.com/creating-plugins#storing-task-files)
+.grunt
+
+# Bower dependency directory (https://bower.io/)
+bower_components
+
+# node-waf configuration
+.lock-wscript
+
+# Compiled binary addons (https://nodejs.org/api/addons.html)
+build/Release
+
+# Dependency directories
+jspm_packages/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Optional stylelint cache
+.stylelintcache
+
+# Microbundle cache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# dotenv environment variable files
+.env
+.env.development.local
+.env.test.local
+.env.production.local
+.env.local
+
+# parcel-bundler cache (https://parceljs.org/)
+.cache
+.parcel-cache
+
+# Next.js build output
+.next
+out
+
+# Nuxt.js build / generate output
+.nuxt
+dist
+
+# Gatsby files
+.cache/
+public
+
+# Storybook build outputs
+.out
+.storybook-out
+storybook-static
+
+# Temporary folders
+tmp/
+temp/
+
+# Logs
+logs
+*.log
+
+# Editor directories and files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+EOF
+    fi
+    
     echo "# $repo_name" >> README.md
-    git add README.md
+    git add .
     git commit -m "Initial commit"
     git branch -M main
     git push -u origin main
