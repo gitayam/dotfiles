@@ -39,4 +39,69 @@ display_system_info() {
     echo -e "\n=============================================================\n"
 }
 
+# System update function for Linux
+update_all(){
+    echo "Starting system update..."
+    
+    # Detect package manager and update accordingly
+    if command -v apt &> /dev/null; then
+        # Debian/Ubuntu
+        echo "Updating apt packages..."
+        sudo apt update && sudo apt upgrade -y && sudo apt autoremove -y && sudo apt autoclean
+    elif command -v yum &> /dev/null; then
+        # RHEL/CentOS (older)
+        echo "Updating yum packages..."
+        sudo yum update -y && sudo yum autoremove -y && sudo yum clean all
+    elif command -v dnf &> /dev/null; then
+        # Fedora/RHEL/CentOS (newer)
+        echo "Updating dnf packages..."
+        sudo dnf update -y && sudo dnf autoremove -y && sudo dnf clean all
+    elif command -v pacman &> /dev/null; then
+        # Arch Linux
+        echo "Updating pacman packages..."
+        sudo pacman -Syu --noconfirm && sudo pacman -Rns $(pacman -Qtdq) --noconfirm 2>/dev/null || true
+    elif command -v zypper &> /dev/null; then
+        # openSUSE
+        echo "Updating zypper packages..."
+        sudo zypper refresh && sudo zypper update -y && sudo zypper clean
+    elif command -v apk &> /dev/null; then
+        # Alpine Linux
+        echo "Updating apk packages..."
+        sudo apk update && sudo apk upgrade
+    else
+        echo "No supported package manager found (apt, yum, dnf, pacman, zypper, apk)"
+    fi
+    
+    # Update snap packages if available
+    if command -v snap &> /dev/null; then
+        echo "Updating snap packages..."
+        sudo snap refresh
+    fi
+    
+    # Update flatpak packages if available
+    if command -v flatpak &> /dev/null; then
+        echo "Updating flatpak packages..."
+        flatpak update -y
+    fi
+    
+    # Update git repositories
+    echo "Updating git repositories..."
+    if declare -f update_git_repos > /dev/null; then
+        update_git_repos
+    else
+        echo "update_git_repos function not found, skipping git updates"
+    fi
+    
+    # Clean up and show completion
+    echo "Clearing terminal..."
+    sleep 2
+    clear
+    echo "✅ System update completed!"
+    
+    # Show system info
+    if declare -f display_system_info > /dev/null; then
+        display_system_info
+    fi
+}
+
 display_system_info
