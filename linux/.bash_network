@@ -84,113 +84,373 @@ pyserver() {
     fi
 }
 
-# Tailscale funnel for sharing files/services over the internet
+# Check public IP via multiple services
+check_ip() {
+    for svc in ifconfig.me ipinfo.io/ip; do
+        echo -n "$svc → " && curl -s "$svc"
+    done
+}
+
+# Flush DNS cache (Linux version)
+flushdns() {
+    # Linux DNS cache flushing varies by system
+    echo "Flushing DNS cache..."
+    
+    # systemd-resolved (Ubuntu 18.04+, most modern systems)
+    if systemctl is-active --quiet systemd-resolved; then
+        sudo systemctl flush-dns systemd-resolved
+        echo "✓ Flushed systemd-resolved cache"
+    fi
+    
+    # nscd (older systems)
+    if command -v nscd &> /dev/null && systemctl is-active --quiet nscd; then
+        sudo systemctl restart nscd
+        echo "✓ Restarted nscd"
+    fi
+    
+    # dnsmasq (some systems)
+    if systemctl is-active --quiet dnsmasq; then
+        sudo systemctl restart dnsmasq
+        echo "✓ Restarted dnsmasq"
+    fi
+    
+    # Clear browser DNS cache recommendation
+    echo "Note: You may also want to clear your browser's DNS cache"
+}
+
+# DNS lookup with caching (Linux version)
+digc() {
+    # Flush DNS cache first
+    flushdns
+    
+    if [[ -z "$1" ]]; then
+        dig @8.8.8.8
+    else
+        local args=("$@")
+        dig "${args[@]}"
+    fi
+}
+
+# Quick ping summary
+pings() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: pings hostname [count]"
+        return 1
+    fi
+    ping -c "${2:-5}" "$1" | tail -2
+}
+
+# Generate random MAC address
+gen_mac_addr() {
+    local mac
+    mac=$(openssl rand -hex 6 | sed 's/\(..\)/\1:/g; s/.$//')
+    echo "$mac"
+}
+
+# Show current MAC address (Linux version)
+show_current_mac() {
+    local interface="$1"
+    
+    if [[ -z "$interface" ]]; then
+        echo "Usage: show_current_mac <interface_name>"
+        echo "Available interfaces:"
+        if command -v ip &> /dev/null; then
+            ip link show | grep -E '^[0-9]+:' | awk -F': ' '{print "  " $2}' | sed 's/@.*//'
+        else
+            ifconfig -a | grep -E '^[a-zA-Z0-9]+:' | awk '{print "  " $1}' | sed 's/://'
+        fi
+        return 1
+    fi
+    
+    # Check if interface exists
+    if ! ip link show "$interface" &>/dev/null; then
+        echo "Error: Interface '$interface' not found"
+        echo "Available interfaces:"
+        ip link show | grep -E '^[0-9]+:' | awk -F': ' '{print "  " $2}' | sed 's/@.*//'
+        return 1
+    fi
+    
+    # Get MAC address
+    local mac
+    if command -v ip &> /dev/null; then
+        mac=$(ip link show "$interface" | grep -o -E '([[:xdigit:]]{1,2}:){5}[[:xdigit:]]{1,2}')
+    else
+        mac=$(ifconfig "$interface" | grep -o -E '([[:xdigit:]]{1,2}:){5}[[:xdigit:]]{1,2}')
+    fi
+    
+    if [[ -n "$mac" ]]; then
+        echo "MAC address for $interface: $mac"
+    else
+        echo "Could not retrieve MAC address for $interface"
+        return 1
+    fi
+}
+
+# Change MAC address (Linux version)
+change_mac_address() {
+    local mac_address="$1"
+    local interface="$2"
+    
+    # Generate random MAC if none provided
+    if [[ -z "$mac_address" ]]; then
+        mac_address=$(gen_mac_addr)
+        echo "No MAC address provided. Using generated MAC: $mac_address"
+    fi
+    
+    # Check if interface name is provided
+    if [[ -z "$interface" ]]; then
+        echo "No interface name provided. Available interfaces:"
+        if command -v ip &> /dev/null; then
+            ip link show | grep -E '^[0-9]+:' | awk -F': ' '{print "  " $2}' | sed 's/@.*//'
+        else
+            ifconfig -a | grep -E '^[a-zA-Z0-9]+:' | awk '{print "  " $1}' | sed 's/://'
+        fi
+        echo "Usage: change_mac_address <mac_address> <interface_name>"
+        return 1
+    fi
+    
+    # Check if interface exists
+    if ! ip link show "$interface" &>/dev/null; then
+        echo "Error: Interface '$interface' not found"
+        return 1
+    fi
+    
+    # Get current MAC for backup
+    local current_mac
+    current_mac=$(ip link show "$interface" | grep -o -E '([[:xdigit:]]{1,2}:){5}[[:xdigit:]]{1,2}')
+    
+    # Save original MAC if not already saved
+    local mac_file="$HOME/.mac_$interface"
+    if [[ ! -f "$mac_file" ]]; then
+        echo "$current_mac" > "$mac_file"
+        echo "Original MAC address saved: $current_mac"
+    fi
+    
+    echo "Changing MAC address for $interface from $current_mac to $mac_address..."
+    echo "This operation requires sudo privileges."
+    
+    # Bring interface down, change MAC, bring back up
+    if sudo ip link set dev "$interface" down && \
+       sudo ip link set dev "$interface" address "$mac_address" && \
+       sudo ip link set dev "$interface" up; then
+        echo "✅ MAC address changed successfully!"
+        echo "New MAC: $(show_current_mac "$interface" 2>/dev/null | cut -d: -f2- | xargs)"
+    else
+        echo "❌ Failed to change MAC address"
+        return 1
+    fi
+}
+
+# Restore original MAC address
+restore_mac_address() {
+    local interface="$1"
+    
+    if [[ -z "$interface" ]]; then
+        echo "Usage: restore_mac_address <interface_name>"
+        return 1
+    fi
+    
+    local mac_file="$HOME/.mac_$interface"
+    if [[ ! -f "$mac_file" ]]; then
+        echo "Error: No saved MAC address found for $interface"
+        echo "Saved MAC files:"
+        ls -la "$HOME/.mac_"* 2>/dev/null || echo "  No saved MAC addresses found"
+        return 1
+    fi
+    
+    local original_mac
+    original_mac=$(cat "$mac_file")
+    
+    echo "Restoring MAC address for $interface to: $original_mac"
+    change_mac_address "$original_mac" "$interface"
+}
+
+# MAC address management menu
+change_mac_menu() {
+    echo "MAC Address Management Menu"
+    echo "=========================="
+    echo "1. Show current MAC addresses"
+    echo "2. Change MAC address"
+    echo "3. Generate random MAC address"
+    echo "4. Restore original MAC address"
+    echo "5. Exit"
+    echo ""
+    
+    while true; do
+        read -p "Select an option (1-5): " choice
+        case $choice in
+            1)
+                echo ""
+                echo "Current network interfaces:"
+                if command -v ip &> /dev/null; then
+                    ip link show | grep -E '^[0-9]+:' | while read line; do
+                        iface=$(echo "$line" | awk -F': ' '{print $2}' | sed 's/@.*//')
+                        mac=$(echo "$line" | grep -o -E '([[:xdigit:]]{1,2}:){5}[[:xdigit:]]{1,2}' || echo "No MAC")
+                        echo "  $iface: $mac"
+                    done
+                else
+                    ifconfig -a | grep -E '^[a-zA-Z0-9]+' | while read line; do
+                        iface=$(echo "$line" | awk '{print $1}' | sed 's/://')
+                        mac=$(ifconfig "$iface" | grep -o -E '([[:xdigit:]]{1,2}:){5}[[:xdigit:]]{1,2}' || echo "No MAC")
+                        echo "  $iface: $mac"
+                    done
+                fi
+                echo ""
+                ;;
+            2)
+                echo ""
+                read -p "Enter interface name: " iface
+                read -p "Enter new MAC address (or press Enter for random): " mac
+                if [[ -z "$mac" ]]; then
+                    change_mac_address "" "$iface"
+                else
+                    change_mac_address "$mac" "$iface"
+                fi
+                echo ""
+                ;;
+            3)
+                echo ""
+                echo "Random MAC address: $(gen_mac_addr)"
+                echo ""
+                ;;
+            4)
+                echo ""
+                read -p "Enter interface name: " iface
+                restore_mac_address "$iface"
+                echo ""
+                ;;
+            5)
+                echo "Exiting..."
+                break
+                ;;
+            *)
+                echo "Invalid option. Please select 1-5."
+                ;;
+        esac
+    done
+}
+
+# Network diagnostics
+network_info() {
+    echo "Network Information Summary"
+    echo "=========================="
+    echo ""
+    
+    echo "📡 Network Interfaces:"
+    if command -v ip &> /dev/null; then
+        ip addr show | grep -E '^[0-9]+:|inet ' | sed 's/^/  /'
+    else
+        ifconfig | grep -E '^[a-zA-Z0-9]+:|inet ' | sed 's/^/  /'
+    fi
+    
+    echo ""
+    echo "🌍 Public IP:"
+    echo "  $(curl -s ifconfig.me 2>/dev/null || echo 'Unable to retrieve')"
+    
+    echo ""
+    echo "🔗 Default Route:"
+    if command -v ip &> /dev/null; then
+        ip route show default | sed 's/^/  /'
+    else
+        route -n | grep '^0.0.0.0' | sed 's/^/  /'
+    fi
+    
+    echo ""
+    echo "📶 DNS Servers:"
+    if [[ -f /etc/resolv.conf ]]; then
+        grep -E '^nameserver' /etc/resolv.conf | sed 's/^/  /'
+    else
+        echo "  Unable to retrieve DNS servers"
+    fi
+    
+    echo ""
+    echo "🔌 Open Ports (TCP):"
+    if command -v ss &> /dev/null; then
+        ss -tln | head -10 | sed 's/^/  /'
+    elif command -v netstat &> /dev/null; then
+        netstat -tln | head -10 | sed 's/^/  /'
+    else
+        echo "  No suitable command found (ss or netstat needed)"
+    fi
+}
+
+# Funnel function for sharing local server (Linux version using various tools)
 funnel() {
-    local port=${FUNNEL_PORT:-8080}
-    local use_python=true
-    local direct_service=false
-    while [[ "$1" == -* ]]; do
-        case "$1" in
-            -h|--help)
-                echo "Usage: funnel [OPTIONS] [target]"
-                echo "Options: -h|--help, -d|--direct, -p|--port PORT"
-                return 0
-                ;;
-            -d|--direct)
-                direct_service=true
-                use_python=false
-                shift
-                ;;
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: funnel [port] [options]"
+        echo "Share a local server on the internet"
+        echo "Options:"
+        echo "  -p, --port PORT    Port to share (default: 8000)"
+        echo "  -h, --help         Show this help"
+        echo ""
+        echo "This function will try to use available tools in order:"
+        echo "  1. Tailscale funnel (if available)"
+        echo "  2. ngrok (if available)" 
+        echo "  3. localtunnel (if available)"
+        echo "  4. serveo.net SSH tunneling"
+        return 0
+    fi
+    
+    local port="${1:-8000}"
+    
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case $1 in
             -p|--port)
                 port="$2"
                 shift 2
                 ;;
             *)
-                echo "Unknown option: $1"
-                return 1
+                port="$1"
+                shift
                 ;;
         esac
     done
-    if ! command -v tailscale &> /dev/null; then
-        echo "tailscale not installed"
-        return 1
+    
+    echo "Attempting to share local server on port $port..."
+    
+    # Try Tailscale funnel first
+    if command -v tailscale &> /dev/null; then
+        echo "Trying Tailscale funnel..."
+        if tailscale funnel --bg "$port"; then
+            echo "✅ Tailscale funnel started on port $port"
+            echo "Your service is now publicly accessible!"
+            return 0
+        else
+            echo "⚠️ Tailscale funnel failed, trying other methods..."
+        fi
     fi
-    if ! tailscale status &> /dev/null; then
-        echo "Tailscale is not running. Attempting to start it..."
-        tailscale up || return 1
+    
+    # Try ngrok
+    if command -v ngrok &> /dev/null; then
+        echo "Trying ngrok..."
+        echo "Starting ngrok tunnel on port $port (Ctrl+C to stop)"
+        ngrok http "$port"
+        return 0
     fi
-    if $direct_service; then
-        echo "Funneling localhost:$port"
-        tailscale funnel localhost:$port
-        echo "Press Ctrl+C to stop the funnel"
-        while true; do sleep 1; done
-    elif [ -n "$1" ]; then
-        mkdir -p /tmp/funnel
-        for file in "$@"; do
-            cp -r "$PWD/$file" /tmp/funnel/
-        done
-        cd /tmp/funnel
-        python3 -m http.server $port &
-        server_pid=$!
-        sleep 1
-        tailscale funnel localhost:$port
-        kill $server_pid
-    else
-        python3 -m http.server $port &
-        server_pid=$!
-        sleep 1
-        tailscale funnel localhost:$port
-        kill $server_pid
+    
+    # Try localtunnel
+    if command -v lt &> /dev/null; then
+        echo "Trying localtunnel..."
+        echo "Starting localtunnel on port $port (Ctrl+C to stop)"
+        lt --port "$port"
+        return 0
     fi
-}
-alias tsf=funnel
-alias postfile=funnel
-alias openport="funnel -d -p"
-
-# MAC address management
-# Generate a random MAC address
-gen_mac_addr() {
-    openssl rand -hex 6 | sed 's/\(..\)/\1:/g; s/.$//'
-}
-
-# Change MAC address interactively
-change_mac_menu() {
-    echo "Choose an option:"
-    echo "1. Set a specific MAC address"
-    echo "2. Set a random MAC address"
-    echo "3. Restore original MAC address"
-    echo -n "Enter your choice (1/2/3): "
-    read choice
-    case $choice in
-        1)
-            echo -n "Enter the new MAC address (e.g., E6:B8:BA:D2:41:07): "
-            read mac_address
-            sudo ip link set dev eth0 address "$mac_address"
-            ;;
-        2)
-            mac_address=$(gen_mac_addr)
-            sudo ip link set dev eth0 address "$mac_address"
-            echo "Random MAC set: $mac_address"
-            ;;
-        3)
-            sudo ip link set dev eth0 address $(cat /sys/class/net/eth0/address)
-            echo "Restored original MAC address."
-            ;;
-        *)
-            echo "Invalid choice. Exiting."
-            ;;
-    esac
-}
-alias ports='netstat -tulanp'  # List open ports
-alias mypublicip='curl ifconfig.me'  # Check external IP address
-alias myprivateip='privateip'  # Check private IP address
-
-privateip() {
-    if command -v ip &> /dev/null; then
-        ip a | grep "inet " | grep -v "127.0.0.1" | awk '{print $2}'
-    elif command -v ifconfig &> /dev/null; then
-        ifconfig | grep "inet " | grep -v "127.0.0.1" | awk '{print $2}'
-    else
-        echo "ip command not found"
+    
+    # Try serveo.net SSH tunneling
+    if command -v ssh &> /dev/null; then
+        echo "Trying serveo.net SSH tunnel..."
+        echo "Starting SSH tunnel on port $port (Ctrl+C to stop)"
+        echo "Your service will be available at: https://[random-subdomain].serveo.net"
+        ssh -R "80:localhost:$port" serveo.net
+        return 0
     fi
+    
+    echo "❌ No suitable tunneling tools found."
+    echo "Please install one of the following:"
+    echo "  • Tailscale: https://tailscale.com/download"
+    echo "  • ngrok: https://ngrok.com/download"
+    echo "  • localtunnel: npm install -g localtunnel"
+    echo "  • Or ensure SSH is available for serveo.net"
+    return 1
 }

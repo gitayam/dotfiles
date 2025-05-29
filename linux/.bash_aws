@@ -1,0 +1,301 @@
+# AWS Bash helper functions for IAM management and environment loading
+
+# Load environment variables from .env file
+load_env() {
+  if [[ -f .env ]]; then
+    source .env
+    echo "Environment variables loaded from .env"
+  else
+    echo "⚠️  .env not found"
+    return 1
+  fi
+}
+
+alias awshelp="aws_command_list | less -R"
+
+# Helper function to run AWS commands with proper profile handling
+run_aws_cmd() {
+    # First argument is the command, rest are passed through
+    local cmd="$1"
+    shift
+    
+    # Check if we have AWS credentials in the environment
+    if [[ -n "$AWS_ACCESS_KEY_ID" && -n "$AWS_SECRET_ACCESS_KEY" ]]; then
+        # Use the environment variables directly
+        aws "$cmd" "$@"
+        return $?
+    fi
+    
+    if [[ -n "$AWS_PROFILE" ]]; then
+        # Check if the profile exists
+        if ! aws configure list-profiles 2>/dev/null | grep -q "^${AWS_PROFILE}$"; then
+            echo "⚠️ The config profile ($AWS_PROFILE) could not be found"
+            echo "Available profiles:"
+            aws configure list-profiles 2>/dev/null || echo "No profiles found"
+            
+            echo -n "Would you like to enter temporary credentials? (y/n): "
+            read use_temp
+            if [[ "$use_temp" == "y" ]]; then
+                # Prompt for temporary credentials
+                echo "Enter temporary AWS credentials:"
+                echo -n "AWS Access Key ID: "
+                read temp_key
+                echo -n "AWS Secret Access Key: "
+                read -s temp_secret
+                echo ""
+                echo -n "AWS Session Token (optional, press Enter to skip): "
+                read temp_token
+                
+                # Export the temporary credentials
+                export AWS_ACCESS_KEY_ID="$temp_key"
+                export AWS_SECRET_ACCESS_KEY="$temp_secret"
+                if [[ -n "$temp_token" ]]; then
+                    export AWS_SESSION_TOKEN="$temp_token"
+                fi
+                
+                # Now run the command
+                aws "$cmd" "$@"
+                
+                # Clean up the temporary credentials
+                unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+                return $?
+            else
+                return 1
+            fi
+        else
+            # Profile exists, use it
+            aws --profile "$AWS_PROFILE" "$cmd" "$@"
+        fi
+    else
+        # No profile set, try default
+        aws "$cmd" "$@"
+    fi
+}
+
+# AWS command list for reference
+aws_command_list() {
+    cat << 'EOF'
+🔧 AWS CLI Helper Functions
+
+Basic Commands:
+  aws_list_users          - List all IAM users
+  aws_list_groups         - List all IAM groups  
+  aws_list_policies       - List all IAM policies
+  aws_list_roles          - List all IAM roles
+  aws_whoami              - Show current AWS identity
+
+User Management:
+  aws_create_user <name>  - Create new IAM user
+  aws_delete_user <name>  - Delete IAM user
+  aws_user_info <name>    - Get user details
+
+Group Management:
+  aws_create_group <name> - Create new IAM group
+  aws_delete_group <name> - Delete IAM group
+  aws_add_user_to_group <user> <group> - Add user to group
+
+Access Keys:
+  aws_create_access_key <user>    - Create access key for user
+  aws_list_access_keys <user>     - List access keys for user
+  aws_delete_access_key <user> <key-id> - Delete access key
+
+S3 Commands:
+  aws_list_buckets        - List all S3 buckets
+  aws_bucket_size <name>  - Get bucket size
+  aws_sync_s3 <local> <bucket> - Sync local to S3
+
+EC2 Commands:  
+  aws_list_instances      - List EC2 instances
+  aws_instance_info <id>  - Get instance details
+  aws_start_instance <id> - Start EC2 instance
+  aws_stop_instance <id>  - Stop EC2 instance
+
+Environment:
+  load_env                - Load .env file variables
+  aws_set_profile <name>  - Set AWS profile
+  aws_unset_profile       - Unset AWS profile
+
+Use: awshelp | grep <keyword> to search for specific commands
+EOF
+}
+
+# Set AWS profile
+aws_set_profile() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: aws_set_profile <profile_name>"
+        echo "Available profiles:"
+        aws configure list-profiles 2>/dev/null || echo "No profiles found"
+        return 1
+    fi
+    export AWS_PROFILE="$1"
+    echo "AWS profile set to: $AWS_PROFILE"
+}
+
+# Unset AWS profile
+aws_unset_profile() {
+    unset AWS_PROFILE
+    echo "AWS profile unset"
+}
+
+# Show current AWS identity
+aws_whoami() {
+    run_aws_cmd sts get-caller-identity
+}
+
+# List IAM users
+aws_list_users() {
+    run_aws_cmd iam list-users --query 'Users[*].[UserName,CreateDate]' --output table
+}
+
+# List IAM groups
+aws_list_groups() {
+    run_aws_cmd iam list-groups --query 'Groups[*].[GroupName,CreateDate]' --output table
+}
+
+# List IAM roles
+aws_list_roles() {
+    run_aws_cmd iam list-roles --query 'Roles[*].[RoleName,CreateDate]' --output table
+}
+
+# List IAM policies
+aws_list_policies() {
+    run_aws_cmd iam list-policies --scope Local --query 'Policies[*].[PolicyName,CreateDate]' --output table
+}
+
+# Create IAM user
+aws_create_user() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: aws_create_user <username>"
+        return 1
+    fi
+    run_aws_cmd iam create-user --user-name "$1"
+}
+
+# Delete IAM user
+aws_delete_user() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: aws_delete_user <username>"
+        return 1
+    fi
+    echo "⚠️  This will delete user '$1' and all associated access keys and policies."
+    echo -n "Are you sure? (y/N): "
+    read confirm
+    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+        # First delete access keys
+        run_aws_cmd iam list-access-keys --user-name "$1" --query 'AccessKeyMetadata[*].AccessKeyId' --output text | while read -r key_id; do
+            [[ -n "$key_id" ]] && run_aws_cmd iam delete-access-key --user-name "$1" --access-key-id "$key_id"
+        done
+        
+        # Delete user
+        run_aws_cmd iam delete-user --user-name "$1"
+    else
+        echo "Operation cancelled"
+    fi
+}
+
+# Get user info
+aws_user_info() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: aws_user_info <username>"
+        return 1
+    fi
+    echo "User Details:"
+    run_aws_cmd iam get-user --user-name "$1"
+    echo -e "\nAccess Keys:"
+    run_aws_cmd iam list-access-keys --user-name "$1"
+    echo -e "\nGroups:"
+    run_aws_cmd iam get-groups-for-user --user-name "$1"
+}
+
+# Create access key
+aws_create_access_key() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: aws_create_access_key <username>"
+        return 1
+    fi
+    echo "⚠️  Save the Secret Access Key immediately - it won't be shown again!"
+    run_aws_cmd iam create-access-key --user-name "$1"
+}
+
+# List access keys
+aws_list_access_keys() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: aws_list_access_keys <username>"
+        return 1
+    fi
+    run_aws_cmd iam list-access-keys --user-name "$1"
+}
+
+# Delete access key
+aws_delete_access_key() {
+    if [[ -z "$1" ]] || [[ -z "$2" ]]; then
+        echo "Usage: aws_delete_access_key <username> <access_key_id>"
+        return 1
+    fi
+    echo "⚠️  This will permanently delete access key '$2' for user '$1'"
+    echo -n "Are you sure? (y/N): "
+    read confirm
+    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+        run_aws_cmd iam delete-access-key --user-name "$1" --access-key-id "$2"
+    else
+        echo "Operation cancelled"
+    fi
+}
+
+# S3 Functions
+aws_list_buckets() {
+    run_aws_cmd s3 ls
+}
+
+aws_bucket_size() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: aws_bucket_size <bucket_name>"
+        return 1
+    fi
+    run_aws_cmd s3 ls --summarize --human-readable --recursive "s3://$1"
+}
+
+aws_sync_s3() {
+    if [[ -z "$1" ]] || [[ -z "$2" ]]; then
+        echo "Usage: aws_sync_s3 <local_path> <s3_bucket>"
+        echo "Example: aws_sync_s3 ./myfiles mybucket/folder"
+        return 1
+    fi
+    run_aws_cmd s3 sync "$1" "s3://$2"
+}
+
+# EC2 Functions
+aws_list_instances() {
+    run_aws_cmd ec2 describe-instances --query 'Reservations[*].Instances[*].[InstanceId,State.Name,InstanceType,Tags[?Key==`Name`].Value|[0]]' --output table
+}
+
+aws_instance_info() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: aws_instance_info <instance_id>"
+        return 1
+    fi
+    run_aws_cmd ec2 describe-instances --instance-ids "$1"
+}
+
+aws_start_instance() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: aws_start_instance <instance_id>"
+        return 1
+    fi
+    run_aws_cmd ec2 start-instances --instance-ids "$1"
+}
+
+aws_stop_instance() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: aws_stop_instance <instance_id>"
+        return 1
+    fi
+    echo "⚠️  This will stop instance '$1'"
+    echo -n "Are you sure? (y/N): "
+    read confirm
+    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+        run_aws_cmd ec2 stop-instances --instance-ids "$1"
+    else
+        echo "Operation cancelled"
+    fi
+}
