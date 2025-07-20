@@ -266,6 +266,24 @@ else
     echo "⚠️ Warning: .zshrc not found in home directory"
 fi
 
+# Check if LibreOffice is installed and cp python macros to /Applications/LibreOffice.app/Contents/Resources/Scripts/python
+echo "----------------------------"
+echo "----LibreOffice Macros------"
+if [[ -d "/Applications/LibreOffice.app/Contents/Resources/Scripts/python" ]]; then
+    echo "✓ LibreOffice is installed"
+    echo "Copying python macros to /Applications/LibreOffice.app/Contents/Resources/Scripts/python"
+    cp "$REPO_DIR/libreoffice/"*.py "/Applications/LibreOffice.app/Contents/Resources/Scripts/python/"
+    echo "✓ Copied python macros to /Applications/LibreOffice.app/Contents/Resources/Scripts/python"
+else
+    echo "⚠️ LibreOffice is not installed"
+    echo "Would you like to install it? (y/n): "
+    read -p "Enter your choice (y/n): " install_choice
+    if [[ "$install_choice" == "y" ]]; then
+        echo "Installing LibreOffice..."
+        brew install libreoffice
+        echo "✓ LibreOffice installed"
+    fi
+fi  
 # Ask user if they want to load the new configuration
 echo "----------------------------"
 read -p "Do you want to source ~/.zshrc now to load the configuration? (y/n): " choice
