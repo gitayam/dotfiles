@@ -296,37 +296,78 @@ reset_file(){
         echo "Usage: reset_file file1 file2 ..."
         return 0
     fi
-  # Reset the file content to an empty string
-  # use the backup function to create a backup of the file before erasing
-  #handle one or multiple files
-  # catch escapes and errors to handle prompting user to restore backup or delete
-  for file in "$@"; do
-    backup "$file"
-    echo "" > "$file"
-    echo "File content backed up and erased."
-    echo "Opening $file in nano editor"
-    #echo >> the filename to the file with a # at the beginning
-    echo "# $file" >> "$file"
-    #sleep half a second
-    sleep 0.5
-    nano "$file"
-    # prompt user to restore backup or delete
-    ls $file$backup_name
-    # default to no
-    see_diff="n"
-    echo -n "Do you want to see the difference between the original and backup file? (y/n):(default:n) "
-    read see_diff
-    if [ "$see_diff" == "y" ]; then
-      diff "$file" "$file$backup_name"
-      restore_backup="n"
-      echo -n "Do you want to restore the backup file? (y/n):(default:n) "
-      read restore_backup
-      if [ "$restore_backup" == "y" ]; then
-          mv "$file$backup_name" "$file"
-          echo "Backup file restored."
-      fi
+    
+    # Check if arguments are provided
+    if [[ $# -eq 0 ]]; then
+        echo "Error: No files specified"
+        echo "Usage: reset_file file1 file2 ..."
+        return 1
     fi
-  done
+    
+    # Reset the file content to an empty string
+    # use the backup function to create a backup of the file before erasing
+    #handle one or multiple files
+    # catch escapes and errors to handle prompting user to restore backup or delete
+    for file in "$@"; do
+        # Check if file exists
+        if [[ ! -f "$file" ]]; then
+            echo "Error: File '$file' does not exist"
+            continue
+        fi
+        
+        # Generate backup filename first
+        local backup_suffix=".bak_$(date +%Y-%m-%d_%H-%M-%S)"
+        local backup_filename="${file}${backup_suffix}"
+        
+        # Create backup manually
+        if command -v rsync &> /dev/null; then
+            rsync "$file" "$backup_filename"
+        else
+            cp "$file" "$backup_filename"
+        fi
+        echo "Backup of $file created as $backup_filename"
+        
+        # Clear the file content
+        echo "" > "$file"
+        echo "File content backed up and erased."
+        echo "Opening $file in nano editor"
+        
+        # Add a comment with the filename
+        echo "# $file" >> "$file"
+        
+        # Sleep briefly
+        sleep 0.5
+        
+        # Open in nano editor
+        nano "$file"
+        
+        # Show the backup file
+        ls "$backup_filename"
+        
+        # Ask user about seeing diff
+        local see_diff="n"
+        echo -n "Do you want to see the difference between the original and backup file? (y/n):(default:n) "
+        read see_diff
+        
+        if [[ "$see_diff" == "y" ]]; then
+            # Use diff command safely
+            if command -v diff &> /dev/null; then
+                diff "$file" "$backup_filename"
+            else
+                echo "diff command not found"
+            fi
+            
+            # Ask about restoring backup
+            local restore_backup="n"
+            echo -n "Do you want to restore the backup file? (y/n):(default:n) "
+            read restore_backup
+            
+            if [[ "$restore_backup" == "y" ]]; then
+                mv "$backup_filename" "$file"
+                echo "Backup file restored."
+            fi
+        fi
+    done
 }
 
 # Create a zip archive
