@@ -830,3 +830,190 @@ hackathon_setup() {
     gh issue create --title "Frameworks" --body "Identify the frameworks and navigation (dirs and files) for the hackathon"
     gh issue create --title "Research" --body "Research the topic and create a plan for the hackathon"
 }
+
+# ----------------------
+# Claude Code Functions
+# ----------------------
+claude_checks() {
+    # Usage: claude_code [file_name]
+    # Check if claude is installed
+    if ! command -v claude &> /dev/null; then
+        echo "Error: claude is not installed."
+        echo "Would you like to install it? (y/n): "
+        read install_claude
+        if [[ $install_claude =~ ^[Yy]$ ]]; then
+            brew install claude
+        fi
+        return 1
+    fi
+    # Check if claude is setup
+    if ! claude status &>/dev/null; then
+        echo "Error: claude is not setup."
+        echo "Would you like to setup claude? (y/n): "
+        read setup_claude
+        if [[ $setup_claude =~ ^[Yy]$ ]]; then
+            claude setup
+        fi
+        return 1
+    fi
+}
+
+claude_code() {
+    # Show help menu
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: claude_code [options] [file_name_or_path]"
+        echo ""
+        echo "Options:"
+        echo "  -h, --help                    Show this help message"
+        echo "  -c, --continue               Continue previous conversation"
+        echo "  -sp, --skip-permissions      Dangerously skip permissions"
+        echo "  -csp, --continue-skip        Continue with skip permissions"
+        echo "  -m, --menu                   Show interactive menu (default)"
+        echo "  -d, --direct                 Run claude directly without menu"
+        echo ""
+        echo "Common Claude Commands:"
+        echo "  claude                                          # Basic claude command"
+        echo "  claude --continue                              # Continue previous conversation"
+        echo "  claude --dangerously-skip-permissions         # Skip permission checks"
+        echo "  claude --dangerously-skip-permissions --continue # Skip permissions + continue"
+        echo ""
+        echo "Examples:"
+        echo "  claude_code -c file.py                        # Continue with file.py"
+        echo "  claude_code -sp ./src                         # Skip permissions for src directory"
+        echo "  claude_code -csp                              # Continue + skip permissions"
+        echo "  claude_code -d file.py                        # Direct claude execution"
+        echo "  claude_code                                   # Show interactive menu"
+        return 0
+    fi
+
+    # First run the checks
+    claude_checks || return 1
+
+    local continue_flag=""
+    local skip_permissions=""
+    local show_menu=true
+    local target_path=""
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -c|--continue)
+                continue_flag="--continue"
+                show_menu=false
+                shift
+                ;;
+            -sp|--skip-permissions)
+                skip_permissions="--dangerously-skip-permissions"
+                show_menu=false
+                shift
+                ;;
+            -csp|--continue-skip)
+                continue_flag="--continue"
+                skip_permissions="--dangerously-skip-permissions"
+                show_menu=false
+                shift
+                ;;
+            -m|--menu)
+                show_menu=true
+                shift
+                ;;
+            -d|--direct)
+                show_menu=false
+                shift
+                ;;
+            -*)
+                echo "Unknown option: $1"
+                echo "Use 'claude_code --help' for usage information"
+                return 1
+                ;;
+            *)
+                target_path="$1"
+                shift
+                ;;
+        esac
+    done
+
+    # If no menu requested and flags set, run directly
+    if [[ "$show_menu" == false ]]; then
+        local cmd="claude"
+        if [[ -n "$skip_permissions" ]]; then
+            cmd="$cmd $skip_permissions"
+        fi
+        if [[ -n "$continue_flag" ]]; then
+            cmd="$cmd $continue_flag"
+        fi
+        if [[ -n "$target_path" ]]; then
+            cmd="$cmd $target_path"
+        fi
+        
+        echo "Running: $cmd"
+        eval "$cmd"
+        return $?
+    fi
+
+    # Interactive menu
+    echo "Claude Code Assistant - Select an option:"
+    echo ""
+    echo "1) Basic claude command"
+    echo "2) Continue previous conversation (--continue)"
+    echo "3) Skip permissions (--dangerously-skip-permissions)"
+    echo "4) Continue + Skip permissions (--continue --dangerously-skip-permissions)"
+    echo "5) Custom command (enter your own flags)"
+    echo "6) Help / Show all options"
+    echo ""
+    
+    if [[ -n "$target_path" ]]; then
+        echo "Target: $target_path"
+        echo ""
+    else
+        echo "Enter target file/path (optional): "
+        read target_input
+        if [[ -n "$target_input" ]]; then
+            target_path="$target_input"
+        fi
+        echo ""
+    fi
+    
+    echo -n "Choose option (1-6): "
+    read choice
+    
+    local claude_cmd="claude"
+    
+    case "$choice" in
+        1)
+            # Basic claude
+            ;;
+        2)
+            claude_cmd="$claude_cmd --continue"
+            ;;
+        3)
+            claude_cmd="$claude_cmd --dangerously-skip-permissions"
+            ;;
+        4)
+            claude_cmd="$claude_cmd --dangerously-skip-permissions --continue"
+            ;;
+        5)
+            echo "Enter custom flags (e.g., --model gpt-4): "
+            read custom_flags
+            if [[ -n "$custom_flags" ]]; then
+                claude_cmd="$claude_cmd $custom_flags"
+            fi
+            ;;
+        6)
+            claude_code --help
+            return 0
+            ;;
+        *)
+            echo "Invalid choice. Please select 1-6."
+            return 1
+            ;;
+    esac
+    
+    # Add target path if provided
+    if [[ -n "$target_path" ]]; then
+        claude_cmd="$claude_cmd $target_path"
+    fi
+    
+    echo "Running: $claude_cmd"
+    eval "$claude_cmd"
+}
