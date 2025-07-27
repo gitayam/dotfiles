@@ -255,13 +255,29 @@ EOD
     fi
   done
 
-  # TODO: Add bookmarks to Firefox and Mullvad Browser (requires sqlite3 manipulation of places.sqlite)
-  if [[ " ${detected_browsers[*]} " == *"Firefox"* ]]; then
-    echo "[TODO] Firefox detected, but adding bookmarks programmatically requires sqlite3 manipulation of places.sqlite."
-  fi
-  if [[ " ${detected_browsers[*]} " == *"Mullvad Browser"* ]]; then
-    echo "[TODO] Mullvad Browser detected, but adding bookmarks programmatically requires sqlite3 manipulation of places.sqlite."
-  fi
+  for firefox in "Firefox" "Mullvad Browser"; do
+    if [[ " ${detected_browsers[*]} " == *"$firefox"* ]]; then
+      echo "Adding bookmarks to $firefox..."
+      base_dir="$HOME/Library/Application Support/${firefox}/Profiles"
+      if [[ -d "$base_dir" ]]; then
+        for db in "$base_dir"/*/places.sqlite; do
+          [ -f "$db" ] || continue
+          for ((i=0; i<${#bookmark_labels[@]}; i++)); do
+            label="${bookmark_labels[$i]}"
+            url="${bookmark_urls[$i]}"
+            sqlite3 "$db" <<SQL
+INSERT OR IGNORE INTO moz_places (url, title) VALUES ('$url', '$label');
+INSERT OR IGNORE INTO moz_bookmarks (fk, type, parent, position, title)
+  VALUES ((SELECT id FROM moz_places WHERE url='$url'), 1,
+          (SELECT id FROM moz_bookmarks WHERE parent=1 AND title='Bookmarks Toolbar' LIMIT 1),
+          (SELECT COALESCE(MAX(position),0)+1 FROM moz_bookmarks WHERE parent=(SELECT id FROM moz_bookmarks WHERE parent=1 AND title='Bookmarks Toolbar' LIMIT 1)),
+          '$label');
+SQL
+          done
+        done
+      fi
+    fi
+  done
 }
 
 
@@ -277,11 +293,11 @@ main() {
     echo "Starting initial install..."
     install_terminal_apps
     install_gui_apps
-    #add_bookmarks
+    add_bookmarks
     # add bookmarks to all chromium based browsers
     echo "Syncing mac aliases and functions to ~/.zshrc"
     ./sync_mac_dotfiles.sh
     echo "Initial install complete."
 }
 # Run the main function 
-main
+main "$@"
