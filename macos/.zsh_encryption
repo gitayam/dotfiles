@@ -263,18 +263,124 @@ alias genpass="generate_password -c"
 alias genpassphrase="generate_password -p phrases -c"
 alias genpin="generate_password -p numbers -l 6 -c"
 
+# Encryption/Decryption aliases
+alias encrypt="encrypt_file"
+alias decrypt="decrypt_file"
+alias encrypt_simple="encrypt_file_simple"
+alias decrypt_simple="decrypt_file_simple"
+
+# Quick encryption with deletion of original
+alias encrypt_delete="encrypt_file -d"
+alias encrypt_simple_delete="encrypt_file_simple -d"
+
+# Batch operations
+alias batch_enc="batch_encrypt"
+alias batch_enc_simple="batch_encrypt -s"
+alias batch_enc_github="batch_encrypt -g"
+
+# Security aliases
+alias secure_rm="secure_delete"
+alias secure_del="secure_delete"
+alias wipe="secure_delete -p 7 -r"  # More thorough deletion
+
+# GPG helpers
+alias gpg_keys="gpg_key_info"
+alias gpg_list="gpg --list-keys --keyid-format SHORT"
+alias gpg_list_secret="gpg --list-secret-keys --keyid-format SHORT"
+alias gpg_import="import_gpg_key"
+alias gpg_import_github="import_gpg_key -g"
+
+# Quick GitHub key operations
+alias encrypt_github="encrypt_for_github" # Use like: encrypt_github file.txt github_username
+alias github_key="import_gpg_key -g"
+alias github_encrypt="encrypt_for_github"
+
 # Function to encrypt a file using GPG
 encrypt_file() {
     if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
-        echo "Usage: encrypt_file [file] [recipient]"
+        echo "Usage: encrypt_file [options] [file] [recipient]"
         echo "  Encrypts a file using GPG."
-        echo "  If recipient is specified, uses public key encryption."
-        echo "  Otherwise, uses symmetric encryption with a password."
+        echo ""
+        echo "Options:"
+        echo "  -o, --output FILE    Specify output filename"
+        echo "  -a, --armor          Create ASCII-armored output"
+        echo "  -c, --compress       Compress before encrypting"
+        echo "  -d, --delete         Delete original file after encryption"
+        echo "  -v, --verbose        Verbose output"
+        echo "  -z, --zip LEVEL      Compression level (0-9, default: 6)"
+        echo "  -g, --github         Treat recipient as GitHub username"
+        echo ""
+        echo "Arguments:"
+        echo "  file                 File to encrypt"
+        echo "  recipient            GPG recipient email/key or GitHub username (optional, uses symmetric if not provided)"
+        echo ""
+        echo "Examples:"
+        echo "  encrypt_file document.txt                    # Symmetric encryption"
+        echo "  encrypt_file document.txt user@example.com  # Public key encryption"
+        echo "  encrypt_file -g document.txt username       # GitHub username encryption"
+        echo "  encrypt_file -a -o secret.asc data.txt      # ASCII armor output"
         return 0
     fi
     
-    local file="$1"
-    local recipient="$2"
+    local output_file=""
+    local use_armor=false
+    local use_compression=false
+    local delete_original=false
+    local verbose=false
+    local compression_level=6
+    local use_github=false
+    local file=""
+    local recipient=""
+    
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -o|--output)
+                output_file="$2"
+                shift 2
+                ;;
+            -a|--armor)
+                use_armor=true
+                shift
+                ;;
+            -c|--compress)
+                use_compression=true
+                shift
+                ;;
+            -d|--delete)
+                delete_original=true
+                shift
+                ;;
+            -v|--verbose)
+                verbose=true
+                shift
+                ;;
+            -z|--zip)
+                compression_level="$2"
+                use_compression=true
+                shift 2
+                ;;
+            -g|--github)
+                use_github=true
+                shift
+                ;;
+            -*)
+                echo "Error: Unknown option $1"
+                return 1
+                ;;
+            *)
+                if [[ -z "$file" ]]; then
+                    file="$1"
+                elif [[ -z "$recipient" ]]; then
+                    recipient="$1"
+                else
+                    echo "Error: Too many arguments"
+                    return 1
+                fi
+                shift
+                ;;
+        esac
+    done
     
     # Check if file exists
     if [[ ! -f "$file" ]]; then
@@ -289,29 +395,185 @@ encrypt_file() {
         return 1
     fi
     
+    # Set default output file if not specified
+    if [[ -z "$output_file" ]]; then
+        if $use_armor; then
+            output_file="${file}.asc"
+        else
+            output_file="${file}.gpg"
+        fi
+    fi
+    
+    # Check if output file already exists
+    if [[ -f "$output_file" ]]; then
+        echo -n "Output file '$output_file' already exists. Overwrite? (y/N): "
+        read response
+        if [[ ! "$response" =~ ^[Yy]$ ]]; then
+            echo "Encryption cancelled."
+            return 1
+        fi
+    fi
+    
+    # Build GPG command
+    local gpg_cmd="gpg"
+    local gpg_args=()
+    
+    if $use_armor; then
+        gpg_args+=(--armor)
+    fi
+    
+    if $use_compression; then
+        gpg_args+=(--compress-algo 2 --compress-level "$compression_level")
+    fi
+    
+    if $verbose; then
+        gpg_args+=(--verbose)
+    fi
+    
+    gpg_args+=(--output "$output_file")
+    
     # Encrypt with recipient's public key or use symmetric encryption
     if [[ -n "$recipient" ]]; then
+        # If GitHub flag is set, try to import key from GitHub first
+        if $use_github; then
+            echo "Looking up GPG key for GitHub user: $recipient"
+            if ! import_gpg_key -g "$recipient"; then
+                echo "Error: Could not import GPG key for GitHub user: $recipient"
+                return 1
+            fi
+        fi
+        
+        # Try to find and import recipient key if not found locally
+        if ! gpg --list-keys "$recipient" &>/dev/null; then
+            if ! $use_github; then
+                echo "Public key for '$recipient' not found locally."
+                
+                # Try to import from key servers or GitHub
+                if ! import_gpg_key "$recipient"; then
+                    echo "Error: Could not find or import public key for '$recipient'"
+                    echo "Available local keys:"
+                    gpg --list-keys --keyid-format SHORT
+                    return 1
+                fi
+            fi
+        fi
+        
+        # Check key trust level
+        local trust_level=$(gpg --list-keys --with-colons "$recipient" | awk -F: '/^pub:/ {print $2}')
+        if [[ "$trust_level" == "q" || "$trust_level" == "n" ]]; then
+            echo "Warning: The key for '$recipient' is not trusted."
+            echo "You may want to verify the key fingerprint and sign it with: gpg --sign-key '$recipient'"
+            echo -n "Continue anyway? (y/N): "
+            read response
+            if [[ ! "$response" =~ ^[Yy]$ ]]; then
+                echo "Encryption cancelled."
+                return 1
+            fi
+        fi
+        
         # Public key encryption
-        gpg --encrypt --recipient "$recipient" "$file"
-        echo "File encrypted for $recipient: ${file}.gpg"
+        gpg_args+=(--encrypt --recipient "$recipient")
+        $verbose && echo "Encrypting for recipient: $recipient"
     else
         # Symmetric encryption (password-based)
-        gpg --symmetric --cipher-algo AES256 "$file"
-        echo "File encrypted with password: ${file}.gpg"
+        gpg_args+=(--symmetric --cipher-algo AES256)
+        $verbose && echo "Using symmetric encryption with AES256"
+    fi
+    
+    gpg_args+=("$file")
+    
+    # Execute encryption
+    if $verbose; then
+        echo "Executing: $gpg_cmd ${gpg_args[*]}"
+    fi
+    
+    if "$gpg_cmd" "${gpg_args[@]}"; then
+        # Set restrictive permissions on encrypted file
+        chmod 600 "$output_file"
+        
+        echo "File encrypted successfully: $output_file"
+        
+        # Delete original file if requested
+        if $delete_original; then
+            if secure_delete "$file"; then
+                echo "Original file securely deleted."
+            else
+                echo "Warning: Failed to securely delete original file."
+            fi
+        fi
+        
+        return 0
+    else
+        echo "Error: Encryption failed."
+        return 1
     fi
 }
 
 # Function to decrypt a GPG-encrypted file
 decrypt_file() {
     if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
-        echo "Usage: decrypt_file [encrypted_file] [output_file]"
+        echo "Usage: decrypt_file [options] [encrypted_file] [output_file]"
         echo "  Decrypts a GPG-encrypted file."
-        echo "  If output_file is not specified, removes the .gpg extension."
+        echo ""
+        echo "Options:"
+        echo "  -d, --delete         Delete encrypted file after successful decryption"
+        echo "  -v, --verbose        Verbose output"
+        echo "  -f, --force          Overwrite output file if it exists"
+        echo "  -t, --test           Test decryption without writing output"
+        echo ""
+        echo "Arguments:"
+        echo "  encrypted_file       File to decrypt"
+        echo "  output_file          Output filename (optional, auto-detected if not provided)"
+        echo ""
+        echo "Examples:"
+        echo "  decrypt_file document.txt.gpg"
+        echo "  decrypt_file -d secret.asc plaintext.txt"
         return 0
     fi
     
-    local encrypted_file="$1"
-    local output_file="$2"
+    local delete_encrypted=false
+    local verbose=false
+    local force_overwrite=false
+    local test_only=false
+    local encrypted_file=""
+    local output_file=""
+    
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -d|--delete)
+                delete_encrypted=true
+                shift
+                ;;
+            -v|--verbose)
+                verbose=true
+                shift
+                ;;
+            -f|--force)
+                force_overwrite=true
+                shift
+                ;;
+            -t|--test)
+                test_only=true
+                shift
+                ;;
+            -*)
+                echo "Error: Unknown option $1"
+                return 1
+                ;;
+            *)
+                if [[ -z "$encrypted_file" ]]; then
+                    encrypted_file="$1"
+                elif [[ -z "$output_file" ]]; then
+                    output_file="$1"
+                else
+                    echo "Error: Too many arguments"
+                    return 1
+                fi
+                shift
+                ;;
+        esac
+    done
     
     # Check if file exists
     if [[ ! -f "$encrypted_file" ]]; then
@@ -326,35 +588,156 @@ decrypt_file() {
         return 1
     fi
     
+    # Auto-detect if file is GPG encrypted
+    if ! gpg --list-packets "$encrypted_file" &>/dev/null; then
+        echo "Error: '$encrypted_file' does not appear to be a valid GPG-encrypted file."
+        return 1
+    fi
+    
     # Set default output file if not specified
     if [[ -z "$output_file" ]]; then
-        output_file="${encrypted_file%.gpg}"
-        # If the filename doesn't end with .gpg, append .decrypted
-        if [[ "$output_file" == "$encrypted_file" ]]; then
+        # Try common extensions
+        if [[ "$encrypted_file" =~ \.gpg$ ]]; then
+            output_file="${encrypted_file%.gpg}"
+        elif [[ "$encrypted_file" =~ \.asc$ ]]; then
+            output_file="${encrypted_file%.asc}"
+        else
             output_file="${encrypted_file}.decrypted"
         fi
     fi
     
-    # Decrypt file
-    gpg --decrypt --output "$output_file" "$encrypted_file"
-    if [[ $? -eq 0 ]]; then
-        echo "File decrypted to: $output_file"
+    # Check if output file exists and handle appropriately
+    if [[ -f "$output_file" ]] && ! $force_overwrite && ! $test_only; then
+        echo -n "Output file '$output_file' already exists. Overwrite? (y/N): "
+        read response
+        if [[ ! "$response" =~ ^[Yy]$ ]]; then
+            echo "Decryption cancelled."
+            return 1
+        fi
+    fi
+    
+    # Build GPG command
+    local gpg_cmd="gpg"
+    local gpg_args=(--decrypt)
+    
+    if $verbose; then
+        gpg_args+=(--verbose)
+    fi
+    
+    if ! $test_only; then
+        gpg_args+=(--output "$output_file")
+    fi
+    
+    gpg_args+=("$encrypted_file")
+    
+    # Execute decryption
+    if $verbose; then
+        echo "Executing: $gpg_cmd ${gpg_args[*]}"
+    fi
+    
+    if $test_only; then
+        echo "Testing decryption of '$encrypted_file'..."
+        if "$gpg_cmd" "${gpg_args[@]}" >/dev/null 2>&1; then
+            echo "Decryption test successful - file can be decrypted."
+            return 0
+        else
+            echo "Decryption test failed."
+            return 1
+        fi
     else
-        echo "Decryption failed."
-        return 1
+        if "$gpg_cmd" "${gpg_args[@]}"; then
+            echo "File decrypted successfully: $output_file"
+            
+            # Verify file was created and has content
+            if [[ -f "$output_file" && -s "$output_file" ]]; then
+                # Set secure permissions on decrypted file
+                chmod 600 "$output_file"
+                
+                # Delete encrypted file if requested
+                if $delete_encrypted; then
+                    if secure_delete "$encrypted_file"; then
+                        echo "Encrypted file securely deleted."
+                    else
+                        echo "Warning: Failed to securely delete encrypted file."
+                    fi
+                fi
+                
+                return 0
+            else
+                echo "Error: Decryption appeared to succeed but output file is missing or empty."
+                return 1
+            fi
+        else
+            echo "Error: Decryption failed."
+            return 1
+        fi
     fi
 }
 
 # Quick file encryption with OpenSSL (for when GPG is not needed)
 encrypt_file_simple() {
     if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
-        echo "Usage: encrypt_file_simple [file]"
-        echo "  Simple encryption using OpenSSL AES-256-CBC."
+        echo "Usage: encrypt_file_simple [options] [file]"
+        echo "  Simple encryption using OpenSSL AES-256-GCM (authenticated encryption)."
+        echo ""
+        echo "Options:"
+        echo "  -o, --output FILE    Specify output filename"
+        echo "  -b, --base64         Create base64-encoded output"
+        echo "  -d, --delete         Delete original file after encryption"
+        echo "  -v, --verbose        Verbose output"
+        echo "  -i, --iterations N   Key derivation iterations (default: 100000)"
+        echo ""
+        echo "Examples:"
+        echo "  encrypt_file_simple document.txt"
+        echo "  encrypt_file_simple -b -o secret.txt.b64 data.txt"
         return 0
     fi
     
-    local file="$1"
-    local output="${file}.enc"
+    local output_file=""
+    local use_base64=false
+    local delete_original=false
+    local verbose=false
+    local iterations=100000
+    local file=""
+    
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -o|--output)
+                output_file="$2"
+                shift 2
+                ;;
+            -b|--base64)
+                use_base64=true
+                shift
+                ;;
+            -d|--delete)
+                delete_original=true
+                shift
+                ;;
+            -v|--verbose)
+                verbose=true
+                shift
+                ;;
+            -i|--iterations)
+                iterations="$2"
+                shift 2
+                ;;
+            -*)
+                echo "Error: Unknown option $1"
+                return 1
+                ;;
+            *)
+                if [[ -z "$file" ]]; then
+                    file="$1"
+                else
+                    echo "Error: Too many arguments"
+                    return 1
+                fi
+                shift
+                ;;
+        esac
+    done
     
     # Check if file exists
     if [[ ! -f "$file" ]]; then
@@ -362,21 +745,137 @@ encrypt_file_simple() {
         return 1
     fi
     
-    # Encrypt using OpenSSL
-    openssl enc -aes-256-cbc -salt -in "$file" -out "$output"
-    echo "File encrypted: $output"
+    # Check if OpenSSL supports AES-256-GCM
+    if ! openssl enc -list | grep -q "aes-256-gcm"; then
+        echo "Error: OpenSSL doesn't support AES-256-GCM. Falling back to AES-256-CBC."
+        local cipher="aes-256-cbc"
+    else
+        local cipher="aes-256-gcm"
+    fi
+    
+    # Set default output file if not specified
+    if [[ -z "$output_file" ]]; then
+        if $use_base64; then
+            output_file="${file}.enc.b64"
+        else
+            output_file="${file}.enc"
+        fi
+    fi
+    
+    # Check if output file already exists
+    if [[ -f "$output_file" ]]; then
+        echo -n "Output file '$output_file' already exists. Overwrite? (y/N): "
+        read response
+        if [[ ! "$response" =~ ^[Yy]$ ]]; then
+            echo "Encryption cancelled."
+            return 1
+        fi
+    fi
+    
+    $verbose && echo "Using cipher: $cipher with $iterations iterations"
+    
+    # Encrypt using OpenSSL with improved settings
+    local openssl_args=(enc "-$cipher" -salt -pbkdf2 -iter "$iterations" -in "$file")
+    
+    if $use_base64; then
+        openssl_args+=(-a -out "$output_file")
+    else
+        openssl_args+=(-out "$output_file")
+    fi
+    
+    if $verbose; then
+        echo "Executing: openssl ${openssl_args[*]}"
+    fi
+    
+    if openssl "${openssl_args[@]}"; then
+        # Set restrictive permissions
+        chmod 600 "$output_file"
+        echo "File encrypted successfully: $output_file"
+        echo "Cipher: $cipher, Key derivation: PBKDF2 with $iterations iterations"
+        
+        # Delete original file if requested
+        if $delete_original; then
+            if secure_delete "$file"; then
+                echo "Original file securely deleted."
+            else
+                echo "Warning: Failed to securely delete original file."
+            fi
+        fi
+        
+        return 0
+    else
+        echo "Error: Encryption failed."
+        return 1
+    fi
 }
 
 # Quick file decryption with OpenSSL
 decrypt_file_simple() {
     if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
-        echo "Usage: decrypt_file_simple [encrypted_file] [output_file]"
+        echo "Usage: decrypt_file_simple [options] [encrypted_file] [output_file]"
         echo "  Decrypts a file encrypted with encrypt_file_simple."
+        echo ""
+        echo "Options:"
+        echo "  -d, --delete         Delete encrypted file after successful decryption"
+        echo "  -v, --verbose        Verbose output"
+        echo "  -f, --force          Overwrite output file if it exists"
+        echo "  -c, --cipher CIPHER  Specify cipher (auto-detected if not provided)"
+        echo "  -i, --iterations N   Key derivation iterations (default: 100000)"
+        echo ""
+        echo "Examples:"
+        echo "  decrypt_file_simple document.txt.enc"
+        echo "  decrypt_file_simple -d secret.enc plaintext.txt"
         return 0
     fi
     
-    local encrypted_file="$1"
-    local output_file="$2"
+    local delete_encrypted=false
+    local verbose=false
+    local force_overwrite=false
+    local cipher=""
+    local iterations=100000
+    local encrypted_file=""
+    local output_file=""
+    
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -d|--delete)
+                delete_encrypted=true
+                shift
+                ;;
+            -v|--verbose)
+                verbose=true
+                shift
+                ;;
+            -f|--force)
+                force_overwrite=true
+                shift
+                ;;
+            -c|--cipher)
+                cipher="$2"
+                shift 2
+                ;;
+            -i|--iterations)
+                iterations="$2"
+                shift 2
+                ;;
+            -*)
+                echo "Error: Unknown option $1"
+                return 1
+                ;;
+            *)
+                if [[ -z "$encrypted_file" ]]; then
+                    encrypted_file="$1"
+                elif [[ -z "$output_file" ]]; then
+                    output_file="$1"
+                else
+                    echo "Error: Too many arguments"
+                    return 1
+                fi
+                shift
+                ;;
+        esac
+    done
     
     # Check if file exists
     if [[ ! -f "$encrypted_file" ]]; then
@@ -384,21 +883,91 @@ decrypt_file_simple() {
         return 1
     fi
     
+    # Auto-detect cipher if not specified
+    if [[ -z "$cipher" ]]; then
+        # Try to detect if it's base64 encoded
+        if [[ "$encrypted_file" =~ \.b64$ ]] || file "$encrypted_file" | grep -q "ASCII text"; then
+            local is_base64=true
+        else
+            local is_base64=false
+        fi
+        
+        # Default to AES-256-GCM if available, otherwise CBC
+        if openssl enc -list | grep -q "aes-256-gcm"; then
+            cipher="aes-256-gcm"
+        else
+            cipher="aes-256-cbc"
+            echo "Warning: Using AES-256-CBC (GCM not available)"
+        fi
+    fi
+    
     # Set default output file if not specified
     if [[ -z "$output_file" ]]; then
-        output_file="${encrypted_file%.enc}"
-        # If the filename doesn't end with .enc, append .decrypted
-        if [[ "$output_file" == "$encrypted_file" ]]; then
+        if [[ "$encrypted_file" =~ \.enc\.b64$ ]]; then
+            output_file="${encrypted_file%.enc.b64}"
+        elif [[ "$encrypted_file" =~ \.enc$ ]]; then
+            output_file="${encrypted_file%.enc}"
+        elif [[ "$encrypted_file" =~ \.b64$ ]]; then
+            output_file="${encrypted_file%.b64}"
+        else
             output_file="${encrypted_file}.decrypted"
         fi
     fi
     
+    # Check if output file exists and handle appropriately
+    if [[ -f "$output_file" ]] && ! $force_overwrite; then
+        echo -n "Output file '$output_file' already exists. Overwrite? (y/N): "
+        read response
+        if [[ ! "$response" =~ ^[Yy]$ ]]; then
+            echo "Decryption cancelled."
+            return 1
+        fi
+    fi
+    
+    $verbose && echo "Using cipher: $cipher with $iterations iterations"
+    
+    # Determine if input is base64 encoded
+    local is_base64=false
+    if [[ "$encrypted_file" =~ \.b64$ ]] || file "$encrypted_file" | grep -q "ASCII text"; then
+        is_base64=true
+    fi
+    
+    # Build OpenSSL command
+    local openssl_args=(enc -d "-$cipher" -pbkdf2 -iter "$iterations" -in "$encrypted_file" -out "$output_file")
+    
+    if $is_base64; then
+        openssl_args+=(-a)
+    fi
+    
+    if $verbose; then
+        echo "Executing: openssl ${openssl_args[*]}"
+    fi
+    
     # Decrypt using OpenSSL
-    openssl enc -d -aes-256-cbc -in "$encrypted_file" -out "$output_file"
-    if [[ $? -eq 0 ]]; then
-        echo "File decrypted to: $output_file"
+    if openssl "${openssl_args[@]}"; then
+        # Verify file was created and has content
+        if [[ -f "$output_file" && -s "$output_file" ]]; then
+            # Set secure permissions on decrypted file
+            chmod 600 "$output_file"
+            echo "File decrypted successfully: $output_file"
+            
+            # Delete encrypted file if requested
+            if $delete_encrypted; then
+                if secure_delete "$encrypted_file"; then
+                    echo "Encrypted file securely deleted."
+                else
+                    echo "Warning: Failed to securely delete encrypted file."
+                fi
+            fi
+            
+            return 0
+        else
+            echo "Error: Decryption appeared to succeed but output file is missing or empty."
+            return 1
+        fi
     else
-        echo "Decryption failed."
+        echo "Error: Decryption failed."
+        echo "Note: Make sure you're using the correct cipher. Try -c aes-256-cbc for older encrypted files."
         return 1
     fi
 }
@@ -406,26 +975,95 @@ decrypt_file_simple() {
 # Securely delete a file (macOS-compatible)
 secure_delete() {
     if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
-        echo "Usage: secure_delete [file1] [file2] ..."
-        echo "  Securely delete files using srm if available, or rm with overwrite."
-        echo "  Supports multiple files and wildcards."
+        echo "Usage: secure_delete [options] [file1] [file2] ..."
+        echo "  Securely delete files with multiple overwrite passes."
+        echo ""
+        echo "Options:"
+        echo "  -p, --passes N       Number of overwrite passes (default: 3)"
+        echo "  -v, --verbose        Verbose output"
+        echo "  -f, --force          Don't prompt for confirmation"
+        echo "  -r, --random         Use random data for overwrites"
+        echo ""
+        echo "Note: On SSDs, secure deletion is less effective due to wear leveling."
+        echo "      Consider full-disk encryption for sensitive data on SSDs."
         return 0
     fi
     
-    # Check if srm is available
-    local use_srm=false
-    if command -v srm &> /dev/null; then
-        use_srm=true
+    local passes=3
+    local verbose=false
+    local force=false
+    local use_random=false
+    local files=()
+    
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -p|--passes)
+                passes="$2"
+                if ! [[ "$passes" =~ ^[0-9]+$ ]] || [[ "$passes" -lt 1 ]]; then
+                    echo "Error: Passes must be a positive number"
+                    return 1
+                fi
+                shift 2
+                ;;
+            -v|--verbose)
+                verbose=true
+                shift
+                ;;
+            -f|--force)
+                force=true
+                shift
+                ;;
+            -r|--random)
+                use_random=true
+                shift
+                ;;
+            -*)
+                echo "Error: Unknown option $1"
+                return 1
+                ;;
+            *)
+                files+=("$1")
+                shift
+                ;;
+        esac
+    done
+    
+    if [[ ${#files[@]} -eq 0 ]]; then
+        echo "Error: No files specified"
+        return 1
     fi
     
-    # Process all arguments
-    local exit_code=0
-    for file in "$@"; do
-        # Skip help flags (already handled above)
-        if [[ "$file" == "-h" || "$file" == "--help" ]]; then
-            continue
+    # Check if we're on an SSD (warn user)
+    local disk_type=""
+    if command -v system_profiler &>/dev/null; then
+        disk_type=$(system_profiler SPStorageDataType 2>/dev/null | grep -i "solid state\|ssd" | head -1)
+        if [[ -n "$disk_type" ]] && ! $force; then
+            echo "Warning: SSD detected. Secure deletion may not be fully effective on SSDs."
+            echo -n "Continue anyway? (y/N): "
+            read response
+            if [[ ! "$response" =~ ^[Yy]$ ]]; then
+                echo "Secure deletion cancelled."
+                return 1
+            fi
         fi
-        
+    fi
+    
+    # Confirm deletion if not forced
+    if ! $force; then
+        echo "Files to be securely deleted:"
+        printf '  %s\n' "${files[@]}"
+        echo -n "Are you sure? This cannot be undone. (y/N): "
+        read response
+        if [[ ! "$response" =~ ^[Yy]$ ]]; then
+            echo "Secure deletion cancelled."
+            return 1
+        fi
+    fi
+    
+    # Process all files
+    local exit_code=0
+    for file in "${files[@]}"; do
         # Check if file exists
         if [[ ! -f "$file" ]]; then
             echo "Error: File '$file' not found."
@@ -433,16 +1071,50 @@ secure_delete() {
             continue
         fi
         
-        # Delete the file securely
-        if $use_srm; then
-            srm -z "$file"
-            echo "File securely deleted using srm: $file"
+        $verbose && echo "Securely deleting: $file"
+        
+        # Get file size for progress indication
+        local filesize
+        if command -v stat &>/dev/null; then
+            filesize=$(stat -f "%z" "$file" 2>/dev/null) || filesize=0
         else
-            # Fallback to overwriting the file before deletion
-            local filesize=$(stat -f "%z" "$file")
-            dd if=/dev/urandom of="$file" bs=1 count="$filesize" conv=notrunc status=none
-            rm -f "$file"
-            echo "File overwritten and deleted: $file"
+            filesize=$(wc -c < "$file" 2>/dev/null) || filesize=0
+        fi
+        
+        # Perform multiple overwrite passes
+        local pass_success=true
+        for ((pass=1; pass<=passes; pass++)); do
+            $verbose && echo "  Pass $pass/$passes..."
+            
+            if $use_random; then
+                # Use random data
+                if ! dd if=/dev/urandom of="$file" bs=1024 count=$((filesize/1024 + 1)) conv=notrunc status=none 2>/dev/null; then
+                    pass_success=false
+                    break
+                fi
+            else
+                # Use zeros (faster and often sufficient)
+                if ! dd if=/dev/zero of="$file" bs=1024 count=$((filesize/1024 + 1)) conv=notrunc status=none 2>/dev/null; then
+                    pass_success=false
+                    break
+                fi
+            fi
+            
+            # Sync to ensure data is written
+            sync
+        done
+        
+        if $pass_success; then
+            # Final deletion
+            if rm -f "$file" 2>/dev/null; then
+                $verbose && echo "  File securely deleted: $file"
+            else
+                echo "Error: Failed to remove file: $file"
+                exit_code=1
+            fi
+        else
+            echo "Error: Failed to overwrite file: $file"
+            exit_code=1
         fi
     done
     
@@ -452,23 +1124,614 @@ secure_delete() {
 # Create a password-protected zip archive
 secure_zip() {
     if [[ $# -lt 2 || "$1" == "-h" || "$1" == "--help" ]]; then
-        echo "Usage: secure_zip [zipfile] [files/directories...]"
+        echo "Usage: secure_zip [options] [zipfile] [files/directories...]"
         echo "  Creates a password-protected ZIP archive."
+        echo ""
+        echo "Options:"
+        echo "  -l, --level N        Compression level (0-9, default: 6)"
+        echo "  -v, --verbose        Verbose output"
+        echo "  -r, --recursive      Include directories recursively"
+        echo "  -x, --exclude PATTERN Exclude files matching pattern"
+        echo ""
+        echo "Examples:"
+        echo "  secure_zip backup.zip documents/ photos/"
+        echo "  secure_zip -l 9 -r archive.zip /path/to/data"
         return 0
     fi
     
-    local zipfile="$1"
-    shift
+    local compression_level=6
+    local verbose=false
+    local recursive=false
+    local exclude_patterns=()
+    local zipfile=""
+    local files=()
+    
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -l|--level)
+                compression_level="$2"
+                if ! [[ "$compression_level" =~ ^[0-9]$ ]]; then
+                    echo "Error: Compression level must be 0-9"
+                    return 1
+                fi
+                shift 2
+                ;;
+            -v|--verbose)
+                verbose=true
+                shift
+                ;;
+            -r|--recursive)
+                recursive=true
+                shift
+                ;;
+            -x|--exclude)
+                exclude_patterns+=("$2")
+                shift 2
+                ;;
+            -*)
+                echo "Error: Unknown option $1"
+                return 1
+                ;;
+            *)
+                if [[ -z "$zipfile" ]]; then
+                    zipfile="$1"
+                else
+                    files+=("$1")
+                fi
+                shift
+                ;;
+        esac
+    done
+    
+    if [[ ${#files[@]} -eq 0 ]]; then
+        echo "Error: No files specified to archive"
+        return 1
+    fi
     
     # Add .zip extension if not present
     if [[ ! "$zipfile" =~ \.zip$ ]]; then
         zipfile="${zipfile}.zip"
     fi
     
-    # Use zip command with password protection
-    zip -e "$zipfile" "$@"
+    # Check if zipfile already exists
+    if [[ -f "$zipfile" ]]; then
+        echo -n "Archive '$zipfile' already exists. Overwrite? (y/N): "
+        read response
+        if [[ ! "$response" =~ ^[Yy]$ ]]; then
+            echo "Archive creation cancelled."
+            return 1
+        fi
+    fi
     
-    echo "Created encrypted ZIP archive: $zipfile"
+    # Build zip command
+    local zip_args=("-e" "-$compression_level")
+    
+    if $recursive; then
+        zip_args+=("-r")
+    fi
+    
+    if $verbose; then
+        zip_args+=("-v")
+    fi
+    
+    # Add exclude patterns
+    for pattern in "${exclude_patterns[@]}"; do
+        zip_args+=("-x" "$pattern")
+    done
+    
+    zip_args+=("$zipfile")
+    zip_args+=("${files[@]}")
+    
+    # Create archive
+    if $verbose; then
+        echo "Creating encrypted ZIP archive..."
+        echo "Command: zip ${zip_args[*]}"
+    fi
+    
+    if zip "${zip_args[@]}"; then
+        # Set restrictive permissions
+        chmod 600 "$zipfile"
+        echo "Created encrypted ZIP archive: $zipfile"
+        
+        # Display archive info
+        if $verbose && command -v unzip &>/dev/null; then
+            echo ""
+            echo "Archive contents:"
+            unzip -l "$zipfile"
+        fi
+        
+        return 0
+    else
+        echo "Error: Failed to create archive"
+        return 1
+    fi
+}
+
+# Batch encrypt multiple files
+batch_encrypt() {
+    if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: batch_encrypt [options] [files...]"
+        echo "  Encrypt multiple files in batch."
+        echo ""
+        echo "Options:"
+        echo "  -r, --recipient EMAIL Use GPG public key encryption"
+        echo "  -g, --github USER    Use GitHub username for GPG key lookup"
+        echo "  -s, --simple         Use OpenSSL simple encryption"
+        echo "  -d, --delete         Delete original files after encryption"
+        echo "  -v, --verbose        Verbose output"
+        echo "  -o, --output-dir DIR Output directory for encrypted files"
+        echo ""
+        echo "Examples:"
+        echo "  batch_encrypt *.txt"
+        echo "  batch_encrypt -r user@example.com -d documents/*"
+        echo "  batch_encrypt -g username -d documents/*"
+        echo "  batch_encrypt -s -o ./encrypted/ *.pdf"
+        return 0
+    fi
+    
+    local recipient=""
+    local github_user=""
+    local use_simple=false
+    local delete_original=false
+    local verbose=false
+    local output_dir=""
+    local files=()
+    
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -r|--recipient)
+                recipient="$2"
+                shift 2
+                ;;
+            -g|--github)
+                github_user="$2"
+                shift 2
+                ;;
+            -s|--simple)
+                use_simple=true
+                shift
+                ;;
+            -d|--delete)
+                delete_original=true
+                shift
+                ;;
+            -v|--verbose)
+                verbose=true
+                shift
+                ;;
+            -o|--output-dir)
+                output_dir="$2"
+                shift 2
+                ;;
+            -*)
+                echo "Error: Unknown option $1"
+                return 1
+                ;;
+            *)
+                files+=("$1")
+                shift
+                ;;
+        esac
+    done
+    
+    # Validate options
+    if [[ -n "$recipient" && -n "$github_user" ]]; then
+        echo "Error: Cannot specify both --recipient and --github"
+        return 1
+    fi
+    
+    if [[ -n "$github_user" && $use_simple == true ]]; then
+        echo "Error: GitHub username requires GPG encryption (cannot use with --simple)"
+        return 1
+    fi
+    
+    # If GitHub user specified, try to import their key
+    if [[ -n "$github_user" ]]; then
+        echo "Looking up GPG key for GitHub user: $github_user"
+        if import_gpg_key -g "$github_user"; then
+            # Use the GitHub user as recipient (GPG will find the right key)
+            recipient="$github_user"
+        else
+            echo "Error: Could not import GPG key for GitHub user: $github_user"
+            return 1
+        fi
+    fi
+    
+    if [[ ${#files[@]} -eq 0 ]]; then
+        echo "Error: No files specified"
+        return 1
+    fi
+    
+    # Create output directory if specified
+    if [[ -n "$output_dir" ]]; then
+        if ! mkdir -p "$output_dir"; then
+            echo "Error: Cannot create output directory '$output_dir'"
+            return 1
+        fi
+    fi
+    
+    # Process files
+    local success_count=0
+    local total_count=${#files[@]}
+    
+    echo "Encrypting $total_count files..."
+    
+    for file in "${files[@]}"; do
+        if [[ ! -f "$file" ]]; then
+            echo "Warning: File '$file' not found, skipping."
+            continue
+        fi
+        
+        $verbose && echo "Processing: $file"
+        
+        # Determine output file path
+        local output_file=""
+        if [[ -n "$output_dir" ]]; then
+            local basename=$(basename "$file")
+            if $use_simple; then
+                output_file="$output_dir/${basename}.enc"
+            else
+                output_file="$output_dir/${basename}.gpg"
+            fi
+        fi
+        
+        # Encrypt the file
+        local encrypt_args=()
+        if $verbose; then
+            encrypt_args+=("-v")
+        fi
+        if $delete_original; then
+            encrypt_args+=("-d")
+        fi
+        if [[ -n "$output_file" ]]; then
+            encrypt_args+=("-o" "$output_file")
+        fi
+        encrypt_args+=("$file")
+        
+        if $use_simple; then
+            if [[ -n "$recipient" ]]; then
+                echo "Warning: Recipient specified but using simple encryption (ignoring recipient)"
+            fi
+            if encrypt_file_simple "${encrypt_args[@]}"; then
+                ((success_count++))
+            fi
+        else
+            if [[ -n "$recipient" ]]; then
+                encrypt_args+=("$recipient")
+            fi
+            if encrypt_file "${encrypt_args[@]}"; then
+                ((success_count++))
+            fi
+        fi
+    done
+    
+    echo "Batch encryption complete: $success_count/$total_count files processed successfully."
+    
+    if [[ $success_count -eq $total_count ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# GPG key import helper with key server and GitHub support
+import_gpg_key() {
+    if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: import_gpg_key [options] [identifier]"
+        echo "  Import a GPG key from key servers or GitHub."
+        echo ""
+        echo "Options:"
+        echo "  -s, --server SERVER  Specify key server (default: keys.openpgp.org)"
+        echo "  -g, --github         Treat identifier as GitHub username"
+        echo "  -v, --verbose        Verbose output"
+        echo "  -t, --timeout N      Timeout in seconds (default: 10)"
+        echo ""
+        echo "Arguments:"
+        echo "  identifier           Email address, key ID, or GitHub username"
+        echo ""
+        echo "Examples:"
+        echo "  import_gpg_key user@example.com"
+        echo "  import_gpg_key -g username"
+        echo "  import_gpg_key --server hkps://keyserver.ubuntu.com user@example.com"
+        return 0
+    fi
+    
+    local keyserver="keys.openpgp.org"
+    local use_github=false
+    local verbose=false
+    local timeout=10
+    local identifier=""
+    
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -s|--server)
+                keyserver="$2"
+                shift 2
+                ;;
+            -g|--github)
+                use_github=true
+                shift
+                ;;
+            -v|--verbose)
+                verbose=true
+                shift
+                ;;
+            -t|--timeout)
+                timeout="$2"
+                if ! [[ "$timeout" =~ ^[0-9]+$ ]]; then
+                    echo "Error: Timeout must be a number"
+                    return 1
+                fi
+                shift 2
+                ;;
+            -*)
+                echo "Error: Unknown option $1"
+                return 1
+                ;;
+            *)
+                if [[ -z "$identifier" ]]; then
+                    identifier="$1"
+                else
+                    echo "Error: Too many arguments"
+                    return 1
+                fi
+                shift
+                ;;
+        esac
+    done
+    
+    if [[ -z "$identifier" ]]; then
+        echo "Error: No identifier provided"
+        return 1
+    fi
+    
+    if ! command -v gpg &>/dev/null; then
+        echo "Error: GPG is not installed."
+        return 1
+    fi
+    
+    $verbose && echo "Searching for GPG key: $identifier"
+    
+    # Function to try importing from a key server
+    try_keyserver_import() {
+        local server="$1"
+        local id="$2"
+        
+        $verbose && echo "Trying key server: $server"
+        
+        # Set timeout for GPG operations
+        export GPG_AGENT_INFO=""
+        
+        # Try to import the key
+        if timeout "$timeout" gpg --keyserver "$server" --recv-keys "$id" 2>/dev/null; then
+            return 0
+        elif timeout "$timeout" gpg --keyserver "$server" --search-keys "$id" </dev/null 2>/dev/null | head -20; then
+            echo -n "Found keys on $server. Import the first one? (y/N): "
+            read response
+            if [[ "$response" =~ ^[Yy]$ ]]; then
+                if timeout "$timeout" gpg --keyserver "$server" --recv-keys "$id" 2>/dev/null; then
+                    return 0
+                fi
+            fi
+        fi
+        return 1
+    }
+    
+    # Function to try importing from GitHub
+    try_github_import() {
+        local username="$1"
+        
+        $verbose && echo "Trying GitHub for user: $username"
+        
+        # Check if curl is available
+        if ! command -v curl &>/dev/null; then
+            echo "Error: curl is required for GitHub key import"
+            return 1
+        fi
+        
+        # Try to get GPG keys from GitHub
+        local github_url="https://github.com/${username}.gpg"
+        local temp_file=$(mktemp)
+        
+        if curl -s --max-time "$timeout" --fail "$github_url" -o "$temp_file" 2>/dev/null; then
+            # Check if the file contains a valid GPG key
+            if grep -q "BEGIN PGP PUBLIC KEY BLOCK" "$temp_file"; then
+                echo "Found GPG key on GitHub for user: $username"
+                echo -n "Import this key? (y/N): "
+                read response
+                if [[ "$response" =~ ^[Yy]$ ]]; then
+                    if gpg --import "$temp_file" 2>/dev/null; then
+                        rm -f "$temp_file"
+                        return 0
+                    fi
+                fi
+            else
+                $verbose && echo "No valid GPG key found on GitHub for user: $username"
+            fi
+        else
+            $verbose && echo "Could not fetch GPG key from GitHub for user: $username"
+        fi
+        
+        rm -f "$temp_file"
+        return 1
+    }
+    
+    # Main import logic
+    local import_success=false
+    
+    if $use_github; then
+        # GitHub username provided
+        if try_github_import "$identifier"; then
+            import_success=true
+            echo "Successfully imported GPG key from GitHub for: $identifier"
+        fi
+    else
+        # Email or key ID provided - try key servers first
+        local servers=("$keyserver")
+        
+        # Add common fallback servers if using default
+        if [[ "$keyserver" == "keys.openpgp.org" ]]; then
+            servers+=("hkps://keyserver.ubuntu.com" "hkps://pgp.mit.edu")
+        fi
+        
+        for server in "${servers[@]}"; do
+            if try_keyserver_import "$server" "$identifier"; then
+                import_success=true
+                echo "Successfully imported GPG key from $server for: $identifier"
+                break
+            fi
+        done
+        
+        # If key servers failed and identifier looks like it could be a username, try GitHub
+        if ! $import_success && [[ "$identifier" =~ ^[a-zA-Z0-9._-]+$ ]] && [[ ! "$identifier" =~ @ ]]; then
+            echo "Key servers failed. Trying GitHub as username..."
+            if try_github_import "$identifier"; then
+                import_success=true
+                echo "Successfully imported GPG key from GitHub for: $identifier"
+            fi
+        fi
+    fi
+    
+    if $import_success; then
+        # Display imported key info
+        echo ""
+        echo "Imported key details:"
+        gpg --list-keys --keyid-format LONG "$identifier" 2>/dev/null || {
+            # Try to find the key by searching all keys (in case email doesn't match exactly)
+            echo "Key imported but may have different identifier. Recent imports:"
+            gpg --list-keys --keyid-format LONG | tail -10
+        }
+        
+        echo ""
+        echo "Note: You may want to verify and sign this key with: gpg --sign-key [key-id]"
+        return 0
+    else
+        echo "Failed to import GPG key for: $identifier"
+        echo ""
+        echo "You can try:"
+        echo "  1. Manual import: gpg --keyserver $keyserver --search-keys $identifier"
+        echo "  2. GitHub import: import_gpg_key -g $identifier"
+        echo "  3. Different key server: import_gpg_key -s hkps://keyserver.ubuntu.com $identifier"
+        return 1
+    fi
+}
+
+# GPG key management helper
+gpg_key_info() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: gpg_key_info [email]"
+        echo "  Display GPG key information."
+        echo "  If email is provided, shows info for that specific key."
+        echo "  Otherwise, lists all available keys."
+        return 0
+    fi
+    
+    if ! command -v gpg &>/dev/null; then
+        echo "Error: GPG is not installed."
+        return 1
+    fi
+    
+    local email="$1"
+    
+    if [[ -n "$email" ]]; then
+        echo "Key information for: $email"
+        echo "================================"
+        
+        if gpg --list-keys "$email" &>/dev/null; then
+            gpg --list-keys --keyid-format LONG "$email"
+            echo ""
+            echo "Trust level:"
+            gpg --list-keys --with-colons "$email" | awk -F: '/^pub:/ {
+                trust=$2
+                if (trust == "u") print "Ultimate trust"
+                else if (trust == "f") print "Full trust"
+                else if (trust == "m") print "Marginal trust"
+                else if (trust == "n") print "No trust"
+                else if (trust == "q") print "Unknown trust"
+                else print "Trust level: " trust
+            }'
+        else
+            echo "No key found for: $email"
+            return 1
+        fi
+    else
+        echo "Available GPG keys:"
+        echo "=================="
+        gpg --list-keys --keyid-format SHORT
+        
+        echo ""
+        echo "Secret keys:"
+        echo "============"
+        gpg --list-secret-keys --keyid-format SHORT
+    fi
+}
+
+# Convenient wrapper for GitHub GPG encryption
+encrypt_for_github() {
+    if [[ $# -lt 2 || "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: encrypt_for_github [options] [file] [github_username]"
+        echo "  Quick encryption for GitHub users using their public GPG key."
+        echo ""
+        echo "Options:"
+        echo "  -a, --armor          Create ASCII-armored output"
+        echo "  -d, --delete         Delete original file after encryption"
+        echo "  -v, --verbose        Verbose output"
+        echo ""
+        echo "Examples:"
+        echo "  encrypt_for_github document.txt username"
+        echo "  encrypt_for_github -a -d secret.txt username"
+        return 0
+    fi
+    
+    local armor_flag=""
+    local delete_flag=""
+    local verbose_flag=""
+    local file=""
+    local github_user=""
+    
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -a|--armor)
+                armor_flag="-a"
+                shift
+                ;;
+            -d|--delete)
+                delete_flag="-d"
+                shift
+                ;;
+            -v|--verbose)
+                verbose_flag="-v"
+                shift
+                ;;
+            -*)
+                echo "Error: Unknown option $1"
+                return 1
+                ;;
+            *)
+                if [[ -z "$file" ]]; then
+                    file="$1"
+                elif [[ -z "$github_user" ]]; then
+                    github_user="$1"
+                else
+                    echo "Error: Too many arguments"
+                    return 1
+                fi
+                shift
+                ;;
+        esac
+    done
+    
+    if [[ -z "$file" || -z "$github_user" ]]; then
+        echo "Error: Both file and GitHub username are required"
+        return 1
+    fi
+    
+    # Call encrypt_file with GitHub flag
+    encrypt_file $armor_flag $delete_flag $verbose_flag -g "$file" "$github_user"
 }
 
 # EOF - End of file marker to ensure proper termination
