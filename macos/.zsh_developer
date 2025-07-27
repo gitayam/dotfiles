@@ -835,27 +835,120 @@ hackathon_setup() {
 # Claude Code Functions
 # ----------------------
 claude_checks() {
-    # Usage: claude_code [file_name]
+    # Check if Node.js is installed (required for Claude Code)
+    if ! command -v node &> /dev/null; then
+        echo "Error: Node.js is not installed. Claude Code requires Node.js 18+."
+        echo "Would you like to install Node.js? (y/n): "
+        read install_node
+        if [[ $install_node =~ ^[Yy]$ ]]; then
+            echo "Installing Node.js via Homebrew..."
+            brew install node
+        else
+            echo "Please install Node.js 18+ before proceeding."
+            return 1
+        fi
+    fi
+
+    # Check Node.js version
+    local node_version=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
+    if [[ $node_version -lt 18 ]]; then
+        echo "Warning: Claude Code requires Node.js 18+. Current version: $(node --version)"
+        echo "Would you like to update Node.js? (y/n): "
+        read update_node
+        if [[ $update_node =~ ^[Yy]$ ]]; then
+            brew upgrade node
+        fi
+    fi
+
     # Check if claude is installed
     if ! command -v claude &> /dev/null; then
-        echo "Error: claude is not installed."
-        echo "Would you like to install it? (y/n): "
-        read install_claude
-        if [[ $install_claude =~ ^[Yy]$ ]]; then
-            brew install claude
+        echo "Error: Claude Code is not installed."
+        echo "Claude Code Installation Options:"
+        echo "1) Global npm installation (recommended)"
+        echo "2) Native binary installation (alpha)"
+        echo "3) Manual installation"
+        echo ""
+        echo -n "Choose installation method (1-3): "
+        read install_method
+        
+        case "$install_method" in
+            1)
+                echo "Installing Claude Code globally via npm..."
+                echo "Note: Using npm install -g (not sudo) as recommended by Anthropic"
+                npm install -g @anthropic-ai/claude
+                ;;
+            2)
+                echo "Installing Claude Code via native binary (alpha)..."
+                curl -fsSL claude.ai/install.sh | bash
+                ;;
+            3)
+                echo "Manual installation instructions:"
+                echo "Run: npm install -g @anthropic-ai/claude"
+                echo "For more options, visit: https://docs.anthropic.com/claude/docs/claude-code"
+                return 1
+                ;;
+            *)
+                echo "Invalid choice. Please run claude_checks again."
+                return 1
+                ;;
+        esac
+        
+        # Verify installation
+        if ! command -v claude &> /dev/null; then
+            echo "Installation failed. Please check the error messages above."
+            return 1
         fi
-        return 1
+        
+        echo "✅ Claude Code installed successfully!"
+        echo "Run 'claude doctor' to verify your installation."
     fi
-    # Check if claude is setup
-    if ! claude status &>/dev/null; then
-        echo "Error: claude is not setup."
-        echo "Would you like to setup claude? (y/n): "
-        read setup_claude
-        if [[ $setup_claude =~ ^[Yy]$ ]]; then
-            claude setup
+    
+    # Check if claude is setup/authenticated
+    if ! claude auth status &>/dev/null; then
+        echo "Claude Code is installed but not authenticated."
+        echo ""
+        echo "Authentication Options:"
+        echo "1) Anthropic Console (default - requires billing)"
+        echo "2) Claude App (Pro/Max plan required)"
+        echo "3) Enterprise (Bedrock/Vertex AI)"
+        echo ""
+        echo -n "Choose authentication method (1-3): "
+        read auth_method
+        
+        case "$auth_method" in
+            1)
+                echo "Opening Anthropic Console authentication..."
+                claude auth login
+                ;;
+            2)
+                echo "Opening Claude App authentication..."
+                claude auth login --provider claude-app
+                ;;
+            3)
+                echo "Enterprise authentication setup:"
+                echo "Please refer to: https://docs.anthropic.com/claude/docs/third-party-integrations"
+                echo "Configure your cloud provider credentials separately."
+                return 1
+                ;;
+            *)
+                echo "Invalid choice. Please run claude_checks again to authenticate."
+                return 1
+                ;;
+        esac
+        
+        # Verify authentication
+        if ! claude auth status &>/dev/null; then
+            echo "Authentication may have failed. Please try again or check your credentials."
+            echo "Run 'claude doctor' to diagnose issues."
+            return 1
         fi
-        return 1
+        
+        echo "✅ Claude Code authenticated successfully!"
     fi
+    
+    # Run claude doctor for final verification
+    echo "Running Claude Code diagnostics..."
+    claude doctor
 }
 
 claude_code() {
