@@ -510,37 +510,48 @@ encrypt_file() {
 }
 
 # Function to decrypt a GPG-encrypted file
+# Enhanced file decryption with multiple backends
 decrypt_file() {
     if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
         echo "Usage: decrypt_file [options] [encrypted_file] [output_file]"
-        echo "  Decrypts a GPG-encrypted file."
+        echo "  Auto-detects encryption type and decrypts files."
         echo ""
         echo "Options:"
-        echo "  -d, --delete         Delete encrypted file after successful decryption"
+        echo "  -m, --method TYPE    Force decryption method (gpg, openssl, age)"
+        echo "  -o, --output FILE    Specify output filename"
+        echo "  -d, --delete         Delete encrypted file after decryption"
         echo "  -v, --verbose        Verbose output"
+        echo "  -k, --key FILE       Use specific key file (for AGE)"
         echo "  -f, --force          Overwrite output file if it exists"
         echo "  -t, --test           Test decryption without writing output"
         echo ""
-        echo "Arguments:"
-        echo "  encrypted_file       File to decrypt"
-        echo "  output_file          Output filename (optional, auto-detected if not provided)"
-        echo ""
         echo "Examples:"
         echo "  decrypt_file document.txt.gpg"
-        echo "  decrypt_file -d secret.asc plaintext.txt"
+        echo "  decrypt_file -m age -k ~/.age/keys.txt file.age"
+        echo "  decrypt_file -o original.txt file.enc"
         return 0
     fi
     
+    local method=""
+    local output_file=""
     local delete_encrypted=false
     local verbose=false
+    local key_file=""
     local force_overwrite=false
     local test_only=false
     local encrypted_file=""
-    local output_file=""
     
     # Parse options
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            -m|--method)
+                method="$2"
+                shift 2
+                ;;
+            -o|--output)
+                output_file="$2"
+                shift 2
+                ;;
             -d|--delete)
                 delete_encrypted=true
                 shift
@@ -548,6 +559,10 @@ decrypt_file() {
             -v|--verbose)
                 verbose=true
                 shift
+                ;;
+            -k|--key)
+                key_file="$2"
+                shift 2
                 ;;
             -f|--force)
                 force_overwrite=true
@@ -575,38 +590,62 @@ decrypt_file() {
         esac
     done
     
-    # Check if file exists
+    # Check if encrypted file exists
     if [[ ! -f "$encrypted_file" ]]; then
-        echo "Error: File '$encrypted_file' not found."
+        echo "Error: Encrypted file '$encrypted_file' not found."
         return 1
     fi
     
-    # Check if GPG is installed
-    if ! command -v gpg &> /dev/null; then
-        echo "Error: GPG is not installed."
-        echo "Install it with: brew install gnupg"
-        return 1
-    fi
-    
-    # Auto-detect if file is GPG encrypted
-    if ! gpg --list-packets "$encrypted_file" &>/dev/null; then
-        echo "Error: '$encrypted_file' does not appear to be a valid GPG-encrypted file."
-        return 1
+    # Auto-detect method if not specified
+    if [[ -z "$method" ]]; then
+        case "$encrypted_file" in
+            *.gpg|*.asc)
+                method="gpg"
+                ;;
+            *.age|*.age.txt)
+                method="age"
+                ;;
+            *.enc|*.enc.b64)
+                method="openssl"
+                ;;
+            *)
+                # Try to detect by file content
+                if gpg --list-packets "$encrypted_file" &>/dev/null; then
+                    method="gpg"
+                elif head -c 50 "$encrypted_file" | grep -q "age-encryption"; then
+                    method="age"
+                else
+                    method="openssl"
+                fi
+                ;;
+        esac
+        $verbose && echo "Auto-detected method: $method"
     fi
     
     # Set default output file if not specified
     if [[ -z "$output_file" ]]; then
-        # Try common extensions
-        if [[ "$encrypted_file" =~ \.gpg$ ]]; then
-            output_file="${encrypted_file%.gpg}"
-        elif [[ "$encrypted_file" =~ \.asc$ ]]; then
-            output_file="${encrypted_file%.asc}"
-        else
+        case "$method" in
+            gpg)
+                output_file="${encrypted_file%.gpg}"
+                output_file="${output_file%.asc}"
+                ;;
+            age)
+                output_file="${encrypted_file%.age}"
+                output_file="${output_file%.age.txt}"
+                ;;
+            openssl)
+                output_file="${encrypted_file%.enc}"
+                output_file="${output_file%.enc.b64}"
+                ;;
+        esac
+        
+        # If the file didn't have a recognized extension, add .decrypted
+        if [[ "$output_file" == "$encrypted_file" ]]; then
             output_file="${encrypted_file}.decrypted"
         fi
     fi
     
-    # Check if output file exists and handle appropriately
+    # Check if output file already exists
     if [[ -f "$output_file" ]] && ! $force_overwrite && ! $test_only; then
         echo -n "Output file '$output_file' already exists. Overwrite? (y/N): "
         read response
@@ -616,62 +655,178 @@ decrypt_file() {
         fi
     fi
     
-    # Build GPG command
-    local gpg_cmd="gpg"
-    local gpg_args=(--decrypt)
+    $verbose && echo "Decrypting '$encrypted_file' to '$output_file' using $method"
     
-    if $verbose; then
-        gpg_args+=(--verbose)
-    fi
-    
-    if ! $test_only; then
-        gpg_args+=(--output "$output_file")
-    fi
-    
-    gpg_args+=("$encrypted_file")
-    
-    # Execute decryption
-    if $verbose; then
-        echo "Executing: $gpg_cmd ${gpg_args[*]}"
-    fi
-    
-    if $test_only; then
-        echo "Testing decryption of '$encrypted_file'..."
-        if "$gpg_cmd" "${gpg_args[@]}" >/dev/null 2>&1; then
-            echo "Decryption test successful - file can be decrypted."
-            return 0
-        else
-            echo "Decryption test failed."
-            return 1
-        fi
-    else
-        if "$gpg_cmd" "${gpg_args[@]}"; then
-            echo "File decrypted successfully: $output_file"
-            
-            # Verify file was created and has content
-            if [[ -f "$output_file" && -s "$output_file" ]]; then
-                # Set secure permissions on decrypted file
-                chmod 600 "$output_file"
-                
-                # Delete encrypted file if requested
-                if $delete_encrypted; then
-                    if secure_delete "$encrypted_file"; then
-                        echo "Encrypted file securely deleted."
-                    else
-                        echo "Warning: Failed to securely delete encrypted file."
-                    fi
-                fi
-                
-                return 0
-            else
-                echo "Error: Decryption appeared to succeed but output file is missing or empty."
+    # Decrypt based on method
+    case "$method" in
+        gpg)
+            if ! command -v gpg &>/dev/null; then
+                echo "Error: GPG is not installed."
+                echo "Install it with: brew install gnupg"
                 return 1
             fi
-        else
-            echo "Error: Decryption failed."
+            
+            local gpg_args=(--decrypt)
+            
+            if $verbose; then
+                gpg_args+=(--verbose)
+            fi
+            
+            if ! $test_only; then
+                gpg_args+=(--output "$output_file")
+            fi
+            
+            gpg_args+=("$encrypted_file")
+            
+            if $test_only; then
+                echo "Testing GPG decryption of '$encrypted_file'..."
+                if gpg "${gpg_args[@]}" >/dev/null 2>&1; then
+                    echo "Decryption test successful - file can be decrypted."
+                    return 0
+                else
+                    echo "Decryption test failed."
+                    return 1
+                fi
+            else
+                if gpg "${gpg_args[@]}"; then
+                    echo "File decrypted successfully: $output_file"
+                    # Set secure permissions
+                    chmod 600 "$output_file"
+                else
+                    echo "Error: GPG decryption failed."
+                    return 1
+                fi
+            fi
+            ;;
+            
+        age)
+            if ! command -v age &>/dev/null; then
+                echo "Error: AGE is not installed."
+                echo "Install it with: brew install age"
+                return 1
+            fi
+            
+            local age_args=(--decrypt)
+            
+            # Add key file if specified
+            if [[ -n "$key_file" ]]; then
+                if [[ ! -f "$key_file" ]]; then
+                    echo "Error: Key file '$key_file' not found."
+                    return 1
+                fi
+                age_args+=(-i "$key_file")
+            else
+                # Try default key locations
+                local default_keys=(
+                    "$HOME/.age/keys.txt"
+                    "$HOME/.config/age/keys.txt"
+                )
+                
+                for key_path in "${default_keys[@]}"; do
+                    if [[ -f "$key_path" ]]; then
+                        age_args+=(-i "$key_path")
+                        $verbose && echo "Using key file: $key_path"
+                        break
+                    fi
+                done
+            fi
+            
+            age_args+=("$encrypted_file")
+            
+            if $test_only; then
+                echo "Testing AGE decryption of '$encrypted_file'..."
+                if age "${age_args[@]}" >/dev/null 2>&1; then
+                    echo "Decryption test successful - file can be decrypted."
+                    return 0
+                else
+                    echo "Decryption test failed."
+                    return 1
+                fi
+            else
+                if $verbose; then
+                    echo "Executing: age ${age_args[*]} > $output_file"
+                fi
+                
+                if age "${age_args[@]}" > "$output_file"; then
+                    echo "File decrypted successfully: $output_file"
+                    # Set secure permissions
+                    chmod 600 "$output_file"
+                else
+                    echo "Error: AGE decryption failed."
+                    [[ -f "$output_file" ]] && rm -f "$output_file"
+                    return 1
+                fi
+            fi
+            ;;
+            
+        openssl)
+            # Detect if file is base64 encoded
+            local is_base64=false
+            if [[ "$encrypted_file" == *.b64 ]] || file "$encrypted_file" | grep -q "ASCII text"; then
+                is_base64=true
+            fi
+            
+            # Try different ciphers
+            local ciphers=("aes-256-gcm" "aes-256-cbc")
+            local success=false
+            
+            for cipher in "${ciphers[@]}"; do
+                $verbose && echo "Trying cipher: $cipher"
+                
+                local openssl_args=(enc "-d" "-$cipher" -pbkdf2)
+                
+                if $is_base64; then
+                    openssl_args+=(-a)
+                fi
+                
+                openssl_args+=(-in "$encrypted_file")
+                
+                if $test_only; then
+                    echo "Testing OpenSSL decryption of '$encrypted_file' with $cipher..."
+                    if openssl "${openssl_args[@]}" >/dev/null 2>&1; then
+                        echo "Decryption test successful - file can be decrypted with $cipher."
+                        return 0
+                    fi
+                else
+                    openssl_args+=(-out "$output_file")
+                    
+                    if openssl "${openssl_args[@]}" 2>/dev/null; then
+                        echo "File decrypted successfully: $output_file (using $cipher)"
+                        # Set secure permissions
+                        chmod 600 "$output_file"
+                        success=true
+                        break
+                    fi
+                fi
+            done
+            
+            if $test_only; then
+                echo "Decryption test failed with all ciphers."
+                return 1
+            elif ! $success; then
+                echo "Error: OpenSSL decryption failed with all ciphers."
+                [[ -f "$output_file" ]] && rm -f "$output_file"
+                return 1
+            fi
+            ;;
+            
+        *)
+            echo "Error: Unknown decryption method '$method'."
+            echo "Supported methods: gpg, openssl, age"
             return 1
+            ;;
+    esac
+    
+    # Delete encrypted file if requested (only for successful decryption)
+    if $delete_encrypted && ! $test_only; then
+        if secure_delete "$encrypted_file"; then
+            echo "Encrypted file securely deleted."
+        else
+            echo "Warning: Failed to securely delete encrypted file."
         fi
     fi
+    
+    return 0
 }
 
 # Quick file encryption with OpenSSL (for when GPG is not needed)
@@ -807,6 +962,238 @@ encrypt_file_simple() {
         echo "Error: Encryption failed."
         return 1
     fi
+}
+
+# Modern file encryption with AGE
+encrypt_file_age() {
+    if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: encrypt_file_age [options] [file] [recipient_or_key]"
+        echo "  Modern encryption using AGE (simple, secure, modern)."
+        echo ""
+        echo "Options:"
+        echo "  -p, --passphrase     Use passphrase encryption (default)"
+        echo "  -r, --recipient KEY  Use public key encryption with recipient"
+        echo "  -k, --key FILE       Use key file for encryption"
+        echo "  -o, --output FILE    Specify output filename"
+        echo "  -d, --delete         Delete original file after encryption"
+        echo "  -v, --verbose        Verbose output"
+        echo "  -a, --armor          Create ASCII-armored output"
+        echo ""
+        echo "Arguments:"
+        echo "  file                 File to encrypt"
+        echo "  recipient_or_key     Recipient public key or path to key file (optional)"
+        echo ""
+        echo "Examples:"
+        echo "  encrypt_file_age document.txt                           # Passphrase encryption"
+        echo "  encrypt_file_age -r age1abc123... document.txt          # Public key encryption"
+        echo "  encrypt_file_age -k ~/.age/recipient.pub document.txt   # Key file encryption"
+        echo "  encrypt_file_age -a -o secret.age.txt data.txt          # ASCII armor"
+        echo ""
+        echo "Note: Install AGE with: brew install age"
+        return 0
+    fi
+    
+    local use_passphrase=true
+    local recipient=""
+    local key_file=""
+    local output_file=""
+    local delete_original=false
+    local verbose=false
+    local use_armor=false
+    local file=""
+    
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -p|--passphrase)
+                use_passphrase=true
+                shift
+                ;;
+            -r|--recipient)
+                recipient="$2"
+                use_passphrase=false
+                shift 2
+                ;;
+            -k|--key)
+                key_file="$2"
+                use_passphrase=false
+                shift 2
+                ;;
+            -o|--output)
+                output_file="$2"
+                shift 2
+                ;;
+            -d|--delete)
+                delete_original=true
+                shift
+                ;;
+            -v|--verbose)
+                verbose=true
+                shift
+                ;;
+            -a|--armor)
+                use_armor=true
+                shift
+                ;;
+            -*)
+                echo "Error: Unknown option $1"
+                return 1
+                ;;
+            *)
+                if [[ -z "$file" ]]; then
+                    file="$1"
+                elif [[ -z "$recipient" && -z "$key_file" ]]; then
+                    # Auto-detect if it's a key file or recipient
+                    if [[ -f "$1" ]]; then
+                        key_file="$1"
+                        use_passphrase=false
+                    else
+                        recipient="$1"
+                        use_passphrase=false
+                    fi
+                else
+                    echo "Error: Too many arguments"
+                    return 1
+                fi
+                shift
+                ;;
+        esac
+    done
+    
+    # Check if file exists
+    if [[ ! -f "$file" ]]; then
+        echo "Error: File '$file' not found."
+        return 1
+    fi
+    
+    # Check if AGE is installed
+    if ! command -v age &>/dev/null; then
+        echo "Error: AGE is not installed."
+        echo "Install it with: brew install age"
+        echo ""
+        echo "Or visit: https://github.com/FiloSottile/age"
+        return 1
+    fi
+    
+    # Validate key file if specified
+    if [[ -n "$key_file" && ! -f "$key_file" ]]; then
+        echo "Error: Key file '$key_file' not found."
+        return 1
+    fi
+    
+    # Set default output file if not specified
+    if [[ -z "$output_file" ]]; then
+        if $use_armor; then
+            output_file="${file}.age.txt"
+        else
+            output_file="${file}.age"
+        fi
+    fi
+    
+    # Check if output file already exists
+    if [[ -f "$output_file" ]]; then
+        echo -n "Output file '$output_file' already exists. Overwrite? (y/N): "
+        read response
+        if [[ ! "$response" =~ ^[Yy]$ ]]; then
+            echo "Encryption cancelled."
+            return 1
+        fi
+    fi
+    
+    # Build AGE command
+    local age_args=()
+    
+    if $use_armor; then
+        age_args+=(-a)
+    fi
+    
+    age_args+=(-o "$output_file")
+    
+    if $use_passphrase; then
+        age_args+=(-p)
+        $verbose && echo "Using passphrase encryption"
+    elif [[ -n "$recipient" ]]; then
+        age_args+=(-r "$recipient")
+        $verbose && echo "Using recipient public key: $recipient"
+    elif [[ -n "$key_file" ]]; then
+        # Read recipients from key file
+        while IFS= read -r key || [[ -n "$key" ]]; do
+            # Skip empty lines and comments
+            [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]] && continue
+            age_args+=(-r "$key")
+        done < "$key_file"
+        $verbose && echo "Using key file: $key_file"
+    fi
+    
+    age_args+=("$file")
+    
+    # Execute encryption
+    if $verbose; then
+        echo "Executing: age ${age_args[*]}"
+    fi
+    
+    local age_output
+    if $use_passphrase; then
+        # Capture output to extract generated passphrase
+        age_output=$(age "${age_args[@]}" 2>&1)
+        local exit_code=$?
+        
+        if [[ $exit_code -eq 0 ]]; then
+            # Try to extract passphrase from output
+            local passphrase=$(echo "$age_output" | grep -o 'passphrase: "[^"]*"' | cut -d '"' -f 2)
+            if [[ -z "$passphrase" ]]; then
+                passphrase=$(echo "$age_output" | grep -o 'passphrase "[^"]*"' | cut -d '"' -f 2)
+            fi
+            
+            if [[ -n "$passphrase" ]]; then
+                echo ""
+                echo "Generated passphrase: $passphrase"
+                echo "Save this passphrase securely - you'll need it to decrypt the file."
+                
+                # Copy to clipboard if available
+                if command -v pbcopy &>/dev/null; then
+                    echo -n "$passphrase" | pbcopy
+                    echo "Passphrase copied to clipboard."
+                fi
+            fi
+        else
+            echo "Error: AGE encryption failed."
+            echo "$age_output"
+            return 1
+        fi
+    else
+        if ! age "${age_args[@]}"; then
+            echo "Error: AGE encryption failed."
+            return 1
+        fi
+    fi
+    
+    # Set restrictive permissions on encrypted file
+    chmod 600 "$output_file"
+    
+    echo "File encrypted successfully: $output_file"
+    
+    # Show decryption command
+    echo ""
+    echo "To decrypt:"
+    if $use_passphrase; then
+        echo "  age --decrypt $output_file > ${file}"
+    elif [[ -n "$recipient" ]]; then
+        echo "  age --decrypt -i ~/.age/keys.txt $output_file > ${file}"
+    elif [[ -n "$key_file" ]]; then
+        echo "  age --decrypt -i ~/.age/keys.txt $output_file > ${file}"
+    fi
+    
+    # Delete original file if requested
+    if $delete_original; then
+        if secure_delete "$file"; then
+            echo "Original file securely deleted."
+        else
+            echo "Warning: Failed to securely delete original file."
+        fi
+    fi
+    
+    return 0
 }
 
 # Quick file decryption with OpenSSL
@@ -1732,6 +2119,426 @@ encrypt_for_github() {
     
     # Call encrypt_file with GitHub flag
     encrypt_file $armor_flag $delete_flag $verbose_flag -g "$file" "$github_user"
+}
+
+# Generate AGE key pair
+generate_age_key() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: generate_age_key [options]"
+        echo "  Generate a new AGE key pair for encryption/decryption."
+        echo ""
+        echo "Options:"
+        echo "  -o, --output FILE    Output key file (default: ~/.age/keys.txt)"
+        echo "  -p, --public FILE    Output public key file (default: ~/.age/public.txt)"
+        echo "  -v, --verbose        Verbose output"
+        echo ""
+        echo "Examples:"
+        echo "  generate_age_key"
+        echo "  generate_age_key -o ~/.config/age/my-key.txt"
+        return 0
+    fi
+    
+    local key_file="$HOME/.age/keys.txt"
+    local public_file="$HOME/.age/public.txt"
+    local verbose=false
+    
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -o|--output)
+                key_file="$2"
+                shift 2
+                ;;
+            -p|--public)
+                public_file="$2"
+                shift 2
+                ;;
+            -v|--verbose)
+                verbose=true
+                shift
+                ;;
+            -*)
+                echo "Error: Unknown option $1"
+                return 1
+                ;;
+            *)
+                echo "Error: Unexpected argument $1"
+                return 1
+                ;;
+        esac
+    done
+    
+    # Check if AGE is installed
+    if ! command -v age-keygen &>/dev/null; then
+        echo "Error: AGE is not installed."
+        echo "Install it with: brew install age"
+        return 1
+    fi
+    
+    # Create directories if needed
+    mkdir -p "$(dirname "$key_file")"
+    mkdir -p "$(dirname "$public_file")"
+    
+    # Check if key file already exists
+    if [[ -f "$key_file" ]]; then
+        echo -n "Key file '$key_file' already exists. Overwrite? (y/N): "
+        read response
+        if [[ ! "$response" =~ ^[Yy]$ ]]; then
+            echo "Key generation cancelled."
+            return 1
+        fi
+    fi
+    
+    $verbose && echo "Generating AGE key pair..."
+    
+    # Generate key pair
+    local output
+    output=$(age-keygen 2>&1)
+    local exit_code=$?
+    
+    if [[ $exit_code -eq 0 ]]; then
+        # Extract private key and public key
+        local private_key=$(echo "$output" | grep "^AGE-SECRET-KEY")
+        local public_key=$(echo "$output" | grep "^# public key:" | sed 's/# public key: //')
+        
+        if [[ -n "$private_key" && -n "$public_key" ]]; then
+            # Save private key
+            echo "$private_key" > "$key_file"
+            chmod 600 "$key_file"
+            
+            # Save public key
+            echo "$public_key" > "$public_file"
+            chmod 644 "$public_file"
+            
+            echo "AGE key pair generated successfully!"
+            echo "Private key: $key_file"
+            echo "Public key:  $public_file"
+            echo ""
+            echo "Your public key is: $public_key"
+            
+            # Copy public key to clipboard if available
+            if command -v pbcopy &>/dev/null; then
+                echo -n "$public_key" | pbcopy
+                echo "Public key copied to clipboard."
+            fi
+            
+            return 0
+        else
+            echo "Error: Failed to parse key generation output."
+            return 1
+        fi
+    else
+        echo "Error: AGE key generation failed."
+        echo "$output"
+        return 1
+    fi
+}
+
+# List AGE keys
+list_age_keys() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: list_age_keys [options]"
+        echo "  List AGE keys from key files."
+        echo ""
+        echo "Options:"
+        echo "  -k, --key-file FILE  Key file to read (default: ~/.age/keys.txt)"
+        echo "  -a, --all            List all keys from common locations"
+        echo "  -v, --verbose        Verbose output"
+        echo ""
+        echo "Examples:"
+        echo "  list_age_keys"
+        echo "  list_age_keys -a"
+        return 0
+    fi
+    
+    local key_file=""
+    local list_all=false
+    local verbose=false
+    
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -k|--key-file)
+                key_file="$2"
+                shift 2
+                ;;
+            -a|--all)
+                list_all=true
+                shift
+                ;;
+            -v|--verbose)
+                verbose=true
+                shift
+                ;;
+            -*)
+                echo "Error: Unknown option $1"
+                return 1
+                ;;
+            *)
+                if [[ -z "$key_file" ]]; then
+                    key_file="$1"
+                else
+                    echo "Error: Too many arguments"
+                    return 1
+                fi
+                shift
+                ;;
+        esac
+    done
+    
+    local key_files=()
+    
+    if $list_all; then
+        # Common AGE key locations
+        local common_locations=(
+            "$HOME/.age/keys.txt"
+            "$HOME/.config/age/keys.txt"
+            "$HOME/.age/key.txt"
+        )
+        
+        for location in "${common_locations[@]}"; do
+            if [[ -f "$location" ]]; then
+                key_files+=("$location")
+            fi
+        done
+    else
+        if [[ -n "$key_file" ]]; then
+            key_files+=("$key_file")
+        else
+            key_files+=("$HOME/.age/keys.txt")
+        fi
+    fi
+    
+    if [[ ${#key_files[@]} -eq 0 ]]; then
+        echo "No AGE key files found."
+        echo "Generate a key with: generate_age_key"
+        return 1
+    fi
+    
+    echo "AGE Keys:"
+    echo "========="
+    
+    for kf in "${key_files[@]}"; do
+        if [[ ! -f "$kf" ]]; then
+            $verbose && echo "Key file not found: $kf"
+            continue
+        fi
+        
+        echo ""
+        echo "Key file: $kf"
+        
+        local count=0
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            # Skip empty lines and comments
+            [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+            
+            if [[ "$line" =~ ^AGE-SECRET-KEY ]]; then
+                count=$((count + 1))
+                echo "  Private key #$count: ${line:0:20}..."
+                
+                # Try to get corresponding public key
+                if command -v age-keygen &>/dev/null; then
+                    local pub_key
+                    pub_key=$(echo "$line" | age-keygen -y 2>/dev/null)
+                    if [[ -n "$pub_key" ]]; then
+                        echo "  Public key #$count:  $pub_key"
+                    fi
+                fi
+            fi
+        done < "$kf"
+        
+        if [[ $count -eq 0 ]]; then
+            echo "  No valid AGE keys found in this file."
+        fi
+    done
+    
+    # Also check for public key files
+    local public_files=(
+        "$HOME/.age/public.txt"
+        "$HOME/.age/recipients.txt"
+    )
+    
+    for pf in "${public_files[@]}"; do
+        if [[ -f "$pf" ]]; then
+            echo ""
+            echo "Public key file: $pf"
+            while IFS= read -r line || [[ -n "$line" ]]; do
+                # Skip empty lines and comments
+                [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+                
+                if [[ "$line" =~ ^age1 ]]; then
+                    echo "  Public key: $line"
+                fi
+            done < "$pf"
+        fi
+    done
+}
+
+# Decrypt file with AGE 
+decrypt_file_age() {
+    if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: decrypt_file_age [options] [encrypted_file] [output_file]"
+        echo "  Decrypt AGE-encrypted files."
+        echo ""
+        echo "Options:"
+        echo "  -k, --key FILE       Use specific key file"
+        echo "  -o, --output FILE    Specify output filename"
+        echo "  -d, --delete         Delete encrypted file after decryption"
+        echo "  -v, --verbose        Verbose output"
+        echo ""
+        echo "Examples:"
+        echo "  decrypt_file_age document.age"
+        echo "  decrypt_file_age -k ~/.age/keys.txt file.age"
+        return 0
+    fi
+    
+    # Use the enhanced decrypt_file function with AGE method
+    decrypt_file -m age "$@"
+}
+
+# Quick AGE encryption (passphrase)
+age_encrypt() {
+    if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: age_encrypt [file]"
+        echo "  Quick AGE passphrase encryption."
+        echo ""
+        echo "Examples:"
+        echo "  age_encrypt document.txt"
+        return 0
+    fi
+    
+    encrypt_file_age -p "$1"
+}
+
+# Quick AGE decryption
+age_decrypt() {
+    if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: age_decrypt [encrypted_file]"
+        echo "  Quick AGE decryption."
+        echo ""
+        echo "Examples:"
+        echo "  age_decrypt document.age"
+        return 0
+    fi
+    
+    decrypt_file_age "$1"
+}
+
+# Check AGE installation and setup
+check_age_setup() {
+    echo "AGE Encryption Setup Check"
+    echo "========================="
+    echo ""
+    
+    # Check if AGE is installed
+    if command -v age &>/dev/null; then
+        echo "✓ AGE is installed: $(which age)"
+        echo "  Version: $(age --version 2>/dev/null || echo 'Unknown')"
+    else
+        echo "✗ AGE is not installed"
+        echo "  Install with: brew install age"
+        echo ""
+        return 1
+    fi
+    
+    # Check if age-keygen is available
+    if command -v age-keygen &>/dev/null; then
+        echo "✓ age-keygen is available: $(which age-keygen)"
+    else
+        echo "✗ age-keygen is not available"
+    fi
+    
+    echo ""
+    
+    # Check for key files
+    local key_locations=(
+        "$HOME/.age/keys.txt"
+        "$HOME/.config/age/keys.txt"
+        "$HOME/.age/key.txt"
+    )
+    
+    echo "Key Files:"
+    local found_keys=false
+    for location in "${key_locations[@]}"; do
+        if [[ -f "$location" ]]; then
+            echo "✓ Found: $location"
+            found_keys=true
+        else
+            echo "✗ Not found: $location"
+        fi
+    done
+    
+    if ! $found_keys; then
+        echo ""
+        echo "No AGE key files found. Generate one with:"
+        echo "  generate_age_key"
+    fi
+    
+    echo ""
+    
+    # Check for public key files
+    local public_locations=(
+        "$HOME/.age/public.txt"
+        "$HOME/.age/recipients.txt"
+    )
+    
+    echo "Public Key Files:"
+    local found_public=false
+    for location in "${public_locations[@]}"; do
+        if [[ -f "$location" ]]; then
+            echo "✓ Found: $location"
+            found_public=true
+        else
+            echo "✗ Not found: $location"
+        fi
+    done
+    
+    echo ""
+    echo "Setup Summary:"
+    if command -v age &>/dev/null && $found_keys; then
+        echo "✓ AGE is ready to use!"
+        echo ""
+        echo "Quick commands:"
+        echo "  age_encrypt file.txt      # Encrypt with passphrase"
+        echo "  age_decrypt file.age      # Decrypt file"
+        echo "  list_age_keys            # List your keys"
+    else
+        echo "✗ AGE setup incomplete"
+        echo ""
+        echo "Setup steps:"
+        if ! command -v age &>/dev/null; then
+            echo "1. Install AGE: brew install age"
+        fi
+        if ! $found_keys; then
+            echo "2. Generate keys: generate_age_key"
+        fi
+    fi
+}
+
+# Show encryption method comparison
+compare_encryption_methods() {
+    echo "Encryption Methods Comparison"
+    echo "============================="
+    echo ""
+    
+    printf "%-12s %-15s %-15s %-20s %-25s\n" "Method" "Speed" "Key Mgmt" "Use Case" "Command Example"
+    printf "%-12s %-15s %-15s %-20s %-25s\n" "------" "-----" "--------" "--------" "---------------"
+    printf "%-12s %-15s %-15s %-20s %-25s\n" "GPG" "Medium" "Complex" "Email/Collab" "encrypt_file doc.txt"
+    printf "%-12s %-15s %-15s %-20s %-25s\n" "AGE" "Fast" "Simple" "Modern/Simple" "age_encrypt doc.txt"
+    printf "%-12s %-15s %-15s %-20s %-25s\n" "OpenSSL" "Fast" "Password" "Quick/Local" "encrypt_file_simple doc.txt"
+    
+    echo ""
+    echo "Recommendations:"
+    echo "• Use AGE for modern, simple encryption needs"
+    echo "• Use GPG for email integration and established workflows"
+    echo "• Use OpenSSL for quick, local password-based encryption"
+    echo ""
+    echo "AGE Advantages:"
+    echo "• Simple key format (one line)"
+    echo "• Fast and memory-efficient"
+    echo "• Modern cryptography (ChaCha20Poly1305, X25519)"
+    echo "• No configuration needed"
+    echo "• Easy to share public keys"
 }
 
 # EOF - End of file marker to ensure proper termination
