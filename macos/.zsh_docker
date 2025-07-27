@@ -26,64 +26,40 @@ alias dps="d ps"
 alias dbash="d exec -it \$1 /bin/bash"
 alias dsh="d exec -it \$1 /bin/sh" 
 
-# Docker exec function
-##FIXME! Menu with running containers needs work and the command being sent to execute in the container isn't working 
+# Docker exec helper
+
+### Interactive docker exec helper
 dexec() {
-    # Help menu
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-        echo "Usage: dexec <container> [command]"
-        echo "If no arguments are given, you can select a container interactively."
-        echo "Options:"
-        echo "  -h, --help     Show this help message."
-        echo "  If no arguments, choose to list containers from docker-compose or docker, then select a container to exec into."
-        return 0
-    fi
+  if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    echo "Usage: dexec [container] [command]"
+    echo "Run a command inside a Docker container."
+    echo "If no container is provided, select from running containers."
+    return 0
+  fi
 
-    # If no container is passed, show menu
-    if [ -z "$1" ]; then
-        echo "Choose source to list containers:"
-        select src in "docker-compose ps" "docker ps" "Exit"; do
-            case $REPLY in
-                1)
-                    mapfile -t containers < <(docker-compose ps --services)
-                    ;;
-                2)
-                    mapfile -t containers < <(docker ps --format '{{.Names}}')
-                    ;;
-                3)
-                    return 0
-                    ;;
-                *)
-                    echo "Invalid option";
-                    continue
-                    ;;
-            esac
-            break
-        done
-        if [ ${#containers[@]} -eq 0 ]; then
-            echo "No containers found."
-            return 1
-        fi
-        echo "Select a container to exec into:"
-        select cname in "${containers[@]}"; do
-            if [ -n "$cname" ]; then
-                container="$cname"
-                break
-            else
-                echo "Invalid selection."
-            fi
-        done
-        read "cmd?Command to run inside container (default: /bin/bash): "
-        cmd=${cmd:-/bin/bash}
-        docker exec -it "$container" $cmd
-        return $?
+  local container="$1"
+  shift
+  if [[ -z "$container" ]]; then
+    mapfile -t containers < <(docker ps --format '{{.Names}}')
+    if [[ ${#containers[@]} -eq 0 ]]; then
+      echo "No running containers found."
+      return 1
     fi
+    echo "Select a container:"
+    select c in "${containers[@]}" "Cancel"; do
+      if [[ -n "$c" && "$c" != "Cancel" ]]; then
+        container="$c"
+        break
+      elif [[ "$c" == "Cancel" ]]; then
+        return 1
+      else
+        echo "Invalid selection"
+      fi
+    done
+  fi
 
-    # If container is passed as argument
-    container="$1"
-    shift
-    cmd=${*:-/bin/bash}
-    docker exec -it "$container" $cmd
+  local cmd="${*:-/bin/bash}"
+  docker exec -it "$container" $cmd
 }
 # Docker auto for docker compose up -d --build if a docker-compose.yml file is found in the current directory
 docker_auto() {
