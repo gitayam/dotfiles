@@ -176,6 +176,7 @@ aws_use_profile() {
   aws_check_profile "$profile"
 }
 
+alias aws_help="aws_command_list | less -R"
 # Update AWS command list
 aws_command_list() {
     # Existing functionality
