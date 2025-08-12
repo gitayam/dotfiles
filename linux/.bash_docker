@@ -1,27 +1,261 @@
-# Docker-related aliases and functions for bash
+# Docker-related aliases and functions for bash - comprehensive Docker utilities
+# (ported from .zsh_docker)
 
 # --- Docker Compose Aliases ---
 alias dc="docker compose"
-alias docker-compose="dc"
-alias dcu="dc pull && dc up -d"
-alias dcr="dc down && dc up -d"
-alias dcp="dc pull"
+alias dcp="dc pull"                    # pull the docker compose services
+alias dcs="docker compose stop"
+alias dcrm="docker compose rm"
+alias docker-compose="dc"             # alias for docker compose instead of docker-compose
+alias dcu="dcp && dc up -d"           # pull and start the docker compose services
+alias dcd="dcs;dcrm;dc down --volumes" # stop the docker compose services
+alias dcdr='dcd --volumes; docker network rm $(docker network ls -q) 2>/dev/null; docker volume rm $(docker volume ls -q) 2>/dev/null' # remove all docker networks and volumes
+alias dcb="dcu --build"               # build the docker compose services
+alias dcr="dcd && dcu"                # stop and start the docker compose services
+
+# Docker network and cleanup aliases
+alias dcnet="docker network prune -f"
+alias dcvol="docker volume prune -f"
+alias dcpur="dcd && dcp && dcnet && dcvol" # stop and pull the docker compose services
 
 # --- Docker Aliases ---
 alias d="docker"
 alias dps="d ps"
-alias dbash="d exec -it $1 /bin/bash"
-alias dsh="d exec -it $1 /bin/sh"
+alias dpsa="d ps -a"
+alias di="d images"
+alias dlog="d logs"
+alias dlogf="d logs -f"
 
-# --- BEGIN: migrated from .bash_aliases ---
-# Docker Compose Update Function
+# Docker exec function with interactive container selection
+dexec() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: dexec [container] [command]"
+        echo "If no arguments are given, you can select a container interactively."
+        echo "Options:"
+        echo "  -h, --help     Show this help message."
+        return 0
+    fi
+
+    # If no container is passed, show menu
+    if [[ -z "$1" ]]; then
+        echo "Choose source to list containers:"
+        select src in "docker compose ps" "docker ps" "Exit"; do
+            case $REPLY in
+                1)
+                    if [[ -f "docker-compose.yml" || -f "docker-compose.yaml" || -f "compose.yml" || -f "compose.yaml" ]]; then
+                        mapfile -t containers < <(docker compose ps --services 2>/dev/null)
+                    else
+                        echo "No docker-compose file found in current directory"
+                        continue
+                    fi
+                    ;;
+                2)
+                    mapfile -t containers < <(docker ps --format '{{.Names}}')
+                    ;;
+                3)
+                    return 0
+                    ;;
+                *)
+                    echo "Invalid option"
+                    continue
+                    ;;
+            esac
+            break
+        done
+        
+        if [[ ${#containers[@]} -eq 0 ]]; then
+            echo "No containers found."
+            return 1
+        fi
+        
+        echo "Select a container to exec into:"
+        select cname in "${containers[@]}"; do
+            if [[ -n "$cname" ]]; then
+                container="$cname"
+                break
+            else
+                echo "Invalid selection."
+            fi
+        done
+        
+        read -p "Command to run inside container (default: /bin/bash): " cmd
+        cmd=${cmd:-/bin/bash}
+        docker exec -it "$container" $cmd
+        return $?
+    fi
+
+    # If container is passed as argument
+    container="$1"
+    shift
+    cmd=${*:-/bin/bash}
+    docker exec -it "$container" $cmd
+}
+
+# Docker auto for docker compose up -d --build if a docker-compose.yml file is found
+docker_auto() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: docker_auto"
+        echo "Automatically run docker compose up -d --build if a docker-compose.yml file is found in the current directory."
+        echo "Also prints localhost link if a port can be detected from the compose file."
+        return 0
+    fi
+
+    # Helper: Try to extract a port from a compose file
+    print_localhost_link() {
+        local compose_file=""
+        for f in docker-compose.yml docker-compose.yaml compose.yml compose.yaml; do
+            if [[ -f "$f" ]]; then
+                compose_file="$f"
+                break
+            fi
+        done
+        
+        if [[ -n "$compose_file" ]]; then
+            # Extract first port mapping
+            local port=$(grep -E '^\s*-\s*["\']?[0-9]+:[0-9]+["\']?\s*$' "$compose_file" | head -1 | sed -E 's/.*["\']?([0-9]+):[0-9]+["\']?.*/\1/')
+            if [[ -n "$port" && "$port" =~ ^[0-9]+$ ]]; then
+                echo ""
+                echo "🌐 Service available at: http://localhost:$port"
+                echo "   (Click the link or copy to browser)"
+            fi
+        fi
+    }
+
+    # Check for compose file
+    local compose_file=""
+    for f in docker-compose.yml docker-compose.yaml compose.yml compose.yaml; do
+        if [[ -f "$f" ]]; then
+            compose_file="$f"
+            break
+        fi
+    done
+    
+    if [[ -z "$compose_file" ]]; then
+        echo "❌ No docker-compose file found in current directory"
+        return 1
+    fi
+    
+    echo "📦 Found $compose_file - starting services..."
+    
+    # Check if Dockerfile also exists
+    if [[ -f "Dockerfile" ]]; then
+        echo "🔨 Dockerfile found - building and starting services"
+        docker compose up -d --build
+    else
+        echo "🚀 Starting services"
+        docker compose up -d
+    fi
+    
+    if [[ $? -eq 0 ]]; then
+        echo "✅ Services started successfully"
+        print_localhost_link
+        
+        # Show running containers
+        echo ""
+        echo "📋 Running containers:"
+        docker compose ps
+    else
+        echo "❌ Failed to start services"
+        return 1
+    fi
+}
+
+# Docker cleanup functions
+docker_cleanup() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: docker_cleanup [--all]"
+        echo "Clean up Docker system"
+        echo "Options:"
+        echo "  --all    Remove all unused containers, networks, images (both dangling and unreferenced)"
+        return 0
+    fi
+
+    echo "🧹 Cleaning up Docker system..."
+    
+    if [[ "$1" == "--all" ]]; then
+        echo "Removing all unused containers, networks, volumes, and images..."
+        docker system prune -a --volumes -f
+    else
+        echo "Removing stopped containers, unused networks, and dangling images..."
+        docker system prune -f
+    fi
+    
+    echo "✅ Docker cleanup completed"
+    docker system df
+}
+
+# Docker container management
+docker_stop_all() {
+    echo "🛑 Stopping all running containers..."
+    docker stop $(docker ps -q) 2>/dev/null || echo "No running containers to stop"
+}
+
+docker_remove_all() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: docker_remove_all [--force]"
+        echo "Remove all containers (stopped containers by default)"
+        echo "Options:"
+        echo "  --force    Also stop and remove running containers"
+        return 0
+    fi
+
+    if [[ "$1" == "--force" ]]; then
+        echo "🗑️  Force removing ALL containers (including running ones)..."
+        docker rm -f $(docker ps -aq) 2>/dev/null || echo "No containers to remove"
+    else
+        echo "🗑️  Removing stopped containers..."
+        docker rm $(docker ps -aq) 2>/dev/null || echo "No stopped containers to remove"
+    fi
+}
+
+# Docker image management
+docker_remove_dangling() {
+    echo "🗑️  Removing dangling images..."
+    docker rmi $(docker images -f "dangling=true" -q) 2>/dev/null || echo "No dangling images to remove"
+}
+
+# Docker stats
+docker_stats() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: docker_stats [container_name]"
+        echo "Show Docker container resource usage"
+        return 0
+    fi
+
+    if [[ -n "$1" ]]; then
+        docker stats "$1"
+    else
+        docker stats
+    fi
+}
+
+# Docker logs
+docker_logs_tail() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: docker_logs_tail <container> [lines]"
+        echo "Show last N lines of container logs (default: 100)"
+        return 0
+    fi
+
+    if [[ -z "$1" ]]; then
+        echo "Error: Container name required"
+        return 1
+    fi
+
+    local lines="${2:-100}"
+    docker logs --tail "$lines" -f "$1"
+}
+
+# Docker Compose Update Function - scan and update multiple compose files
 update_docker_compose() {
-    search_path="."
-    exclude_paths=""
-    pull_only=false
-    ask=false
+    local search_path="."
+    local exclude_paths=""
+    local pull_only=false
+    local ask=false
+    
     if [[ "$1" == "--help" ]]; then
         echo "Usage: update_docker_compose [OPTIONS]"
+        echo "Find and update all docker-compose files in a directory tree"
         echo "Options:"
         echo "  --home              Set the search path to /home/"
         echo "  --exclude <path>    Exclude specific paths from the update"
@@ -30,6 +264,7 @@ update_docker_compose() {
         echo "  --help              Show this help message"
         return 0
     fi
+    
     while [[ "$#" -gt 0 ]]; do
         case $1 in
             --home) search_path="/home/" ;;
@@ -40,36 +275,112 @@ update_docker_compose() {
         esac
         shift
     done
-    IFS=' ' read -r -a exclude_array <<< "$exclude_paths"
-    exclude_expr=""
-    for path in "${exclude_array[@]}"; do
-        exclude_expr+=" ! -path \"${path}*\""
-    done
-    find "$search_path" -type f \( -name "docker-compose.yml" -o -name "docker-compose.yaml" \) ${exclude_expr} -print | while read -r composefile; do
-        compose_dir=$(dirname "$composefile")
-        echo "Found docker-compose file in $compose_dir"
+    
+    # Build exclude expression for find
+    local exclude_expr=""
+    if [[ -n "$exclude_paths" ]]; then
+        IFS=' ' read -r -a exclude_array <<< "$exclude_paths"
+        for path in "${exclude_array[@]}"; do
+            exclude_expr+=" ! -path \"${path}*\""
+        done
+    fi
+    
+    # Find all compose files
+    local find_cmd="find \"$search_path\" -type f \( -name \"docker-compose.yml\" -o -name \"docker-compose.yaml\" -o -name \"compose.yml\" -o -name \"compose.yaml\" \) $exclude_expr -print"
+    
+    eval "$find_cmd" | while read -r composefile; do
+        local compose_dir=$(dirname "$composefile")
+        echo "📦 Found docker-compose file in $compose_dir"
+        
         if $ask; then
-            read -p "Choose action for $compose_dir (p = pull only, u = pull & up, s = skip): " choice
-            case $choice in
-                p|P) action="pull" ;;
-                u|U) action="pull_and_up" ;;
-                s|S) echo "Skipping $compose_dir"; continue ;;
-                *) echo "Invalid choice. Skipping $compose_dir"; continue ;;
-            esac
+            read -p "Update this compose file? (y/n): " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                continue
+            fi
+        fi
+        
+        cd "$compose_dir"
+        
+        if $pull_only; then
+            echo "🔄 Pulling images for $compose_dir"
+            docker compose pull
         else
-            action="pull_and_up"
+            echo "🚀 Updating and starting services in $compose_dir"
+            docker compose pull && docker compose up -d
         fi
-        cd "$compose_dir" || continue
-        if [[ $action == "pull" ]] || $pull_only; then
-            echo "Running 'docker compose pull' in $compose_dir"
-            docker compose pull
-        fi
-        if [[ $action == "pull_and_up" ]] && ! $pull_only; then
-            echo "Running 'docker compose pull' and 'docker compose up -d' in $compose_dir"
-            docker compose pull
-            docker compose up -d
-        fi
+        
+        cd - > /dev/null
+        echo "✅ Completed: $compose_dir"
+        echo ""
     done
+}
+
+# Docker container inspection
+docker_inspect_container() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: docker_inspect_container <container>"
+        echo "Show detailed information about a container"
+        return 0
+    fi
+
+    if [[ -z "$1" ]]; then
+        echo "Error: Container name required"
+        return 1
+    fi
+
+    echo "🔍 Container Information for: $1"
+    echo "=================================="
+    docker inspect "$1" | jq -r '.[] | {
+        Name: .Name,
+        Image: .Config.Image,
+        State: .State.Status,
+        IPAddress: .NetworkSettings.IPAddress,
+        Ports: .NetworkSettings.Ports,
+        Mounts: .Mounts
+    }'
+}
+
+# Docker network utilities
+docker_network_inspect() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: docker_network_inspect [network_name]"
+        echo "Show Docker network information"
+        return 0
+    fi
+
+    if [[ -n "$1" ]]; then
+        docker network inspect "$1"
+    else
+        echo "🌐 Available Docker Networks:"
+        docker network ls
+    fi
+}
+
+# Docker volume utilities
+docker_volume_inspect() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: docker_volume_inspect [volume_name]"
+        echo "Show Docker volume information"
+        return 0
+    fi
+
+    if [[ -n "$1" ]]; then
+        docker volume inspect "$1"
+    else
+        echo "💾 Available Docker Volumes:"
+        docker volume ls
+    fi
+}
+
+# Docker system information
+docker_info() {
+    echo "🐳 Docker System Information"
+    echo "============================"
+    docker system df
+    echo ""
+    echo "📊 Docker System Info:"
+    docker system info | grep -E "(Server Version|Storage Driver|Containers|Images|Docker Root Dir)"
 }
 
 # --- Migrated Docker Compose Aliases ---

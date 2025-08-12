@@ -1,4 +1,4 @@
-# File handling helpers for bash
+# File handling helpers for bash - comprehensive image and file processing
 # (ported from .zsh_handle_files)
 
 # Safely move a file to trash (if trash-cli is available)
@@ -10,43 +10,351 @@ safe_rm() {
     fi
 }
 
-# --- Expanded file handling helpers ported from .zsh_handle_files ---
-
 # Process a single image: sanitize EXIF, convert, rotate, OCR, etc.
 process_single_image() {
     local file="$1"
+    local rotate_degrees="${2:-0}"
+    local convert_format="${3:-}"
+    local sanitize="${4:-true}"
+    local keep_original="${5:-false}"
+    local random_name="${6:-false}"
+    local apply_ocr="${7:-false}"
+    
     if [[ ! -e "$file" ]]; then
-        echo "File does not exist: $file"; return 1
+        echo "❌ File does not exist: $file"
+        return 1
     fi
+    
+    if [[ ! -r "$file" ]]; then
+        echo "❌ File is not readable: $file"
+        return 1
+    fi
+    
+    # Check if it's an image or PDF file
     if [[ "$file" =~ \.(jpg|jpeg|png|tiff|gif|bmp|ico|webp)$ ]]; then
-        echo "Processing image file: $file"
+        echo "🔍 Processing image file: $file"
     elif [[ "$file" =~ \.pdf$ ]]; then
-        echo "Processing PDF file: $file"
+        echo "🔍 Processing PDF file: $file"
+        convert_format="${convert_format:-png}"
     else
-        echo "Unsupported file type: $file"; return 1
+        echo "❌ Error: File is not a supported image format: $file"
+        return 1
     fi
-    # EXIF sanitize (if exiftool)
-    if command -v exiftool &> /dev/null; then
-        exiftool -overwrite_original -all= "$file"
+    
+    # Generate output filename
+    local dirname="$(dirname "$file")"
+    local basename="$(basename "$file")"
+    local extension="${basename##*.}"
+    local filename="${basename%.*}"
+    local output_file=""
+    
+    # Generate a random name if requested
+    if [[ "$random_name" == true ]]; then
+        local random_str=$(cat /dev/urandom | LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 8 | head -n 1)
+        filename="${random_str}"
     fi
-    # Rotate (if convert)
-    # Usage: process_single_image file [degrees]
-    if [[ -n "$2" ]]; then
-        if command -v convert &> /dev/null; then
-            convert "$file" -rotate "$2" "$file"
+    
+    # Use different format if converting
+    if [[ -n "$convert_format" ]]; then
+        extension="$convert_format"
+    fi
+    
+    # Build output filename
+    output_file="${dirname}/${filename}.${extension}"
+    
+    # Don't overwrite input file with same name
+    if [[ "$output_file" == "$file" && "$keep_original" == true ]]; then
+        output_file="${dirname}/${filename}_processed.${extension}"
+    fi
+    
+    # Create a temporary directory for processing
+    local temp_dir=$(mktemp -d)
+    trap 'rm -rf "$temp_dir"' EXIT
+    
+    # Temporary file for processing
+    local temp_output="${temp_dir}/processed.${extension}"
+    
+    # Make a copy of the original file to work with
+    cp "$file" "$temp_output"
+    
+    # Sanitize EXIF data if requested
+    if [[ "$sanitize" == true ]]; then
+        if command -v exiftool &> /dev/null; then
+            echo "🧹 Sanitizing EXIF data..."
+            exiftool -overwrite_original -all= -Orientation "$temp_output" &>/dev/null
+        else
+            echo "⚠️  exiftool not available, skipping EXIF sanitization"
         fi
     fi
+    
+    # Rotate image if requested
+    if [[ "$rotate_degrees" -ne 0 ]]; then
+        if command -v convert &> /dev/null; then
+            echo "🔄 Rotating image by ${rotate_degrees} degrees..."
+            convert "$temp_output" -rotate "$rotate_degrees" "$temp_output"
+        else
+            echo "⚠️  ImageMagick not available, skipping rotation"
+        fi
+    fi
+    
+    # Convert image if requested
+    if [[ -n "$convert_format" ]]; then
+        if command -v convert &> /dev/null; then
+            echo "🔄 Converting image to format: ${extension}..."
+            if [[ "$file" =~ \.pdf$ ]]; then
+                convert -density 300 "$temp_output" "${temp_dir}/converted.${extension}"
+            else
+                convert "$temp_output" "${temp_dir}/converted.${extension}"
+            fi
+            mv "${temp_dir}/converted.${extension}" "$temp_output"
+        else
+            echo "⚠️  ImageMagick not available, skipping conversion"
+        fi
+    fi
+    
+    # Apply OCR if requested
+    if [[ "$apply_ocr" == true ]]; then
+        if command -v tesseract &> /dev/null; then
+            echo "🔍 Applying OCR..."
+            tesseract "$temp_output" "${temp_dir}/ocr_text" &>/dev/null
+            echo "📝 OCR text saved to: ${dirname}/${filename}_ocr.txt"
+            cp "${temp_dir}/ocr_text.txt" "${dirname}/${filename}_ocr.txt"
+        else
+            echo "⚠️  Tesseract not available, skipping OCR"
+        fi
+    fi
+    
+    # Copy processed file to output location
+    cp "$temp_output" "$output_file"
+    
+    # Handle original file
+    if [[ "$keep_original" == true ]]; then
+        echo "💾 Original file kept: $file"
+    else
+        if [[ "$file" != "$output_file" ]]; then
+            echo "🗑️ Removing original file: $file"
+            rm "$file"
+        fi
+    fi
+    
+    echo "✅ Processed: $file -> $output_file"
+    return 0
+}
+
+# Comprehensive image handler
+handle_image() {
+    if [[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "📷 Image Handler for Linux"
+        echo "Usage: handle_image [options] file.jpg|directory [file2.jpg|directory2 ...]"
+        echo ""
+        echo "Options:"
+        echo "  -c, --convert [format]    Convert image to different format (jpg, png, etc.)"
+        echo "  -r, --rotate [90|180|270] Rotate image by specified degrees"
+        echo "  -s, --sanitize            Sanitize EXIF data (default: true)"
+        echo "  -o, --ocr                 Apply OCR to extract text"
+        echo "  -n, --name                Rename image with sanitized name"
+        echo "  -R, --recursive           Process images in directories recursively"
+        echo "  --random                  Generate random name for processed files"
+        echo "  -k, --keep                Keep original files"
+        echo "  -h, --help                Show this help message"
+        echo ""
+        echo "Required tools: ImageMagick (convert), exiftool, tesseract (for OCR)"
+        echo "Install on Ubuntu/Debian: sudo apt install imagemagick exiftool tesseract-ocr"
+        echo "Install on Fedora: sudo dnf install ImageMagick perl-Image-ExifTool tesseract"
+        echo "Install on Arch: sudo pacman -S imagemagick perl-image-exiftool tesseract"
+        return 0
+    fi
+
+    # Check if required tools are installed
+    local missing_tools=()
+    if ! command -v convert &> /dev/null; then
+        missing_tools+=("imagemagick")
+    fi
+    if ! command -v exiftool &> /dev/null; then
+        missing_tools+=("exiftool")
+    fi
+    
+    if [[ ${#missing_tools[@]} -gt 0 ]]; then
+        echo "⚠️  Missing tools: ${missing_tools[*]}"
+        echo "Install with your package manager:"
+        echo "  Ubuntu/Debian: sudo apt install imagemagick exiftool tesseract-ocr"
+        echo "  Fedora: sudo dnf install ImageMagick perl-Image-ExifTool tesseract"
+        echo "  Arch: sudo pacman -S imagemagick perl-image-exiftool tesseract"
+    fi
+
+    # Parse options
+    local convert_format=""
+    local rotate_degrees="0"
+    local sanitize=true
+    local apply_ocr=false
+    local recursive=false
+    local random_name=false
+    local keep_original=false
+    local clean_name=false
+    local files=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -c|--convert)
+                convert_format="${2:-jpg}"
+                shift 2
+                ;;
+            -r|--rotate)
+                rotate_degrees="${2:-90}"
+                shift 2
+                ;;
+            -s|--sanitize)
+                sanitize=true
+                shift
+                ;;
+            -o|--ocr)
+                apply_ocr=true
+                shift
+                ;;
+            -n|--name)
+                clean_name=true
+                shift
+                ;;
+            -R|--recursive)
+                recursive=true
+                shift
+                ;;
+            --random)
+                random_name=true
+                shift
+                ;;
+            -k|--keep)
+                keep_original=true
+                shift
+                ;;
+            *)
+                files+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    if [[ ${#files[@]} -eq 0 ]]; then
+        echo "❌ Error: No files or directories specified"
+        return 1
+    fi
+
+    # Process each file or directory
+    for item in "${files[@]}"; do
+        if [[ -f "$item" ]]; then
+            # Single file
+            process_single_image "$item" "$rotate_degrees" "$convert_format" "$sanitize" "$keep_original" "$random_name" "$apply_ocr"
+        elif [[ -d "$item" ]]; then
+            # Directory
+            echo "📁 Processing directory: $item"
+            local find_opts=(-type f)
+            if [[ "$recursive" == false ]]; then
+                find_opts+=(-maxdepth 1)
+            fi
+            
+            find "$item" "${find_opts[@]}" \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.tiff" -o -iname "*.gif" -o -iname "*.bmp" -o -iname "*.webp" -o -iname "*.pdf" \) | while read -r file; do
+                process_single_image "$file" "$rotate_degrees" "$convert_format" "$sanitize" "$keep_original" "$random_name" "$apply_ocr"
+            done
+        else
+            echo "❌ Error: '$item' does not exist"
+        fi
+    done
 }
 
 # Batch rename files with a pattern
 batch_rename() {
-    if [ $# -lt 2 ]; then
-        echo "Usage: batch_rename <pattern> <replacement>"
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: batch_rename <pattern> <replacement> [directory]"
+        echo "Batch rename files matching a pattern"
+        echo "Example: batch_rename 'IMG_' 'Photo_' ~/Pictures"
+        return 0
+    fi
+    
+    if [[ $# -lt 2 ]]; then
+        echo "Usage: batch_rename <pattern> <replacement> [directory]"
         return 1
     fi
-    for f in *$1*; do
-        mv -- "$f" "${f//$1/$2}"
+    
+    local pattern="$1"
+    local replacement="$2"
+    local directory="${3:-.}"
+    
+    if [[ ! -d "$directory" ]]; then
+        echo "Error: Directory '$directory' does not exist"
+        return 1
+    fi
+    
+    local count=0
+    find "$directory" -maxdepth 1 -name "*${pattern}*" -type f | while read -r file; do
+        local newname="${file//$pattern/$replacement}"
+        if [[ "$file" != "$newname" ]]; then
+            mv "$file" "$newname"
+            echo "Renamed: $(basename "$file") -> $(basename "$newname")"
+            ((count++))
+        fi
     done
+    
+    echo "Renamed $count files"
+}
+
+# PDF utilities
+pdf_merge() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: pdf_merge output.pdf input1.pdf input2.pdf ..."
+        echo "Merge multiple PDF files into one"
+        return 0
+    fi
+    
+    if [[ $# -lt 3 ]]; then
+        echo "Error: At least output file and two input files required"
+        return 1
+    fi
+    
+    local output="$1"
+    shift
+    
+    if command -v pdftk &> /dev/null; then
+        pdftk "$@" cat output "$output"
+    elif command -v gs &> /dev/null; then
+        gs -dBATCH -dNOPAUSE -q -sDEVICE=pdfwrite -sOutputFile="$output" "$@"
+    else
+        echo "Error: Neither pdftk nor ghostscript (gs) is installed"
+        echo "Install with: sudo apt install pdftk-java ghostscript"
+        return 1
+    fi
+    
+    echo "✅ Merged PDFs into: $output"
+}
+
+# Extract images from PDF
+pdf_extract_images() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: pdf_extract_images input.pdf [output_prefix]"
+        echo "Extract images from PDF file"
+        return 0
+    fi
+    
+    if [[ $# -eq 0 ]]; then
+        echo "Error: PDF file required"
+        return 1
+    fi
+    
+    local pdf_file="$1"
+    local output_prefix="${2:-extracted_image}"
+    
+    if [[ ! -f "$pdf_file" ]]; then
+        echo "Error: PDF file '$pdf_file' not found"
+        return 1
+    fi
+    
+    if command -v pdfimages &> /dev/null; then
+        pdfimages -png "$pdf_file" "$output_prefix"
+        echo "✅ Images extracted from $pdf_file"
+    else
+        echo "Error: pdfimages not installed"
+        echo "Install with: sudo apt install poppler-utils"
+        return 1
+    fi
 }
 
 # Clean markdown files by handling problematic separators

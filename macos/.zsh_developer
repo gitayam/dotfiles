@@ -380,6 +380,90 @@ open_repo_dir(){
 # ----------------------
 # GitHub Repository Management
 # ----------------------
+
+# Helper function to handle existing repositories
+handle_existing_repo() {
+    local repo_name="$1"
+    local base_dir="$2"
+    local repo_path="$base_dir/$repo_name"
+    
+    echo ""
+    echo "Repository '$repo_name' already exists!"
+    echo "Checking if you have a local copy..."
+    echo ""
+    
+    if [[ -d "$repo_path" ]]; then
+        echo "Found local repository at: $repo_path"
+        cd "$repo_path" || return 1
+        
+        echo ""
+        echo "Repository Analysis:"
+        echo "==================="
+        
+        echo "Remote URL:"
+        git remote -v 2>/dev/null | head -2 || echo "  No remote configured"
+        
+        echo ""
+        echo "Directory Contents:"
+        ls -lstra
+        
+        echo ""
+        echo "Git Status:"
+        git status 2>/dev/null || echo "  Not a git repository"
+        
+        echo ""
+        echo "Recent Commits:"
+        git log --oneline -5 2>/dev/null || echo "  No commits found"
+        
+        echo ""
+        echo "==================="
+        echo ""
+        echo "What would you like to do?"
+        echo "1) Stay in this repository"
+        echo "2) Pull latest changes and stay"
+        echo "3) Delete local copy and exit"
+        echo "4) Exit without changes"
+        
+        echo -n "Choose (1-4): "
+        read choice
+        
+        case $choice in
+            1)
+                echo "Staying in repository: $repo_path"
+                return 0
+                ;;
+            2)
+                echo "Pulling latest changes..."
+                git pull 2>/dev/null || echo "Could not pull from remote"
+                return 0
+                ;;
+            3)
+                echo "Removing local repository..."
+                cd "$base_dir" || return 1
+                rm -rf "$repo_name"
+                echo "Local repository deleted."
+                return 1
+                ;;
+            *)
+                echo "Exiting without changes"
+                return 1
+                ;;
+        esac
+    else
+        echo "No local copy found. Trying to clone existing repository..."
+        if git clone "https://github.com/$(gh api user | jq -r '.login')/$repo_name.git" "$repo_path" 2>/dev/null; then
+            echo "Successfully cloned existing repository!"
+            cd "$repo_path" || return 1
+            echo "You're now in: $repo_path"
+            return 0
+        else
+            echo "Failed to clone the repository."
+            echo "Check your permissions or repository name."
+            return 1
+        fi
+    fi
+}
+
 alias git_create="create_repo"
 create_repo(){
     # "Usage: create_repo repo_name"
@@ -425,31 +509,55 @@ create_repo(){
 
         case $template_choice in
             1)
-                gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Python || return 1
+                if ! gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Python; then
+                    handle_existing_repo "$repo_name" "$base_dir"
+                    return $?
+                fi
                 ;;
             2)
-                gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Node || return 1
+                if ! gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Node; then
+                    handle_existing_repo "$repo_name" "$base_dir"
+                    return $?
+                fi
                 ;;
             3)
-                gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Markdown || return 1
+                if ! gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Markdown; then
+                    handle_existing_repo "$repo_name" "$base_dir"
+                    return $?
+                fi
                 ;;
             4)
-                gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Shell || return 1
+                if ! gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Shell; then
+                    handle_existing_repo "$repo_name" "$base_dir"
+                    return $?
+                fi
                 ;;
             5)
                 # Create with Python template first, then add Node content
-                gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Python || return 1
+                if ! gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Python; then
+                    handle_existing_repo "$repo_name" "$base_dir"
+                    return $?
+                fi
                 echo "Note: Will add Node.js gitignore content after cloning..."
                 ;;
             6)
-                gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Rust || return 1
+                if ! gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Rust; then
+                    handle_existing_repo "$repo_name" "$base_dir"
+                    return $?
+                fi
                 ;;
             *)
-                gh repo create --add-readme "$repo_name" --private --license=mit || return 1
+                if ! gh repo create --add-readme "$repo_name" --private --license=mit; then
+                    handle_existing_repo "$repo_name" "$base_dir"
+                    return $?
+                fi
                 ;;
         esac
     else
-        gh repo create --add-readme "$repo_name" --private --license=mit || return 1
+        if ! gh repo create --add-readme "$repo_name" --private --license=mit; then
+            handle_existing_repo "$repo_name" "$base_dir"
+            return $?
+        fi
     fi
 
     git clone "https://github.com/$(gh api user | jq -r '.login')/$repo_name.git" "$base_dir/$repo_name" || return 1
@@ -458,123 +566,123 @@ create_repo(){
     # Add Node.js gitignore content if Python + Node was selected
     if [[ "$template_choice" == "5" ]]; then
         echo "Adding Node.js gitignore content..."
-        cat >> .gitignore << 'EOF'
-
-# Node.js
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-lerna-debug.log*
-.pnpm-debug.log*
-
-# Runtime data
-pids
-*.pid
-*.seed
-*.pid.lock
-
-# Coverage directory used by tools like istanbul
-coverage/
-*.lcov
-
-# nyc test coverage
-.nyc_output
-
-# Grunt intermediate storage (https://gruntjs.com/creating-plugins#storing-task-files)
-.grunt
-
-# Bower dependency directory (https://bower.io/)
-bower_components
-
-# node-waf configuration
-.lock-wscript
-
-# Compiled binary addons (https://nodejs.org/api/addons.html)
-build/Release
-
-# Dependency directories
-jspm_packages/
-
-# TypeScript cache
-*.tsbuildinfo
-
-# Optional npm cache directory
-.npm
-
-# Optional eslint cache
-.eslintcache
-
-# Optional stylelint cache
-.stylelintcache
-
-# Microbundle cache
-.rpt2_cache/
-.rts2_cache_cjs/
-.rts2_cache_es/
-.rts2_cache_umd/
-
-# Optional REPL history
-.node_repl_history
-
-# Output of 'npm pack'
-*.tgz
-
-# Yarn Integrity file
-.yarn-integrity
-
-# dotenv environment variable files
-.env
-.env.development.local
-.env.test.local
-.env.production.local
-.env.local
-
-# parcel-bundler cache (https://parceljs.org/)
-.cache
-.parcel-cache
-
-# Next.js build output
-.next
-out
-
-# Nuxt.js build / generate output
-.nuxt
-dist
-
-# Gatsby files
-.cache/
-public
-
-# Storybook build outputs
-.out
-.storybook-out
-storybook-static
-
-# Temporary folders
-tmp/
-temp/
-
-# Logs
-logs
-*.log
-
-# Editor directories and files
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS generated files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-EOF
+        {
+            echo ""
+            echo "# Node.js"
+            echo "node_modules/"
+            echo "npm-debug.log*"
+            echo "yarn-debug.log*"
+            echo "yarn-error.log*"
+            echo "lerna-debug.log*"
+            echo ".pnpm-debug.log*"
+            echo ""
+            echo "# Runtime data"
+            echo "pids"
+            echo "*.pid"
+            echo "*.seed"
+            echo "*.pid.lock"
+            echo ""
+            echo "# Coverage directory used by tools like istanbul"
+            echo "coverage/"
+            echo "*.lcov"
+            echo ""
+            echo "# nyc test coverage"
+            echo ".nyc_output"
+            echo ""
+            echo "# Grunt intermediate storage"
+            echo ".grunt"
+            echo ""
+            echo "# Bower dependency directory"
+            echo "bower_components"
+            echo ""
+            echo "# node-waf configuration"
+            echo ".lock-wscript"
+            echo ""
+            echo "# Compiled binary addons"
+            echo "build/Release"
+            echo ""
+            echo "# Dependency directories"
+            echo "jspm_packages/"
+            echo ""
+            echo "# TypeScript cache"
+            echo "*.tsbuildinfo"
+            echo ""
+            echo "# Optional npm cache directory"
+            echo ".npm"
+            echo ""
+            echo "# Optional eslint cache"
+            echo ".eslintcache"
+            echo ""
+            echo "# Optional stylelint cache"
+            echo ".stylelintcache"
+            echo ""
+            echo "# Microbundle cache"
+            echo ".rpt2_cache/"
+            echo ".rts2_cache_cjs/"
+            echo ".rts2_cache_es/"
+            echo ".rts2_cache_umd/"
+            echo ""
+            echo "# Optional REPL history"
+            echo ".node_repl_history"
+            echo ""
+            echo "# Output of 'npm pack'"
+            echo "*.tgz"
+            echo ""
+            echo "# Yarn Integrity file"
+            echo ".yarn-integrity"
+            echo ""
+            echo "# dotenv environment variable files"
+            echo ".env"
+            echo ".env.development.local"
+            echo ".env.test.local"
+            echo ".env.production.local"
+            echo ".env.local"
+            echo ""
+            echo "# parcel-bundler cache"
+            echo ".cache"
+            echo ".parcel-cache"
+            echo ""
+            echo "# Next.js build output"
+            echo ".next"
+            echo "out"
+            echo ""
+            echo "# Nuxt.js build / generate output"
+            echo ".nuxt"
+            echo "dist"
+            echo ""
+            echo "# Gatsby files"
+            echo ".cache/"
+            echo "public"
+            echo ""
+            echo "# Storybook build outputs"
+            echo ".out"
+            echo ".storybook-out"
+            echo "storybook-static"
+            echo ""
+            echo "# Temporary folders"
+            echo "tmp/"
+            echo "temp/"
+            echo ""
+            echo "# Logs"
+            echo "logs"
+            echo "*.log"
+            echo ""
+            echo "# Editor directories and files"
+            echo ".vscode/"
+            echo ".idea/"
+            echo "*.swp"
+            echo "*.swo"
+            echo "*~"
+            echo ""
+            echo "# OS generated files"
+            echo ".DS_Store"
+            echo ".DS_Store?"
+            echo "._*"
+            echo ".Spotlight-V100"
+            echo ".Trashes"
+            echo "ehthumbs.db"
+            echo "Thumbs.db"
+        } >> .gitignore
     fi
     
     echo "# $repo_name" >> README.md
