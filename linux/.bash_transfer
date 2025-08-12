@@ -167,3 +167,181 @@ fsend() {
         ffsend upload "$1" --copy
     fi
 }
+
+# Transfer using Magic Wormhole
+wh_transfer() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: wh_transfer [file/directory]"
+        echo "Securely transfer files using Magic Wormhole"
+        return 0
+    fi
+
+    # Check if Magic Wormhole is installed
+    if ! command -v wormhole &> /dev/null; then
+        echo "Error: Magic Wormhole is not installed"
+        echo "Install with:"
+        echo "  Ubuntu/Debian: sudo apt install magic-wormhole"
+        echo "  Fedora: sudo dnf install magic-wormhole"
+        echo "  Arch: sudo pacman -S magic-wormhole"
+        echo "  Or via pip: pip install magic-wormhole"
+        return 1
+    fi
+    
+    if [[ -z "$1" ]]; then
+        echo "Error: No file or directory specified"
+        return 1
+    fi
+    
+    # Send the file or directory
+    if [[ -d "$1" ]]; then
+        # For directories, create a zip first
+        local zip_file="/tmp/$(basename "$1").zip"
+        echo "Creating zip archive of directory..."
+        zip -r "$zip_file" "$1"
+        echo "Sending zip archive via wormhole..."
+        wormhole send "$zip_file"
+        echo "Cleaning up temporary zip file..."
+        rm "$zip_file"
+    else
+        # For regular files, send directly
+        wormhole send "$1"
+    fi
+}
+
+# Upload to cloud storage using rclone (generic)
+upload_to_cloud() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: upload_to_cloud [remote] [file/directory]"
+        echo "Upload files to cloud storage using rclone"
+        echo "If no remote specified, will list available remotes"
+        return 0
+    fi
+
+    # Check if rclone is installed
+    if ! command -v rclone &> /dev/null; then
+        echo "Error: rclone is not installed"
+        echo "Install with:"
+        echo "  Ubuntu/Debian: sudo apt install rclone"
+        echo "  Fedora: sudo dnf install rclone"
+        echo "  Arch: sudo pacman -S rclone"
+        echo "  Or download from: https://rclone.org/downloads/"
+        return 1
+    fi
+    
+    # If no arguments, list available remotes
+    if [[ $# -eq 0 ]]; then
+        echo "Available rclone remotes:"
+        rclone listremotes
+        echo ""
+        echo "Usage: upload_to_cloud [remote] [file/directory]"
+        echo "Configure new remote with: rclone config"
+        return 0
+    fi
+
+    local remote="$1"
+    local file="$2"
+    
+    if [[ -z "$file" ]]; then
+        echo "Error: No file or directory specified"
+        return 1
+    fi
+    
+    if [[ ! -e "$file" ]]; then
+        echo "Error: File or directory '$file' does not exist"
+        return 1
+    fi
+    
+    # Check if remote exists
+    if ! rclone listremotes | grep -q "^${remote}:$"; then
+        echo "Error: Remote '$remote' not found"
+        echo "Available remotes:"
+        rclone listremotes
+        return 1
+    fi
+    
+    # Upload the file or directory
+    echo "Uploading '$file' to '$remote:uploads/'"
+    rclone copy "$file" "$remote:uploads/" -P
+}
+
+# Simple HTTP file server for sharing
+share_files() {
+    local port="${1:-8000}"
+    local directory="${2:-.}"
+    
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: share_files [port] [directory]"
+        echo "Start a simple HTTP server to share files"
+        echo "Default port: 8000, default directory: current directory"
+        return 0
+    fi
+    
+    echo "Starting HTTP server on port $port serving directory: $directory"
+    echo "Access files at: http://localhost:$port"
+    echo "Press Ctrl+C to stop"
+    
+    # Use Python 3's built-in HTTP server
+    if command -v python3 &> /dev/null; then
+        cd "$directory" && python3 -m http.server "$port"
+    elif command -v python &> /dev/null; then
+        cd "$directory" && python -m http.server "$port"
+    else
+        echo "Error: Python is not installed"
+        return 1
+    fi
+}
+
+# Synchronize directories with rsync
+sync_dirs() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: sync_dirs [OPTIONS] source destination"
+        echo "Synchronize directories using rsync"
+        echo "Options:"
+        echo "  --delete     Delete extraneous files from destination"
+        echo "  --dry-run    Show what would be done without doing it"
+        echo "  -v           Verbose output"
+        return 0
+    fi
+
+    local delete_opt=""
+    local dry_run=""
+    local verbose=""
+    local args=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --delete)
+                delete_opt="--delete"
+                shift
+                ;;
+            --dry-run)
+                dry_run="--dry-run"
+                shift
+                ;;
+            -v)
+                verbose="-v"
+                shift
+                ;;
+            *)
+                args+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    if [[ ${#args[@]} -lt 2 ]]; then
+        echo "Error: Source and destination required"
+        return 1
+    fi
+
+    local source="${args[0]}"
+    local dest="${args[1]}"
+
+    if [[ ! -d "$source" ]]; then
+        echo "Error: Source directory '$source' does not exist"
+        return 1
+    fi
+
+    echo "Synchronizing '$source' to '$dest'"
+    rsync -av $delete_opt $dry_run $verbose "$source/" "$dest/"
+}

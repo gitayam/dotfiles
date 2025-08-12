@@ -1,0 +1,413 @@
+# ----------------------
+# Password and Encryption Functions  
+# ----------------------
+
+# Generate secure passwords
+generate_password() {
+    # Default password type is phrases using diceware
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: generate_password [-p type] [-l length] [-m] [-c] [-s] [-q] [-n]"
+        echo "Options:"
+        echo "  -p type       Password type: phrases (default), chars (random characters), numbers, or hex"
+        echo "  -l length     Length of the password (default: 6 words for phrases, 22 chars for others)"
+        echo "  -m            Manual mode - prompt for password instead of generating"
+        echo "  -c            Copy the generated password to clipboard"
+        echo "  -s            Include special characters (for chars type only)"
+        echo "  -q            Quiet mode - only output the password (useful for scripting)"
+        echo "  -n            No spaces in passphrase (for phrases type only)"
+        return 0
+    fi
+    
+    # Check for diceware on Linux
+    local has_diceware=false
+    if command -v diceware &> /dev/null; then
+        has_diceware=true
+    fi
+    
+    local password_type="phrases"
+    local length=6  # Default 6 words for phrases
+    local char_length=22  # Default 22 chars for character passwords
+    local manual_mode=false
+    local copy_to_clipboard=false
+    local include_special=false
+    local quiet_mode=false
+    local no_spaces=false
+    local password=""
+    
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -p)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: -p requires a type argument (phrases, chars, numbers, hex)" >&2
+                    return 1
+                fi
+                password_type="$2"
+                shift 2
+                ;;
+            -l)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: -l requires a length argument" >&2
+                    return 1
+                fi
+                if [[ ! "$2" =~ ^[0-9]+$ ]]; then
+                    echo "Error: Length must be a number" >&2
+                    return 1
+                fi
+                if [[ "$password_type" == "phrases" ]]; then
+                    length="$2"
+                else
+                    char_length="$2"
+                fi
+                shift 2
+                ;;
+            -m)
+                manual_mode=true
+                shift
+                ;;
+            -c)
+                copy_to_clipboard=true
+                shift
+                ;;
+            -s)
+                include_special=true
+                shift
+                ;;
+            -q)
+                quiet_mode=true
+                shift
+                ;;
+            -n)
+                no_spaces=true
+                shift
+                ;;
+            *)
+                if ! $quiet_mode; then
+                    echo "Unknown option: $1" >&2
+                    echo "Use 'generate_password -h' for help." >&2
+                fi
+                return 1
+                ;;
+        esac
+    done
+    
+    # If manual mode, prompt for password
+    if $manual_mode; then
+        if ! $quiet_mode; then
+            echo "Enter your password (input will be hidden):" >&2
+        fi
+        read -s password
+        if ! $quiet_mode; then
+            echo >&2  # Print newline after hidden input
+        fi
+    else
+        # Generate password based on type
+        case "$password_type" in
+            phrases)
+                if $has_diceware; then
+                    # Use diceware for generating passphrases
+                    if $no_spaces; then
+                        password=$(diceware --no-caps --delimiter "" "$length")
+                    else
+                        password=$(diceware --no-caps --delimiter " " "$length")
+                    fi
+                else
+                    # Fallback: generate random words using /usr/share/dict/words on Linux
+                    if [[ -f /usr/share/dict/words ]]; then
+                        local words=()
+                        for ((i=0; i<length; i++)); do
+                            word=$(shuf -n 1 /usr/share/dict/words | tr '[:upper:]' '[:lower:]')
+                            words+=("$word")
+                        done
+                        if $no_spaces; then
+                            password=$(IFS=''; echo "${words[*]}")
+                        else
+                            password=$(IFS=' '; echo "${words[*]}")
+                        fi
+                    else
+                        # Last resort: use simple word generation
+                        if ! $quiet_mode; then
+                            echo "Warning: diceware not found and no word dictionary available. Install diceware for better security." >&2
+                            echo "On Ubuntu/Debian: sudo apt install diceware" >&2
+                            echo "On RHEL/CentOS/Fedora: sudo dnf install diceware or sudo yum install diceware" >&2
+                        fi
+                        # Generate simple word-like strings
+                        local words=()
+                        for ((i=0; i<length; i++)); do
+                            word=$(openssl rand -base64 6 | tr -d '=' | tr '[:upper:]' '[:lower:]' | head -c 6)
+                            words+=("$word")
+                        done
+                        if $no_spaces; then
+                            password=$(IFS=''; echo "${words[*]}")
+                        else
+                            password=$(IFS=' '; echo "${words[*]}")
+                        fi
+                    fi
+                fi
+                ;;
+            chars)
+                # Generate random character password
+                if $include_special; then
+                    password=$(openssl rand -base64 $((char_length * 3/4)) | tr -d '\n' | head -c "$char_length")
+                else
+                    password=$(openssl rand -base64 $((char_length * 3/4)) | tr -d '\n/+=' | head -c "$char_length")
+                fi
+                ;;
+            numbers)
+                # Generate numeric password
+                password=$(openssl rand -hex $((char_length/2)) | tr 'a-f' '0-9' | head -c "$char_length")
+                ;;
+            hex)
+                # Generate hexadecimal password
+                password=$(openssl rand -hex $((char_length/2)) | head -c "$char_length")
+                ;;
+            *)
+                if ! $quiet_mode; then
+                    echo "Error: Unknown password type '$password_type'" >&2
+                    echo "Valid types: phrases, chars, numbers, hex" >&2
+                fi
+                return 1
+                ;;
+        esac
+    fi
+    
+    # Validate password was generated
+    if [[ -z "$password" ]]; then
+        if ! $quiet_mode; then
+            echo "Error: Failed to generate password" >&2
+        fi
+        return 1
+    fi
+    
+    # Copy to clipboard if requested (Linux version)
+    if $copy_to_clipboard; then
+        if command -v xclip &> /dev/null; then
+            echo -n "$password" | xclip -selection clipboard
+            if ! $quiet_mode; then
+                echo "Password copied to clipboard (using xclip)" >&2
+            fi
+        elif command -v xsel &> /dev/null; then
+            echo -n "$password" | xsel --clipboard --input
+            if ! $quiet_mode; then
+                echo "Password copied to clipboard (using xsel)" >&2
+            fi
+        elif command -v wl-copy &> /dev/null; then
+            echo -n "$password" | wl-copy
+            if ! $quiet_mode; then
+                echo "Password copied to clipboard (using wl-copy)" >&2
+            fi
+        else
+            if ! $quiet_mode; then
+                echo "Warning: No clipboard utility found. Install xclip, xsel, or wl-clipboard" >&2
+            fi
+        fi
+    fi
+    
+    # Output the password
+    if $quiet_mode; then
+        echo "$password"
+    else
+        echo "Generated password: $password"
+        
+        # Show some stats
+        case "$password_type" in
+            phrases)
+                word_count=$(echo "$password" | wc -w)
+                char_count=${#password}
+                echo "Length: $word_count words, $char_count characters"
+                ;;
+            *)
+                echo "Length: ${#password} characters"
+                ;;
+        esac
+    fi
+}
+
+# Password strength checker
+check_password_strength() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: check_password_strength [password]"
+        echo "If no password is provided, you'll be prompted to enter one securely."
+        return 0
+    fi
+    
+    local password="$1"
+    
+    # If no password provided, prompt for it
+    if [[ -z "$password" ]]; then
+        echo "Enter password to check (input will be hidden):"
+        read -s password
+        echo  # Print newline after hidden input
+    fi
+    
+    # Basic strength checks
+    local length=${#password}
+    local has_lower=false
+    local has_upper=false
+    local has_digit=false
+    local has_special=false
+    local score=0
+    
+    # Check character types
+    [[ "$password" =~ [a-z] ]] && has_lower=true && ((score++))
+    [[ "$password" =~ [A-Z] ]] && has_upper=true && ((score++))
+    [[ "$password" =~ [0-9] ]] && has_digit=true && ((score++))
+    [[ "$password" =~ [^a-zA-Z0-9] ]] && has_special=true && ((score++))
+    
+    # Length bonus
+    if [[ $length -ge 8 ]]; then
+        ((score++))
+    fi
+    if [[ $length -ge 12 ]]; then
+        ((score++))
+    fi
+    if [[ $length -ge 16 ]]; then
+        ((score++))
+    fi
+    
+    # Calculate entropy (rough estimate)
+    local charset_size=0
+    $has_lower && ((charset_size += 26))
+    $has_upper && ((charset_size += 26))
+    $has_digit && ((charset_size += 10))
+    $has_special && ((charset_size += 32))
+    
+    local entropy=0
+    if [[ $charset_size -gt 0 ]]; then
+        # Rough entropy calculation: log2(charset_size^length)
+        entropy=$(echo "scale=2; $length * l($charset_size) / l(2)" | bc -l 2>/dev/null || echo "N/A")
+    fi
+    
+    # Determine strength
+    local strength="Very Weak"
+    local color="\033[31m"  # Red
+    
+    if [[ $score -ge 6 ]]; then
+        strength="Very Strong"
+        color="\033[32m"  # Green
+    elif [[ $score -ge 5 ]]; then
+        strength="Strong"
+        color="\033[92m"  # Light Green
+    elif [[ $score -ge 4 ]]; then
+        strength="Moderate"
+        color="\033[33m"  # Yellow
+    elif [[ $score -ge 2 ]]; then
+        strength="Weak"
+        color="\033[91m"  # Light Red
+    fi
+    
+    # Display results
+    echo "Password Strength Analysis:"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "Length: $length characters"
+    echo "Has lowercase: $($has_lower && echo "✓" || echo "✗")"
+    echo "Has uppercase: $($has_upper && echo "✓" || echo "✗")"
+    echo "Has digits: $($has_digit && echo "✓" || echo "✗")"
+    echo "Has special chars: $($has_special && echo "✓" || echo "✗")"
+    [[ "$entropy" != "N/A" ]] && echo "Estimated entropy: $entropy bits"
+    echo -e "Overall strength: ${color}$strength\033[0m"
+    
+    # Recommendations
+    echo ""
+    echo "Recommendations:"
+    if [[ $length -lt 8 ]]; then
+        echo "• Use at least 8 characters (12+ recommended)"
+    fi
+    if ! $has_lower; then
+        echo "• Include lowercase letters"
+    fi
+    if ! $has_upper; then
+        echo "• Include uppercase letters"
+    fi
+    if ! $has_digit; then
+        echo "• Include numbers"
+    fi
+    if ! $has_special; then
+        echo "• Include special characters (!@#$%^&*)"
+    fi
+    if [[ $score -ge 6 ]]; then
+        echo "• Password looks strong! 🎉"
+    fi
+}
+
+# Simple hash function for passwords (for verification, not storage)
+hash_password() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: hash_password [password]"
+        echo "Generates SHA-256 hash of password for verification purposes."
+        echo "If no password provided, you'll be prompted to enter one securely."
+        return 0
+    fi
+    
+    local password="$1"
+    
+    if [[ -z "$password" ]]; then
+        echo "Enter password to hash (input will be hidden):"
+        read -s password
+        echo
+    fi
+    
+    echo -n "$password" | sha256sum | cut -d' ' -f1
+}
+
+# Secure file deletion (Linux version)
+secure_delete() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: secure_delete file1 [file2 ...]"
+        echo "Securely delete files by overwriting them multiple times."
+        echo "Uses shred if available, otherwise uses dd with random data."
+        return 0
+    fi
+    
+    if [[ $# -eq 0 ]]; then
+        echo "Error: No files specified"
+        echo "Usage: secure_delete file1 [file2 ...]"
+        return 1
+    fi
+    
+    for file in "$@"; do
+        if [[ ! -f "$file" ]]; then
+            echo "Warning: '$file' is not a regular file, skipping"
+            continue
+        fi
+        
+        echo "Securely deleting: $file"
+        
+        if command -v shred &> /dev/null; then
+            # Use shred if available (most Linux distributions)
+            shred -vfz -n 3 "$file"
+        else
+            # Fallback method using dd
+            echo "shred not available, using dd fallback method"
+            local filesize=$(stat -c%s "$file" 2>/dev/null || wc -c < "$file")
+            
+            # Overwrite with random data 3 times
+            for i in {1..3}; do
+                echo "Pass $i/3: overwriting with random data"
+                dd if=/dev/urandom of="$file" bs="$filesize" count=1 status=none 2>/dev/null || {
+                    echo "Warning: dd overwrite failed for $file"
+                    break
+                }
+            done
+            
+            # Final pass with zeros
+            echo "Final pass: overwriting with zeros"
+            dd if=/dev/zero of="$file" bs="$filesize" count=1 status=none 2>/dev/null
+            
+            # Remove the file
+            rm -f "$file"
+        fi
+        
+        if [[ ! -f "$file" ]]; then
+            echo "✓ Successfully deleted: $file"
+        else
+            echo "✗ Failed to delete: $file"
+        fi
+    done
+}
+
+# Aliases for convenience
+alias genpass="generate_password"
+alias checkpass="check_password_strength"
+alias hashpass="hash_password"
+alias sdelete="secure_delete"
