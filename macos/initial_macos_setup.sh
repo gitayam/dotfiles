@@ -1,7 +1,7 @@
 #!/bin/bash
 #./initial-install.sh
 # MacOS Install
-# Define OS 
+# Define OS and Architecture
 if [ -f /etc/os-release ]; then
   . /etc/os-release
   OS=$NAME
@@ -10,6 +10,11 @@ elif type lsb_release &> /dev/null; then
 else
   OS=$(uname -s)
 fi
+
+# Detect architecture
+ARCH=$(uname -m)
+echo "Detected OS: $OS"
+echo "Detected Architecture: $ARCH"
 
 # Loop through this list checking if the application is installed and if not then install it
 install_terminal_apps() {
@@ -29,6 +34,54 @@ install_terminal_apps() {
       brew install "$app" || brew install --cask "$app"
     fi
   done
+}
+
+install_simplex_chat() {
+  echo "Installing Simplex Chat..."
+  
+  # Check if simplex-chat is already installed
+  if command -v simplex-chat &> /dev/null; then
+    echo "Simplex Chat CLI is already installed."
+    return
+  fi
+  
+  # Check if the GUI app is already installed
+  if [[ -d "/Applications/SimpleX Chat.app" ]]; then
+    echo "Simplex Chat GUI is already installed."
+  fi
+  
+  # For ARM64 Macs, install CLI version directly
+  if [[ "$ARCH" == "arm64" ]]; then
+    echo "ARM64 architecture detected. Installing Simplex Chat CLI via direct download..."
+    
+    # Create local bin directory if it doesn't exist
+    mkdir -p ~/.local/bin
+    
+    # Get the latest release URL for ARM64
+    SIMPLEX_URL=$(curl -s https://api.github.com/repos/simplex-chat/simplex-chat/releases/latest | grep "browser_download_url.*macos-aarch64" | grep -v "dmg" | cut -d '"' -f 4)
+    
+    if [[ -n "$SIMPLEX_URL" ]]; then
+      echo "Downloading Simplex Chat from: $SIMPLEX_URL"
+      curl -L "$SIMPLEX_URL" -o ~/.local/bin/simplex-chat
+      chmod +x ~/.local/bin/simplex-chat
+      
+      # Add to PATH if not already there
+      if ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' ~/.zshrc; then
+        echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+        echo "Added ~/.local/bin to PATH in ~/.zshrc"
+      fi
+      
+      echo "Simplex Chat CLI installed successfully!"
+      echo "Run 'simplex-chat' to start the CLI version"
+    else
+      echo "Failed to find ARM64 download URL. Falling back to Homebrew..."
+      brew install --cask simplex || echo "Homebrew installation also failed"
+    fi
+  else
+    # For Intel Macs, try Homebrew first
+    echo "Installing Simplex Chat via Homebrew..."
+    brew install --cask simplex || echo "Homebrew installation failed"
+  fi
 }
 
 install_gui_apps() {
