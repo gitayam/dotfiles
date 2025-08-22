@@ -10,7 +10,8 @@ This document captures key lessons learned during the development and debugging 
 5. [Error Handling and Debugging Strategies](#error-handling-and-debugging-strategies)
 6. [Code Organization and Structure](#code-organization-and-structure)
 7. [SSL/TLS and Network Issues](#ssltls-and-network-issues)
-8. [Standard Operating Procedures](#standard-operating-procedures)
+8. [Git Workflow and Pull Request Best Practices](#git-workflow-and-pull-request-best-practices)
+9. [Standard Operating Procedures](#standard-operating-procedures)
 
 ---
 
@@ -297,6 +298,195 @@ if Config.MATRIX_DISABLE_SSL_VERIFICATION:
 3. **Use connection pooling** to reduce connection overhead
 4. **Log network errors** with sufficient detail for debugging
 5. **Test with different network conditions** (slow, unreliable connections)
+
+---
+
+## Git Workflow and Pull Request Best Practices
+
+### The Habits That Make PRs Easy to Review
+
+#### Branching
+- **Create a fresh branch per task**: Use descriptive names like `feat/login-button`, `bugfix/timeout-500`, `chore/dep-bumps`
+- **Keep PRs small & focused**: Ideal size is < ~300 lines of effective diff. Split big changes into multiple PRs
+- **Branch from main**: Always create feature branches from the latest main branch
+- **Delete merged branches**: Clean up after successful merges to keep the repository tidy
+
+#### Commits
+
+**✅ What Works**
+```bash
+# Meaningful commit messages with type and scope
+feat(auth): add OAuth flow with PKCE
+fix(api): handle 429 with jittered backoff
+chore(deps): upgrade react to v18
+docs(readme): update installation instructions
+```
+
+**❌ What Doesn't Work**
+```bash
+# Vague or unhelpful messages
+fixed bug
+update
+wip
+more changes
+```
+
+**Best Practices:**
+- **Write meaningful messages**: Start with a type (feat, fix, chore, docs) and include scope
+- **Commit logically**: Each commit should compile and pass tests
+- **Prefer squash merge**: Keep main branch history clean with focused commits
+- **Atomic commits**: One logical change per commit
+
+#### Pull Request Descriptions
+
+**✅ Effective PR Structure:**
+
+```markdown
+## Summary
+Brief 1-3 line summary of what this PR accomplishes and why it's needed.
+
+## Changes
+- Added user authentication with OAuth 2.0 PKCE flow
+- Implemented session management with secure cookies  
+- Updated API endpoints to require authentication
+
+## Breaking Changes
+- `/api/users` now requires authentication token
+- Session cookie structure changed (users need to re-login)
+
+## How to Test
+1. Run `npm install && npm start`
+2. Navigate to `/login` and test OAuth flow
+3. Verify protected routes redirect to login
+4. Test logout functionality
+
+## Screenshots
+[Include screenshots for UI changes]
+
+## Links
+- Fixes #123
+- Related to #456
+- Spec: [link to design document]
+```
+
+**❌ Poor PR Descriptions:**
+- Empty descriptions
+- Just "Fixed the thing"
+- No context about what changed or why
+- Missing test instructions
+
+### 🔧 Standard Operating Procedure for Git Workflow
+
+#### Before Starting Work
+1. **Switch to main and pull latest changes**
+   ```bash
+   git checkout main
+   git pull origin main
+   ```
+
+2. **Create descriptive branch name**
+   ```bash
+   git checkout -b feat/user-profile-settings
+   ```
+
+3. **Understand the scope** - keep the branch focused on one feature/fix
+
+#### During Development
+1. **Make frequent, logical commits**
+   ```bash
+   git add -p  # Review changes before committing
+   git commit -m "feat(profile): add user avatar upload"
+   ```
+
+2. **Keep commits focused** - one logical change per commit
+3. **Test each commit** - ensure the code compiles and basic tests pass
+4. **Rebase regularly** to keep history clean if working on long-running branches
+
+#### Creating Pull Requests
+1. **Push branch and create PR early** for feedback
+   ```bash
+   git push -u origin feat/user-profile-settings
+   gh pr create --title "Add user profile settings page"
+   ```
+
+2. **Write comprehensive description** using the template above
+3. **Include screenshots/gifs** for UI changes
+4. **Link to issues** and related PRs
+5. **Mark as draft** if not ready for review
+
+#### Review Process
+1. **Self-review first** - check your own PR before requesting review
+2. **Respond to feedback promptly** and address all comments
+3. **Update tests** if functionality changed
+4. **Resolve conflicts** by rebasing or merging main
+5. **Squash commits** before merging to keep history clean
+
+#### After Merge
+1. **Delete the feature branch**
+   ```bash
+   git branch -d feat/user-profile-settings
+   git push origin --delete feat/user-profile-settings
+   ```
+
+2. **Update local main**
+   ```bash
+   git checkout main
+   git pull origin main
+   ```
+
+### Common Git Workflows
+
+#### Feature Development
+```bash
+# Start new feature
+git checkout main
+git pull origin main
+git checkout -b feat/new-feature
+
+# Work and commit
+git add .
+git commit -m "feat: implement core functionality"
+git commit -m "test: add unit tests for new feature"
+git commit -m "docs: update API documentation"
+
+# Push and create PR
+git push -u origin feat/new-feature
+gh pr create --title "Add new feature" --body "Description..."
+
+# After approval, squash merge
+gh pr merge --squash --delete-branch
+```
+
+#### Hotfix Process
+```bash
+# Create hotfix from main
+git checkout main
+git pull origin main
+git checkout -b hotfix/critical-bug
+
+# Make minimal fix
+git add .
+git commit -m "fix: resolve critical security issue"
+
+# Fast-track review and merge
+git push -u origin hotfix/critical-bug
+gh pr create --title "HOTFIX: Critical security fix"
+```
+
+### Git Configuration Best Practices
+
+```bash
+# Set up meaningful commit template
+git config --global commit.template ~/.gitmessage
+
+# Configure merge behavior
+git config --global pull.rebase true
+git config --global rebase.autoStash true
+
+# Better diff and merge tools
+git config --global diff.tool vimdiff
+git config --global merge.tool vimdiff
+```
 
 ---
 
