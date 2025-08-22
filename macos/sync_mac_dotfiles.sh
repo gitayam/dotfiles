@@ -272,8 +272,19 @@ echo "----LibreOffice Macros------"
 if [[ -d "/Applications/LibreOffice.app/Contents/Resources/Scripts/python" ]]; then
     echo "✓ LibreOffice is installed"
     echo "Copying python macros to /Applications/LibreOffice.app/Contents/Resources/Scripts/python"
-    cp "$REPO_DIR/libreoffice/"*.py "/Applications/LibreOffice.app/Contents/Resources/Scripts/python/"
-    echo "✓ Copied python macros to /Applications/LibreOffice.app/Contents/Resources/Scripts/python"
+    
+    # Check if libreoffice directory exists in parent directory
+    LIBREOFFICE_DIR="$(dirname "$REPO_DIR")/libreoffice"
+    if [[ -d "$LIBREOFFICE_DIR" ]]; then
+        if ls "$LIBREOFFICE_DIR"/*.py 1> /dev/null 2>&1; then
+            cp "$LIBREOFFICE_DIR"/*.py "/Applications/LibreOffice.app/Contents/Resources/Scripts/python/"
+            echo "✓ Copied python macros to /Applications/LibreOffice.app/Contents/Resources/Scripts/python"
+        else
+            echo "⚠️ No Python files found in $LIBREOFFICE_DIR"
+        fi
+    else
+        echo "⚠️ LibreOffice macros directory not found at $LIBREOFFICE_DIR"
+    fi
 else
     echo "⚠️ LibreOffice is not installed"
     echo "Would you like to install it? (y/n): "
@@ -283,7 +294,8 @@ else
         brew install libreoffice
         echo "✓ LibreOffice installed"
     fi
-fi  
+fi
+
 # Ask user if they want to load the new configuration
 echo "----------------------------"
 read -p "Do you want to source ~/.zshrc now to load the configuration? (y/n): " choice
