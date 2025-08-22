@@ -48,10 +48,30 @@ run-discord(){
 update_all(){
     sudo echo "Updating brew" # using sudo with echo to get user password, sudo used for softwareupdate
     brew update && brew upgrade && brew cleanup && brew doctor
+    echo "Updating App Store apps"
+    if command -v mas >/dev/null 2>&1; then
+        mas upgrade
+    else
+        echo "mas (Mac App Store CLI) not installed."
+        printf "Would you like to install mas now? (y/n): "
+        read install_mas
+        if [[ $install_mas =~ ^[Yy]$ ]]; then
+            echo "Installing mas..."
+            brew install mas
+            if command -v mas >/dev/null 2>&1; then
+                echo "mas installed successfully. Updating App Store apps..."
+                mas upgrade
+            else
+                echo "Failed to install mas. Please check App Store manually for updates."
+            fi
+        else
+            echo "Skipping App Store updates. Check App Store manually for updates."
+        fi
+    fi
     echo "Updating macOS"
     sudo softwareupdate --install --all
     echo "Updating git repositories"
     update_git_repos
     echo "Clearing cache"
     clear
-} 
+}
