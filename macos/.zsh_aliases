@@ -12,9 +12,6 @@ alias untar="tar -zxvf"
 alias tarx="tar -xvf"
 
 # Safe aliases to prevent accidental file overwrites or deletions
-alias rm='rm -i'
-alias cp='cp -i'
-alias mv='mv -i'
 
 # Colorize the `ls` output and setup useful aliases
 export LS_OPTIONS='--color=auto'
