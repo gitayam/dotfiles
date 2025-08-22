@@ -48,7 +48,7 @@ gather_user_preferences() {
     raw_choices+=("$item")
   done
   
-  declare -A seen_editors
+  typeset -A seen_editors
   for raw in "${raw_choices[@]}"; do
     choice=$(echo "$raw" | xargs)
     if [[ -n "$choice" && -z "${seen_editors[$choice]}" ]]; then
@@ -77,7 +77,7 @@ gather_user_preferences() {
     raw_choices+=("$item")
   done
   
-  declare -A seen_ais
+  typeset -A seen_ais
   for raw in "${raw_choices[@]}"; do
     choice=$(echo "$raw" | xargs)
     if [[ -n "$choice" && -z "${seen_ais[$choice]}" ]]; then
@@ -111,7 +111,7 @@ gather_user_preferences() {
     raw_choices+=("$item")
   done
   
-  declare -A seen_clouds
+  typeset -A seen_clouds
   for raw in "${raw_choices[@]}"; do
     choice=$(echo "$raw" | xargs)
     if [[ -n "$choice" && -z "${seen_clouds[$choice]}" ]]; then
