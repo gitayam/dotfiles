@@ -16,6 +16,128 @@ ARCH=$(uname -m)
 echo "Detected OS: $OS"
 echo "Detected Architecture: $ARCH"
 
+# Global variables to store user preferences
+EDITOR_CHOICES=()
+AI_CHOICES=()
+CLOUD_CHOICES=()
+INSTALL_PROTON=""
+INSTALL_MULLVAD=""
+
+# Gather all user preferences at the beginning
+gather_user_preferences() {
+  echo "======================================"
+  echo "Initial MacOS Setup - User Preferences"
+  echo "======================================"
+  echo ""
+  
+  # Code Editor Selection
+  echo "Which code editor(s) would you like to install?"
+  echo "1. Visual Studio Code"
+  echo "2. Cursor (Default)"
+  echo "3. Windsurf"
+  echo "4. Claude Code (CLI)"
+  echo "5. None"
+  echo -n "Enter your choice (1-5)(Default: 2) (multiple choices separated by commas): "
+  read editor_choice
+  editor_choice=${editor_choice:-2}
+  
+  # Parse editor choices
+  raw_choices=()
+  local IFS=','
+  for item in $editor_choice; do
+    raw_choices+=("$item")
+  done
+  
+  typeset -A seen_editors
+  for raw in "${raw_choices[@]}"; do
+    choice=$(echo "$raw" | xargs)
+    if [[ -n "$choice" && -z "${seen_editors[$choice]}" ]]; then
+      EDITOR_CHOICES+=("$choice")
+      seen_editors[$choice]=1
+    fi
+  done
+  
+  echo ""
+  
+  # AI Apps Selection
+  echo "Which AI Apps would you like to install?"
+  echo "1. ChatGpt"
+  echo "2. Claude"
+  echo "3. LLM Studio"
+  echo "4. Qwen"
+  echo "5. None"
+  echo -n "Enter your choice (1-5)(Default: 5) (multiple choices separated by commas): "
+  read ai_choice
+  ai_choice=${ai_choice:-5}
+  
+  # Parse AI choices
+  raw_choices=()
+  local IFS=','
+  for item in $ai_choice; do
+    raw_choices+=("$item")
+  done
+  
+  typeset -A seen_ais
+  for raw in "${raw_choices[@]}"; do
+    choice=$(echo "$raw" | xargs)
+    if [[ -n "$choice" && -z "${seen_ais[$choice]}" ]]; then
+      AI_CHOICES+=("$choice")
+      seen_ais[$choice]=1
+    fi
+  done
+  
+  echo ""
+  
+  # Cloud Drive Selection
+  echo "Which cloud drive apps would you like to install?"
+  echo "1. iCloud Drive (built-in)"
+  echo "2. Google Drive"
+  echo "3. Dropbox"
+  echo "4. pCloud"
+  echo "5. MEGA"
+  echo "6. OneDrive"
+  echo "7. Box"
+  echo "8. Sync.com"
+  echo "9. Syncthing"
+  echo "10. None"
+  echo -n "Enter your choice (1-10)(Default: 10) (multiple choices separated by commas): "
+  read cloud_choice
+  cloud_choice=${cloud_choice:-10}
+  
+  # Parse cloud choices
+  raw_choices=()
+  local IFS=','
+  for item in $cloud_choice; do
+    raw_choices+=("$item")
+  done
+  
+  typeset -A seen_clouds
+  for raw in "${raw_choices[@]}"; do
+    choice=$(echo "$raw" | xargs)
+    if [[ -n "$choice" && -z "${seen_clouds[$choice]}" ]]; then
+      CLOUD_CHOICES+=("$choice")
+      seen_clouds[$choice]=1
+    fi
+  done
+  
+  echo ""
+  
+  # VPN Apps Selection
+  echo -n "Do you want to install Proton apps (ProtonVPN, Mail, Pass, Drive)? (y/n)(Default: n): "
+  read INSTALL_PROTON
+  INSTALL_PROTON=${INSTALL_PROTON:-n}
+  
+  echo -n "Do you want to install Mullvad apps (MullvadVPN, Browser)? (y/n)(Default: n): "
+  read INSTALL_MULLVAD
+  INSTALL_MULLVAD=${INSTALL_MULLVAD:-n}
+  
+  echo ""
+  echo "======================================"
+  echo "Preferences saved. Starting installation..."
+  echo "======================================"
+  echo ""
+}
+
 # Loop through this list checking if the application is installed and if not then install it
 install_terminal_apps() {
   terminal_apps=("coreutils" "diceware" "git" "gh" "tree" "python" "ansible" "docker" "kubectl" "gpg" "age" "magic-wormhole" "wireguard-tools" "ocrmypdf" "pandoc" "tesseract" "clamav" "ghostscript" "imagemagick")
@@ -85,44 +207,13 @@ install_simplex_chat() {
 }
 
 install_cloud_drives() {
-  # Prompt user for which Cloud Drive apps to install
-  echo "Which cloud drive apps would you like to install?"
-  echo "1. iCloud Drive (built-in)"
-  echo "2. Google Drive"
-  echo "3. Dropbox"
-  echo "4. pCloud"
-  echo "5. MEGA"
-  echo "6. OneDrive"
-  echo "7. Box"
-  echo "8. Sync.com"
-  echo "9. Syncthing"
-  echo "10. None"
-  echo -n "Enter your choice (1-10)(Default: 10) (multiple choices separated by commas): "
-  read cloud_choice
-  cloud_choice=${cloud_choice:-10}
-
-  # Convert comma separated choices to array, trim whitespace, remove duplicates (zsh compatible)
-  raw_choices=()
-  local IFS=','
-  for item in $cloud_choice; do
-    raw_choices+=("$item")
-  done
-
-  typeset -A seen_clouds
-  cloud_choices=()
-  for raw in "${raw_choices[@]}"; do
-    choice=$(echo "$raw" | xargs)
-    if [[ -n "$choice" && -z "${seen_clouds[$choice]}" ]]; then
-      cloud_choices+=("$choice")
-      seen_clouds[$choice]=1
-    fi
-  done
-
+  echo "Installing selected cloud drive apps..."
+  
   # If '10' (None) is selected, skip all installations
-  if [[ " ${cloud_choices[@]} " =~ " 10 " ]]; then
+  if [[ " ${CLOUD_CHOICES[@]} " =~ " 10 " ]]; then
     echo "No cloud drive apps selected. Skipping cloud drive installation."
   else
-    for choice in "${cloud_choices[@]}"; do
+    for choice in "${CLOUD_CHOICES[@]}"; do
       case $choice in
         1)
           echo "iCloud Drive is built-in to macOS. No installation needed."
@@ -202,39 +293,13 @@ install_cloud_drives() {
 }
 
 install_gui_apps() {
-  # Prompt user for which Code Editor to install
-  echo "Which code editor would you like to install?"
-  echo "1. Visual Studio Code"
-  echo "2. Cursor (Default)"
-  echo "3. Windsurf"
-  echo "4. Claude Code (CLI)"
-  echo "5. None"
-  echo -n "Enter your choice (1-5)(Default: 2) (multiple choices separated by commas): "
-  read editor_choice
-  editor_choice=${editor_choice:-2}
-
-  # Convert comma separated choices to array, trim whitespace, remove duplicates (zsh compatible)
-  raw_choices=()
-  local IFS=','
-  for item in $editor_choice; do
-    raw_choices+=("$item")
-  done
-
-  typeset -A seen_editors
-  editor_choices=()
-  for raw in "${raw_choices[@]}"; do
-    choice=$(echo "$raw" | xargs)
-    if [[ -n "$choice" && -z "${seen_editors[$choice]}" ]]; then
-      editor_choices+=("$choice")
-      seen_editors[$choice]=1
-    fi
-  done
-
-  # If '4' (None) is selected, skip all installations
-  if [[ " ${editor_choices[@]} " =~ " 4 " ]]; then
+  echo "Installing selected GUI applications..."
+  
+  # Install Code Editors based on stored preferences
+  if [[ " ${EDITOR_CHOICES[@]} " =~ " 5 " ]]; then
     echo "No code editor selected. Skipping code editor installation."
   else
-    for choice in "${editor_choices[@]}"; do
+    for choice in "${EDITOR_CHOICES[@]}"; do
       case $choice in
         1)
           if command -v code &>/dev/null; then
@@ -265,7 +330,7 @@ install_gui_apps() {
             echo "Claude Code is already installed. Skipping."
           else
             echo "Installing Claude Code..."
-            brew install --cask claude-code
+            brew install claude-code
           fi
           ;;
         *)
@@ -275,69 +340,11 @@ install_gui_apps() {
     done
   fi
 
-  # Install selected code editors
-  for choice in "${editor_choices[@]}"; do
-    case $choice in
-      1)
-        echo "Installing Visual Studio Code..."
-        brew install --cask visual-studio-code
-        ;;
-      2)
-        echo "Installing Cursor..."
-        brew install --cask cursor
-        ;;
-      3)
-        echo "Installing Windsurf..."
-        brew install --cask windsurf
-        ;;
-      4)
-        echo "Installing Claude Code..."
-        brew install claude-code
-        ;;
-      5)
-        echo "No code editor selected."
-        ;;
-      *)
-        echo "Invalid choice: $choice"
-        ;;
-    esac
-  done
-
-  # AI Apps
-  # Prompt to install ChatGpt, Claude, LLM Studio, and Qwen
-  # similar to coding assistance ask and allow user to select multiple or none
-  echo "Which code AI Apps would you like to install?"
-  echo "1. ChatGpt"
-  echo "2. Claude"
-  echo "3. LLM Studio"
-  echo "4. Qwen"
-  echo "5. None"
-  echo -n "Enter your choice (1-5)(Default: 5) (multiple choices separated by commas): "
-  read ai_choice
-  ai_choice=${ai_choice:-5}
-
-  # Convert comma separated choices to array, trim whitespace, remove duplicates (zsh compatible)
-  raw_choices=()
-  local IFS=','
-  for item in $ai_choice; do
-    raw_choices+=("$item")
-  done
-
-  typeset -A seen_ais
-  ai_choices=()
-  for raw in "${raw_choices[@]}"; do
-    choice=$(echo "$raw" | xargs)
-    if [[ -n "$choice" && -z "${seen_ais[$choice]}" ]]; then
-      ai_choices+=("$choice")
-      seen_ais[$choice]=1
-    fi
-  done
-
-  # If '5' (None) is selected, skip all installations
-  if [[ " ${ai_choices[@]} " =~ " 5 " ]]; then
+  # Install AI Apps based on stored preferences
+  if [[ " ${AI_CHOICES[@]} " =~ " 5 " ]]; then
     echo "No AI App selected. Skipping AI App installation."
   else
-    for choice in "${ai_choices[@]}"; do
+    for choice in "${AI_CHOICES[@]}"; do
       case $choice in
         1)
           if command -v chatgpt &>/dev/null; then
@@ -371,9 +378,6 @@ install_gui_apps() {
             brew install --cask qwen
           fi
           ;;
-        5)
-          echo "No AI App selected."
-          ;;
         *)
           echo "Invalid choice: $choice"
           ;;
@@ -395,11 +399,10 @@ install_gui_apps() {
   done
   mullvad_apps=("mullvadvpn" "mullvad-browser")
   proton_apps=("protonvpn" "proton-mail" "proton-pass" "proton-drive")
-  # ask the user if they want to install the proton apps
-  # default to no
-  install_proton="n"
-  read -p "Do you want to install the Proton apps? (y/n): " install_proton
-  if [[ "$install_proton" == "y" ]]; then
+  
+  # Install Proton apps based on stored preference
+  if [[ "$INSTALL_PROTON" == "y" ]]; then
+    echo "Installing Proton apps..."
     for app in "${proton_apps[@]}"; do
       # check if the app is already installed - check for actual app bundle names
       app_installed=false
@@ -434,9 +437,10 @@ install_gui_apps() {
       fi
     done
   fi
-  install_mullvad="n"
-  read -p "Do you want to install the Mullvad apps? (y/n): " install_mullvad
-  if [[ "$install_mullvad" == "y" ]]; then
+  
+  # Install Mullvad apps based on stored preference
+  if [[ "$INSTALL_MULLVAD" == "y" ]]; then
+    echo "Installing Mullvad apps..."
     for app in "${mullvad_apps[@]}"; do
       echo "$app is not installed. Installing..."
       brew install --cask "$app"
@@ -578,6 +582,10 @@ main() {
         echo "Homebrew is not installed. Installing..."
         /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
     fi
+    
+    # Gather all user preferences before starting installations
+    gather_user_preferences
+    
     echo "Starting initial install..."
     install_terminal_apps
     install_cloud_drives
