@@ -90,8 +90,9 @@ install_gui_apps() {
   echo "1. Visual Studio Code"
   echo "2. Cursor (Default)"
   echo "3. Windsurf"
-  echo "4. None"
-  echo -n "Enter your choice (1-4)(Default: 2) (multiple choices separated by commas): "
+  echo "4. Claude Code (CLI)"
+  echo "5. None"
+  echo -n "Enter your choice (1-5)(Default: 2) (multiple choices separated by commas): "
   read editor_choice
   editor_choice=${editor_choice:-2}
 
@@ -142,6 +143,14 @@ install_gui_apps() {
             brew install --cask windsurf
           fi
           ;;
+        4)
+          if command -v claude-code &>/dev/null; then
+            echo "Claude Code is already installed. Skipping."
+          else
+            echo "Installing Claude Code..."
+            brew install --cask claude-code
+          fi
+          ;;
         *)
           echo "Invalid choice: $choice"
           ;;
@@ -165,6 +174,10 @@ install_gui_apps() {
         brew install --cask windsurf
         ;;
       4)
+        echo "Installing Claude Code..."
+        brew install claude-code
+        ;;
+      5)
         echo "No code editor selected."
         ;;
       *)
@@ -173,6 +186,85 @@ install_gui_apps() {
     esac
   done
 
+  # AI Apps
+  # Prompt to install ChatGpt, Claude, LLM Studio, and Qwen
+  # similar to coding assistance ask and allow user to select multiple or none
+  echo "Which code AI Apps would you like to install?"
+  echo "1. ChatGpt"
+  echo "2. Claude"
+  echo "3. LLM Studio"
+  echo "4. Qwen"
+  echo "5. None"
+  echo -n "Enter your choice (1-5)(Default: 5) (multiple choices separated by commas): "
+  read ai_choice
+  ai_choice=${ai_choice:-5}
+
+  # Convert comma separated choices to array, trim whitespace, remove duplicates (zsh compatible)
+  raw_choices=()
+  local IFS=','
+  for item in $ai_choice; do
+    raw_choices+=("$item")
+  done
+
+  typeset -A seen_ais
+  ai_choices=()
+  for raw in "${raw_choices[@]}"; do
+    choice=$(echo "$raw" | xargs)
+    if [[ -n "$choice" && -z "${seen_ais[$choice]}" ]]; then
+      ai_choices+=("$choice")
+      seen_ais[$choice]=1
+    fi
+  done
+
+  # If '5' (None) is selected, skip all installations
+  if [[ " ${ai_choices[@]} " =~ " 5 " ]]; then
+    echo "No AI App selected. Skipping AI App installation."
+  else
+    for choice in "${ai_choices[@]}"; do
+      case $choice in
+        1)
+          if command -v chatgpt &>/dev/null; then
+            echo "ChatGpt is already installed. Skipping."
+          else
+            echo "Installing ChatGpt..."
+            brew install --cask chatgpt
+          fi
+          ;;
+        2)
+          if command -v claude &>/dev/null; then
+            echo "Claude is already installed. Skipping."
+          else
+            echo "Installing Claude..."
+            brew install --cask claude
+          fi
+          ;;
+        3)
+          if command -v llm-studio &>/dev/null; then
+            echo "LLM Studio is already installed. Skipping."
+          else
+            echo "Installing LLM Studio..."
+            brew install --cask llm-studio
+          fi
+          ;;
+        4)
+          if command -v qwen &>/dev/null; then
+            echo "Qwen is already installed. Skipping."
+          else
+            echo "Installing Qwen..."
+            brew install --cask qwen
+          fi
+          ;;
+        5)
+          echo "No AI App selected."
+          ;;
+        *)
+          echo "Invalid choice: $choice"
+          ;;
+      esac
+    done
+  fi
+
+  
   # GUI Apps
   gui_apps=("element" "firefox" "keepassxc" "obsidian" "qbittorrent" "simplex" "tailscale" "docker" "warp" )
 
