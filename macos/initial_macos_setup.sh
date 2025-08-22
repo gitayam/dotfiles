@@ -48,7 +48,7 @@ gather_user_preferences() {
     raw_choices+=("$item")
   done
   
-  typeset -A seen_editors
+  declare -A seen_editors
   for raw in "${raw_choices[@]}"; do
     choice=$(echo "$raw" | xargs)
     if [[ -n "$choice" && -z "${seen_editors[$choice]}" ]]; then
@@ -77,7 +77,7 @@ gather_user_preferences() {
     raw_choices+=("$item")
   done
   
-  typeset -A seen_ais
+  declare -A seen_ais
   for raw in "${raw_choices[@]}"; do
     choice=$(echo "$raw" | xargs)
     if [[ -n "$choice" && -z "${seen_ais[$choice]}" ]]; then
@@ -111,7 +111,7 @@ gather_user_preferences() {
     raw_choices+=("$item")
   done
   
-  typeset -A seen_clouds
+  declare -A seen_clouds
   for raw in "${raw_choices[@]}"; do
     choice=$(echo "$raw" | xargs)
     if [[ -n "$choice" && -z "${seen_clouds[$choice]}" ]]; then
@@ -572,7 +572,173 @@ SQL
   done
 }
 
-
+configure_macos_settings() {
+  echo "======================================"
+  echo "Configuring macOS System Settings"
+  echo "======================================"
+  echo ""
+  
+  echo -n "Do you want to apply recommended macOS system configurations? (y/n)(Default: y): "
+  read APPLY_SETTINGS
+  APPLY_SETTINGS=${APPLY_SETTINGS:-y}
+  
+  if [[ "$APPLY_SETTINGS" != "y" ]]; then
+    echo "Skipping macOS system configuration."
+    return
+  fi
+  
+  echo "Applying macOS system configurations..."
+  
+  # Security Settings (1-8)
+  echo "Configuring security settings..."
+  
+  # 1. Enable FileVault disk encryption
+  if ! fdesetup status | grep -q "FileVault is On"; then
+    echo "Enabling FileVault disk encryption..."
+    sudo fdesetup enable -user "$USER" || echo "FileVault setup requires manual completion"
+  else
+    echo "FileVault already enabled"
+  fi
+  
+  # 2. Enable Firewall with stealth mode
+  echo "Configuring firewall..."
+  sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on
+  sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on
+  
+  # 3. Disable automatic login
+  echo "Disabling automatic login..."
+  sudo defaults delete /Library/Preferences/com.apple.loginwindow autoLoginUser 2>/dev/null || true
+  
+  # 4. Require password immediately after sleep/screensaver
+  echo "Setting password requirements..."
+  defaults write com.apple.screensaver askForPassword -int 1
+  defaults write com.apple.screensaver askForPasswordDelay -int 0
+  
+  # 5. Disable remote login services
+  echo "Disabling remote services..."
+  echo "⚠️  WARNING: This will disable SSH and Screen Sharing."
+  echo "If you are connected remotely (SSH, VNC, etc.), you will lose connection!"
+  echo "This does NOT affect:"
+  echo "  - Tailscale (uses WireGuard tunnels)"
+  echo "  - Cloudflare Tunnel/Zero Trust"
+  echo "  - VPN connections"
+  echo "  - Web-based remote access tools"
+  echo ""
+  echo -n "Do you want to disable remote login services? (y/yes/n/no)(Default: n): "
+  read DISABLE_REMOTE
+  DISABLE_REMOTE=${DISABLE_REMOTE:-n}
+  
+  if [[ "$DISABLE_REMOTE" =~ ^[Yy]([Ee][Ss])?$ ]]; then
+    echo "Disabling remote login and screen sharing..."
+    sudo systemsetup -setremotelogin off
+    sudo launchctl disable system/com.apple.screensharing 2>/dev/null || true
+    echo "✅ Remote services disabled"
+  else
+    echo "⏭️  Keeping remote services enabled"
+  fi
+  
+  # 6. Enable secure keyboard entry in Terminal
+  echo "Enabling secure keyboard entry..."
+  defaults write com.apple.terminal SecureKeyboardEntry -bool true
+  
+  # 7. Disable Siri data collection and suggestions
+  echo "Disabling Siri data collection..."
+  defaults write com.apple.assistant.support "Assistant Enabled" -bool false
+  defaults write com.apple.lookup.shared LookupSuggestionsDisabled -bool true
+  
+  # 8. Enable Gatekeeper
+  echo "Enabling Gatekeeper..."
+  sudo spctl --master-enable
+  
+  # Privacy & Cleanup (9-11)
+  echo "Configuring privacy settings..."
+  
+  # 9. Disable location services for system services
+  echo "Configuring location services..."
+  defaults write com.apple.locationmenu ShowSystemServices -bool false
+  
+  # 10. Configure Safari privacy settings
+  echo "Configuring Safari privacy..."
+  defaults write com.apple.Safari IncludeDevelopMenu -bool true
+  defaults write com.apple.Safari WebKitDeveloperExtrasEnabledPreferenceKey -bool true
+  defaults write com.apple.Safari SendDoNotTrackHTTPHeader -bool true
+  
+  # 11. Enable advanced security logging and auditing
+  echo "Enabling security auditing..."
+  sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.auditd.plist 2>/dev/null || true
+  sudo defaults write /Library/Preferences/com.apple.loginwindow LoginHook /usr/bin/logger
+  sudo defaults write /Library/Preferences/com.apple.loginwindow LogoutHook /usr/bin/logger
+  
+  # Convenience & Performance (12-17)
+  echo "Configuring system performance..."
+  
+  # 12. Disable Spotlight indexing of external drives
+  echo "Configuring Spotlight..."
+  sudo defaults write /.Spotlight-V100/VolumeConfiguration Exclusions -array "/Volumes" 2>/dev/null || true
+  
+  # 13. Enable tap to click and three-finger drag
+  echo "Configuring trackpad..."
+  defaults write com.apple.driver.AppleBluetoothMultitouch.trackpad Clicking -bool true
+  defaults write com.apple.AppleMultitouchTrackpad TrackpadThreeFingerDrag -bool true
+  
+  # 14. Show hidden files and file extensions
+  echo "Configuring Finder visibility..."
+  defaults write com.apple.finder AppleShowAllFiles -bool true
+  defaults write NSGlobalDomain AppleShowAllExtensions -bool true
+  
+  # 15. Disable window animations and speed up Mission Control
+  echo "Optimizing animations..."
+  defaults write com.apple.dock expose-animation-duration -float 0.1
+  defaults write com.apple.dock springboard-show-duration -float 0
+  defaults write com.apple.dock springboard-hide-duration -float 0
+  
+  # 16. Configure Finder preferences for power users
+  echo "Configuring Finder preferences..."
+  defaults write com.apple.finder ShowPathbar -bool true
+  defaults write com.apple.finder ShowStatusBar -bool true
+  defaults write com.apple.finder FXDefaultSearchScope -string "SCcf"
+  defaults write com.apple.finder FXPreferredViewStyle -string "Nlsv"
+  
+  # 17. Set screenshot location and format
+  echo "Configuring screenshots..."
+  mkdir -p ~/Pictures/Screenshots
+  defaults write com.apple.screencapture location ~/Pictures/Screenshots
+  defaults write com.apple.screencapture type -string "png"
+  
+  # System Preferences (18-20)
+  echo "Configuring system preferences..."
+  
+  # 18. Configure energy settings for optimal performance
+  echo "Configuring power management..."
+  sudo pmset -a displaysleep 10
+  sudo pmset -a sleep 30
+  sudo pmset -a hibernatemode 0
+  
+  # 19. Set timezone and enable automatic time sync
+  echo "Configuring time settings..."
+  sudo systemsetup -settimezone "America/New_York"
+  sudo sntp -sS time.apple.com
+  
+  # 20. Configure system-wide text and input preferences
+  echo "Configuring text input preferences..."
+  defaults write NSGlobalDomain NSAutomaticQuoteSubstitutionEnabled -bool false
+  defaults write NSGlobalDomain NSAutomaticDashSubstitutionEnabled -bool false
+  defaults write NSGlobalDomain NSAutomaticSpellingCorrectionEnabled -bool false
+  defaults write NSGlobalDomain NSAutomaticCapitalizationEnabled -bool false
+  defaults write NSGlobalDomain AppleLanguages -array "en-US"
+  defaults write NSGlobalDomain AppleLocale -string "en_US@currency=USD"
+  
+  # Restart affected services
+  echo "Restarting affected services..."
+  killall Finder 2>/dev/null || true
+  killall Dock 2>/dev/null || true
+  killall SystemUIServer 2>/dev/null || true
+  
+  echo ""
+  echo "✅ macOS system configuration complete!"
+  echo "⚠️  Some changes require a logout/restart to take full effect."
+  echo ""
+}
 
 main() {
     # Check if Homebrew is installed
@@ -591,6 +757,7 @@ main() {
     install_cloud_drives
     install_gui_apps
     add_bookmarks
+    configure_macos_settings
     # add bookmarks to all chromium based browsers
     echo "Syncing mac aliases and functions to ~/.zshrc"
     ./sync_mac_dotfiles.sh
