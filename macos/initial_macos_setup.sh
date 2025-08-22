@@ -84,6 +84,123 @@ install_simplex_chat() {
   fi
 }
 
+install_cloud_drives() {
+  # Prompt user for which Cloud Drive apps to install
+  echo "Which cloud drive apps would you like to install?"
+  echo "1. iCloud Drive (built-in)"
+  echo "2. Google Drive"
+  echo "3. Dropbox"
+  echo "4. pCloud"
+  echo "5. MEGA"
+  echo "6. OneDrive"
+  echo "7. Box"
+  echo "8. Sync.com"
+  echo "9. Syncthing"
+  echo "10. None"
+  echo -n "Enter your choice (1-10)(Default: 10) (multiple choices separated by commas): "
+  read cloud_choice
+  cloud_choice=${cloud_choice:-10}
+
+  # Convert comma separated choices to array, trim whitespace, remove duplicates (zsh compatible)
+  raw_choices=()
+  local IFS=','
+  for item in $cloud_choice; do
+    raw_choices+=("$item")
+  done
+
+  typeset -A seen_clouds
+  cloud_choices=()
+  for raw in "${raw_choices[@]}"; do
+    choice=$(echo "$raw" | xargs)
+    if [[ -n "$choice" && -z "${seen_clouds[$choice]}" ]]; then
+      cloud_choices+=("$choice")
+      seen_clouds[$choice]=1
+    fi
+  done
+
+  # If '10' (None) is selected, skip all installations
+  if [[ " ${cloud_choices[@]} " =~ " 10 " ]]; then
+    echo "No cloud drive apps selected. Skipping cloud drive installation."
+  else
+    for choice in "${cloud_choices[@]}"; do
+      case $choice in
+        1)
+          echo "iCloud Drive is built-in to macOS. No installation needed."
+          ;;
+        2)
+          if [[ -d "/Applications/Google Drive.app" ]]; then
+            echo "Google Drive is already installed. Skipping."
+          else
+            echo "Installing Google Drive..."
+            brew install --cask google-drive
+          fi
+          ;;
+        3)
+          if [[ -d "/Applications/Dropbox.app" ]]; then
+            echo "Dropbox is already installed. Skipping."
+          else
+            echo "Installing Dropbox..."
+            brew install --cask dropbox
+          fi
+          ;;
+        4)
+          if [[ -d "/Applications/pCloud Drive.app" ]]; then
+            echo "pCloud is already installed. Skipping."
+          else
+            echo "Installing pCloud..."
+            brew install --cask pcloud-drive
+          fi
+          ;;
+        5)
+          if [[ -d "/Applications/MEGAsync.app" ]]; then
+            echo "MEGA is already installed. Skipping."
+          else
+            echo "Installing MEGA..."
+            brew install --cask megasync
+          fi
+          ;;
+        6)
+          if [[ -d "/Applications/OneDrive.app" ]]; then
+            echo "OneDrive is already installed. Skipping."
+          else
+            echo "Installing OneDrive..."
+            brew install --cask onedrive
+          fi
+          ;;
+        7)
+          if [[ -d "/Applications/Box.app" ]]; then
+            echo "Box is already installed. Skipping."
+          else
+            echo "Installing Box..."
+            brew install --cask box-drive
+          fi
+          ;;
+        8)
+          if [[ -d "/Applications/Sync.app" ]]; then
+            echo "Sync.com is already installed. Skipping."
+          else
+            echo "Installing Sync.com..."
+            brew install --cask sync
+          fi
+          ;;
+        9)
+          if command -v syncthing &>/dev/null || [[ -d "/Applications/Syncthing.app" ]]; then
+            echo "Syncthing is already installed. Skipping."
+          else
+            echo "Installing Syncthing..."
+            brew install syncthing
+            brew services start syncthing
+            echo "Syncthing installed and started. Access the web UI at http://localhost:8384"
+          fi
+          ;;
+        *)
+          echo "Invalid choice: $choice"
+          ;;
+      esac
+    done
+  fi
+}
+
 install_gui_apps() {
   # Prompt user for which Code Editor to install
   echo "Which code editor would you like to install?"
@@ -284,8 +401,32 @@ install_gui_apps() {
   read -p "Do you want to install the Proton apps? (y/n): " install_proton
   if [[ "$install_proton" == "y" ]]; then
     for app in "${proton_apps[@]}"; do
-      # check if the app is already installed
-      if [[ -d "/Applications/$app.app" ]]; then
+      # check if the app is already installed - check for actual app bundle names
+      app_installed=false
+      case "$app" in
+        "protonvpn")
+          if [[ -d "/Applications/Proton VPN.app" ]]; then
+            app_installed=true
+          fi
+          ;;
+        "proton-mail")
+          if [[ -d "/Applications/Proton Mail.app" ]]; then
+            app_installed=true
+          fi
+          ;;
+        "proton-pass")
+          if [[ -d "/Applications/Proton Pass.app" ]]; then
+            app_installed=true
+          fi
+          ;;
+        "proton-drive")
+          if [[ -d "/Applications/Proton Drive.app" ]]; then
+            app_installed=true
+          fi
+          ;;
+      esac
+      
+      if [[ "$app_installed" == true ]]; then
         echo "$app is already installed."
       else
         echo "$app is not installed. Installing..."
@@ -353,9 +494,11 @@ add_bookmarks() {
       url="${bookmark_urls[$i]}"
       osascript <<EOD
       tell application "Safari"
-        make new document
-        delay 1
-        tell front document
+        activate
+        if (count of windows) = 0 then
+          make new document
+        end if
+        tell front window
           set current tab to (make new tab with properties {URL:"$url"})
         end tell
       end tell
@@ -437,6 +580,7 @@ main() {
     fi
     echo "Starting initial install..."
     install_terminal_apps
+    install_cloud_drives
     install_gui_apps
     add_bookmarks
     # add bookmarks to all chromium based browsers
