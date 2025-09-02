@@ -1281,10 +1281,10 @@ cfprotect_function() {
     
     echo "🔐 Uploading password-protected file..."
     
-    # Ensure protected-files bucket exists
-    if ! wrangler r2 bucket list 2>/dev/null | grep -q "protected-files"; then
+    # Ensure protected-files bucket exists  
+    if ! wrangler r2 bucket list 2>/dev/null | \grep -q "protected-files"; then
         echo "📦 Creating protected-files bucket..."
-        wrangler r2 bucket create protected-files 2>/dev/null
+        wrangler r2 bucket create protected-files 2>/dev/null || echo "Bucket may already exist"
     fi
     
     # Generate password hash
@@ -1295,18 +1295,21 @@ cfprotect_function() {
     
     # Upload file with password hash in metadata
     echo "📤 Uploading to protected storage..."
-    if wrangler r2 object put "protected-files/$protected_name" \
-        --file="$file_path" \
-        --custom-metadata="passwordHash=$password_hash" 2>/dev/null; then
+    if wrangler r2 object put "protected-files/${protected_name}" \
+        --file "$file_path" \
+        --content-type "application/octet-stream" \
+        --remote 2>/dev/null; then
+        
+        # Store password hash in KV
+        echo "🔑 Storing password hash..."
+        wrangler kv key put "hash_${protected_name}" "$password_hash" --namespace-id "33eebef30dd54140a0485f4ae6dd9e9d" --remote
         
         # Deploy the worker if not already deployed
-        if ! wrangler deployments list --name="protected-files" 2>/dev/null | grep -q "protected-files"; then
-            echo "🚀 Deploying password protection worker..."
-            wrangler deploy --config wrangler-protected.toml 2>/dev/null
-        fi
+        echo "🚀 Deploying password protection worker..."
+        wrangler deploy --config wrangler-protected.toml
         
         # Get the worker URL
-        local worker_url="https://protected-files.${USER}.workers.dev"
+        local worker_url="https://protected-files.wemea-5ahhf.workers.dev"
         local protected_url="${worker_url}/${protected_name}"
         
         echo ""
