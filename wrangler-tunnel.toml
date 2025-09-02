@@ -1,0 +1,21 @@
+# Wrangler Configuration for Secure Tunnel Worker
+name = "secure-tunnel"
+main = "src/secure-tunnel.js"
+compatibility_date = "2024-09-02"
+compatibility_flags = ["nodejs_compat"]
+
+# Worker configuration
+workers_dev = true
+
+# KV namespace for tunnel configurations
+[[kv_namespaces]]
+binding = "TUNNEL_CONFIG"
+id = "b7d922de8ed243dbaabdb1aaab6227b5"
+
+# Environment variables
+[vars]
+ENVIRONMENT = "production"
+SERVICE_NAME = "Secure Tunnel Service"
+
+# Custom domain (optional)
+# route = "tunnel.yourdomain.com/*"
