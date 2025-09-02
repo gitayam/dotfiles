@@ -706,50 +706,250 @@ alias openport="funnel -d -p"
 
 # Cloudflare tunnel for sharing local services
 cftunnel_function() {
-    local port=${1:-8080}
-    local protocol=${2:-http}
+    local port=""
+    local password=""
+    local description=""
+    local use_worker=true
+    local legacy_mode=false
     
-    # Process options
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-        cat << 'EOF'
-Usage: cftunnel [PORT] [PROTOCOL]
-Share a local service over the internet using Cloudflare Tunnel.
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -p|--password)
+                password="$2"
+                shift 2
+                ;;
+            -d|--description)
+                description="$2"
+                shift 2
+                ;;
+            --legacy)
+                legacy_mode=true
+                use_worker=false
+                shift
+                ;;
+            -h|--help)
+                cat << 'EOF'
+Usage: cftunnel [OPTIONS] PORT
+
+Create secure, password-protected tunnels using Cloudflare Workers.
 
 Arguments:
-  PORT      Port number to expose (default: 8080)
-  PROTOCOL  Protocol to use: http or https (default: http)
+  PORT                        Port number to expose (required)
+
+Options:
+  -p, --password PASS        Password protect the tunnel (required)
+  -d, --description DESC     Description for the tunnel (optional)
+  --legacy                   Use legacy cloudflared tunnel instead of Worker
+  -h, --help                Show this help message
 
 Examples:
-  cftunnel              # Share localhost:8080 via HTTP
-  cftunnel 3000         # Share localhost:3000 via HTTP
-  cftunnel 3001 https   # Share localhost:3001 via HTTPS
-  cftunnel -h           # Show this help message
+  cftunnel -p secret123 8080              # Secure tunnel to port 8080
+  cftunnel -p mypass -d "My App" 3000     # Tunnel with custom description
+  cftunnel --legacy 8080                  # Use old tunnel method (not recommended)
+
+Features:
+  🔐 Password authentication required
+  🌐 Persistent URLs (no temporary links)
+  ⚡ Powered by Cloudflare's global network
+  🛡️ End-to-end encryption
+  📊 Status monitoring and management
+
+Note: Password protection is now mandatory for security.
 EOF
-        return 0
-    fi
+                return 0
+                ;;
+            *)
+                if [[ -z "$port" ]]; then
+                    port="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
     
-    # Check if cloudflared is installed
-    if ! command -v cloudflared &> /dev/null; then
-        echo "Error: cloudflared is not installed"
-        echo "You can install it with:"
-        echo "  brew install cloudflared"
+    # Validate required arguments
+    if [[ -z "$port" ]]; then
+        echo "❌ Error: Port number is required"
+        echo "Usage: cftunnel -p PASSWORD PORT"
+        echo "Use 'cftunnel -h' for help"
         return 1
     fi
     
-    local url="${protocol}://localhost:${port}"
+    if [[ "$use_worker" == true && -z "$password" ]]; then
+        echo "❌ Error: Password is required for secure tunnels"
+        echo "Usage: cftunnel -p PASSWORD PORT"
+        echo "Use '--legacy' for unprotected tunnels (not recommended)"
+        return 1
+    fi
     
-    echo "Starting Cloudflare tunnel for ${url}..."
-    echo "Press Ctrl+C to stop the tunnel"
-    echo ""
+    # Validate port number
+    if ! [[ "$port" =~ ^[0-9]+$ ]] || [[ "$port" -lt 1 ]] || [[ "$port" -gt 65535 ]]; then
+        echo "❌ Error: Invalid port number '$port'"
+        echo "Port must be a number between 1 and 65535"
+        return 1
+    fi
     
-    # Start the cloudflare tunnel
-    cloudflared tunnel --url "$url"
+    if [[ "$use_worker" == true ]]; then
+        echo "🚀 Creating secure Worker-based tunnel..."
+        echo "🎯 Target: localhost:$port"
+        echo "🔑 Password: $password"
+        if [[ -n "$description" ]]; then
+            echo "📝 Description: $description"
+        fi
+        echo ""
+        
+        # Check if Node.js is available
+        if ! command -v node &> /dev/null; then
+            echo "❌ Error: Node.js is required for Worker tunnels"
+            echo "Install Node.js or use '--legacy' for basic tunnels"
+            return 1
+        fi
+        
+        # Check for multi-user client
+        if [[ -f "src/multi-user-client.js" ]]; then
+            # Use multi-user client for enhanced functionality
+            echo "🌟 Multi-user tunnel mode available"
+            echo "💡 To create a multi-user tunnel, use:"
+            echo "   node src/multi-user-client.js create $port admin123 \"user1:pass1;user2:pass2\" \"$description\""
+            echo ""
+            echo "🔄 Using single-user mode for now..."
+        fi
+        
+        # Use the tunnel client to register with Worker
+        node src/tunnel-client.js "$port" "$password" "$description"
+        
+    else
+        # Legacy mode
+        echo "⚠️  Using legacy tunnel mode (not recommended)"
+        echo "🌍 Starting public Cloudflare tunnel for localhost:$port..."
+        
+        # Check if cloudflared is installed
+        if ! command -v cloudflared &> /dev/null; then
+            echo "❌ Error: cloudflared is not installed"
+            echo "You can install it with:"
+            echo "  brew install cloudflared"
+            return 1
+        fi
+        
+        cloudflared tunnel --url "http://localhost:$port"
+    fi
+}
+
+# Multi-user tunnel function
+cfmulti_function() {
+    local port=""
+    local admin_password=""
+    local users=""
+    local description=""
+    local max_users="10"
+    local command="create"
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            create|adduser|users)
+                command="$1"
+                shift
+                ;;
+            -a|--admin)
+                admin_password="$2"
+                shift 2
+                ;;
+            -u|--users)
+                users="$2"
+                shift 2
+                ;;
+            -d|--description)
+                description="$2"
+                shift 2
+                ;;
+            -m|--max-users)
+                max_users="$2"
+                shift 2
+                ;;
+            -h|--help)
+                cat << 'EOF'
+Usage: cfmulti [COMMAND] [OPTIONS] PORT
+
+Create and manage multi-user secure tunnels with individual credentials.
+
+Commands:
+  create              Create a new multi-user tunnel (default)
+  adduser TUNNEL_ID   Add user to existing tunnel
+  users TUNNEL_ID     List users in tunnel
+
+Options:
+  -a, --admin PWD     Admin password for tunnel management
+  -u, --users USERS   User credentials (user1:pass1;user2:pass2)
+  -d, --description   Description for the tunnel
+  -m, --max-users N   Maximum number of users (default: 10)
+
+Examples:
+  cfmulti create 8080 -a admin123 -u "alice:secret;bob:pass123" -d "Team App"
+  cfmulti adduser swift-eagle-123 -a admin123
+  cfmulti users swift-eagle-123 -a admin123
+
+User Format:
+  Simple: username:password
+  With permissions: username:password:read,write
+  Multiple: user1:pass1;user2:pass2:admin
+EOF
+                return 0
+                ;;
+            *)
+                if [[ -z "$port" ]] && [[ "$1" =~ ^[0-9]+$ ]]; then
+                    port="$1"
+                else
+                    echo "❌ Unknown option: $1"
+                    return 1
+                fi
+                shift
+                ;;
+        esac
+    done
+    
+    # Check if Node.js is available
+    if ! command -v node &> /dev/null; then
+        echo "❌ Error: Node.js is required for multi-user tunnels"
+        return 1
+    fi
+    
+    # Check if multi-user client exists
+    if [[ ! -f "src/multi-user-client.js" ]]; then
+        echo "❌ Error: Multi-user client not found"
+        echo "Please ensure src/multi-user-client.js is available"
+        return 1
+    fi
+    
+    # Handle different commands
+    case "$command" in
+        create)
+            if [[ -z "$port" ]] || [[ -z "$admin_password" ]] || [[ -z "$users" ]]; then
+                echo "❌ Missing required arguments for create command"
+                echo "Usage: cfmulti create PORT -a admin_password -u \"user1:pass1;user2:pass2\""
+                return 1
+            fi
+            
+            echo "🚀 Creating multi-user tunnel for port $port..."
+            node src/multi-user-client.js create "$port" "$admin_password" "$users" "$description" "$max_users"
+            ;;
+        adduser)
+            echo "➕ Adding user to tunnel..."
+            node src/multi-user-client.js adduser "$@"
+            ;;
+        users)
+            echo "👥 Listing tunnel users..."
+            node src/multi-user-client.js users "$@"
+            ;;
+    esac
 }
 
 # Aliases for cloudflare tunnel
 alias cftunnel_share=cftunnel  # Tunnel sharing (renamed to avoid conflict)
 alias cloudshare=cftunnel
 alias cft=cftunnel
+alias cfmulti=cfmulti_function  # Multi-user tunnels
 
 # ----------------------
 # Cloudflare Wrangler Functions
@@ -1080,13 +1280,20 @@ cffiles_function() {
     local bucket_name="${1:-files}"
     local prefix="$2"
     
-    echo "📁 Listing files in R2 bucket: $bucket_name"
+    echo "📁 Listing available R2 buckets:"
+    wrangler r2 bucket list
     
-    if [[ -n "$prefix" ]]; then
-        echo "🔍 Prefix filter: $prefix"
-        wrangler r2 object list "$bucket_name" --prefix="$prefix"
-    else
-        wrangler r2 object list "$bucket_name"
+    echo ""
+    echo "💡 To list objects in a bucket, Wrangler v4 requires individual object operations."
+    echo "   Available buckets shown above."
+    echo ""
+    echo "🔍 To see bucket contents, try:"
+    echo "   - cfbackup (to backup and see files)"
+    echo "   - Check Cloudflare Dashboard → R2 → Buckets"
+    echo ""
+    if [[ -n "$bucket_name" && "$bucket_name" != "files" ]]; then
+        echo "📊 Getting info for bucket: $bucket_name"
+        wrangler r2 bucket info "$bucket_name" 2>/dev/null || echo "❌ Bucket '$bucket_name' not found or inaccessible"
     fi
 }
 
