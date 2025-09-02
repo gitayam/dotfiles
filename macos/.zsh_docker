@@ -1,0 +1,129 @@
+# ----------------------
+# Docker Aliases and Functions
+# ----------------------
+
+# Docker Compose aliases
+alias dc="docker compose"
+alias dcp="dc pull" # pull the docker compose services
+alias dcs="docker compose stop"
+alias dcrm="docker compose rm"
+alias docker-compose="dc" # alias for docker compose instead of docker-compose
+alias dcu="dcp && dc up -d" # pull and start the docker compose services
+alias dcd="dcs;dcrm;dc down --volumes" # stop the docker compose services
+# docker compose down and remove the containers, networks, and volumes for that compose file
+alias dcdr="dcd --volumes; docker network rm \$(docker network ls -q); docker volume rm \$(docker volume ls -q)" # remove all docker networks and volumes
+alias dcb="dcu --build" # build the docker compose services
+alias dcr="dcd && dcu" # stop and start the docker compose services
+
+# Docker network and cleanup aliases
+alias dcnet="docker network prune"
+alias dcvol="docker volume prune"
+alias dcpur="dcd && dcp && dcnet && dcvol" # stop and pull the docker compose services
+
+# Docker container management
+alias d="docker" # alias for docker
+alias dps="d ps"
+alias dbash="d exec -it \$1 /bin/bash"
+alias dsh="d exec -it \$1 /bin/sh" 
+
+# Docker exec helper
+
+### Interactive docker exec helper
+dexec() {
+  if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    echo "Usage: dexec [container] [command]"
+    echo "Run a command inside a Docker container."
+    echo "If no container is provided, select from running containers."
+    return 0
+  fi
+
+  local container="$1"
+  shift
+  if [[ -z "$container" ]]; then
+    mapfile -t containers < <(docker ps --format '{{.Names}}')
+    if [[ ${#containers[@]} -eq 0 ]]; then
+      echo "No running containers found."
+      return 1
+    fi
+    echo "Select a container:"
+    select c in "${containers[@]}" "Cancel"; do
+      if [[ -n "$c" && "$c" != "Cancel" ]]; then
+        container="$c"
+        break
+      elif [[ "$c" == "Cancel" ]]; then
+        return 1
+      else
+        echo "Invalid selection"
+      fi
+    done
+  fi
+
+  local cmd="${*:-/bin/bash}"
+  docker exec -it "$container" $cmd
+}
+# Docker auto for docker compose up -d --build if a docker-compose.yml file is found in the current directory
+docker_auto() {
+    """
+    This function will automatically run docker compose up -d --build if a docker-compose.yml file is found in the current directory.
+    If a Dockerfile is also found, it will run docker compose up -d --build
+    Additionally, after starting, it will print a clickable localhost:PORT link if a port can be detected from the compose file.
+    """
+    # Helper: Try to extract a port from a compose file
+    print_localhost_link() {
+        local compose_file=""
+        for f in docker-compose.yml docker-compose.yaml compose.yml compose.yaml; do
+            if [ -f "$f" ]; then
+                compose_file="$f"
+                break
+            fi
+        done
+        if [ -n "$compose_file" ]; then
+            local port=""
+            # Try yq if available
+            if command -v yq >/dev/null 2>&1; then
+                # Extract the first host port from any service's ports section
+                port=$(yq '(.services[]?.ports[]? // []) | select(.) | sub("^([0-9]+):.*$"; "\\1")' "$compose_file" | grep -Eo '^[0-9]{2,5}$' | head -n1)
+            fi
+            # If yq not found or no port found, try improved grep/sed fallback
+            if [ -z "$port" ]; then
+                port=$(grep -E 'ports:|^[[:space:]]*-?[[:space:]]*[0-9]+:[0-9]+' "$compose_file" | \
+                    awk '/ports:/ {p=1; next} p && /^[[:space:]]*-[[:space:]]*[0-9]+:[0-9]+/ {gsub(/[^0-9:]/,""); split($1,a,":"); print a[1]; exit}' )
+            fi
+            # If still not found, try another fallback for quoted ports
+            if [ -z "$port" ]; then
+                port=$(grep -E '^[[:space:]]*-?[[:space:]]*"[0-9]+:[0-9]+"' "$compose_file" | sed -E 's/.*"([0-9]{2,5}):[0-9]{2,5}".*/\1/' | head -n1)
+            fi
+            if [ -n "$port" ]; then
+                echo "Open your app at: http://localhost:$port"
+            else
+                echo "App started! (Could not auto-detect port)"
+                echo "If your service exposes a port, open: http://localhost:PORT (replace PORT with the correct value)"
+            fi
+        else
+            echo "App started! (No compose file to detect port from)"
+        fi
+    }
+
+    # Check for various Docker Compose file variations
+    if [ -f "docker-compose.yml" ] || [ -f "docker-compose.yaml" ] || [ -f "compose.yml" ] || [ -f "compose.yaml" ]; then
+        echo "Docker Compose file found in current directory"
+        # If both Dockerfile and docker-compose file exist
+        if [ -f "Dockerfile" ]; then
+            echo "Dockerfile also found - running docker compose up with build"
+            docker compose up -d --build
+            print_localhost_link
+        else
+            # Just docker-compose without Dockerfile
+            echo "Running docker compose up -d"
+            docker compose up -d
+            print_localhost_link
+        fi
+    elif [ -f "Dockerfile" ]; then
+        # Only Dockerfile exists, no compose file
+        echo "Only Dockerfile found in current directory"
+        echo "You may want to build this image manually with: docker build -t <name> ."
+        echo "After running the container, open: http://localhost:PORT (replace PORT with the correct value)"
+    else
+        echo "No Docker Compose file or Dockerfile found in current directory"
+    fi
+}

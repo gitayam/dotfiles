@@ -1,0 +1,1220 @@
+# ----------------------
+# Git Aliases
+# ----------------------
+alias gita="git_add"
+alias gitcg="git_commit"
+alias gitp="git push"
+alias gitpl="git pull"
+alias gitco="git checkout"
+alias gitcb="git checkout -b"
+alias gitlog="git log --oneline --graph --all"
+alias gitup="update_git_repos"
+alias gitcl="git_clone"
+alias gitcr="create_repo"
+# ----------------------
+# Git Functions
+# ----------------------
+git_commit(){
+    if [[ -z "$1" ]]; then
+        echo "No commit message provided. Opening editor for interactive commit message."
+        git commit
+    else
+        git commit -m "$1"
+    fi
+}
+
+git_add(){
+    if [[ -z "$1" ]]; then
+        echo "No files specified. Defaulting to 'git add .'"
+        git add .
+    else
+        git add "$@"
+    fi
+}
+
+# Undo last local commit, keep changes staged
+git_undo() {
+  git reset --soft HEAD~1
+}
+
+# Delete all merged local branches (except main)
+git_clean_merged() {
+  git branch --merged | grep -vE '(^\*|main|master|develop)' | xargs -r git branch -d
+}
+
+# Show list of branches sorted by last commit date
+git_recent_branches() {
+  git for-each-ref --sort=-committerdate refs/heads/ --format='%(refname:short) — %(committerdate:relative)'
+}
+
+update_git_repos(){
+    # Default variables
+    search_path="$HOME/Documents/Git/"  # Default search path
+    exclude_paths=()                   # Array to store excluded paths
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --search-path)
+                search_path="$2"
+                shift 2
+                ;;
+            --exclude)
+                exclude_paths+=("$2")
+                shift 2
+                ;;
+            *)
+                echo "Unknown argument: $1"
+                return 1
+                ;;
+        esac
+    done
+
+    # Build the find command
+    find_cmd="find \"$search_path\" -type d -name \".git\""
+
+    for exclude in "${exclude_paths[@]}"; do
+        find_cmd+=" ! -path \"$exclude/*\""
+    done
+
+    find_cmd+=" -print"
+
+    # Execute the find command and update repositories
+    eval "$find_cmd" | while IFS= read -r gitdir; do
+        repo_dir=$(dirname "$gitdir")
+
+        # Ensure the directory is marked safe for Git operations
+        git config --global --add safe.directory "$repo_dir"
+
+        echo "Updating repository in $repo_dir"
+        cd "$repo_dir" || {
+            echo "Failed to access $repo_dir"
+            continue
+        }
+        git pull --rebase || echo "Failed to update $repo_dir"
+    done
+}
+
+## Git Clone Function
+### Usage: git_clone repo_name or url [destination_path]
+alias clone_repo="git_clone"
+### from any directory will clone the repo to the correct directory in the ~/Documents/Git/ directory
+git_clone(){
+    if [[ -z "$1" ]]; then
+        echo "No repository name or URL provided"
+        echo "Usage: git_clone repo_name_or_url [repo2] [repo3] ... [destination_path]"
+        echo "Examples:"
+        echo "  git_clone user/repo"
+        echo "  git_clone https://github.com/user/repo"
+        echo "  git_clone repo1 repo2 repo3 ./target_dir"
+        echo "  git_clone https://github.com/user/repo1 https://github.com/user/repo2"
+        return 1
+    fi
+
+    # Set default base directory
+    local base_dir="$HOME/Documents/Git"
+    
+    # Convert arguments to array
+    local args=("$@")
+    local repos=()
+    local custom_path=""
+    local multiple_repos=false
+    
+    # Check if last argument is a path (starts with ./ or / or ~)
+    local last_arg="${args[-1]}"
+    if [[ "$last_arg" =~ ^(\./|/|~) ]] || [[ "$last_arg" == "." ]]; then
+        custom_path="$last_arg"
+        # Remove last argument from repos list
+        repos=("${args[@]:0:$((${#args[@]}-1))}")
+    else
+        repos=("${args[@]}")
+    fi
+    
+    # Check if we have multiple repositories
+    if [[ ${#repos[@]} -gt 1 ]]; then
+        multiple_repos=true
+    fi
+    
+    # If custom path is provided, make it absolute
+    if [[ -n "$custom_path" ]]; then
+        if [[ "$custom_path" == "." ]]; then
+            custom_path="$(pwd)"
+        elif [[ "$custom_path" == "./" ]]; then
+            custom_path="$(pwd)"
+        elif [[ ! "$custom_path" =~ ^/ ]] && [[ ! "$custom_path" =~ ^~ ]]; then
+            custom_path="$(pwd)/$custom_path"
+        elif [[ "$custom_path" =~ ^~ ]]; then
+            custom_path="${custom_path/#\~/$HOME}"
+        fi
+        # Remove trailing slash if present
+        custom_path="${custom_path%/}"
+    fi
+
+    #check if gh is installed
+    if [[ -z "$(command -v gh)" ]]; then
+        echo "GitHub CLI (gh) is not installed."
+        echo "Would you like to install it? (y/n): "
+        read install_gh
+        if [[ $install_gh =~ ^[Yy]$ ]]; then
+            brew install gh
+        fi
+        return 1
+    fi
+    #check if gh is setup
+    if ! gh auth status &>/dev/null; then
+        echo "GitHub CLI (gh) is not logged in."
+        echo "Would you like to login? (y/n): "
+        read login_gh
+        if [[ $login_gh =~ ^[Yy]$ ]]; then
+            gh auth login
+        fi
+        return 1
+    fi
+
+    # Track successful clones and final directory
+    local successful_clones=()
+    local failed_clones=()
+    local final_directory=""
+
+    # Process each repository
+    for input in "${repos[@]}"; do
+        echo "Processing repository: $input"
+        local repo_url=""
+        local repo_name=""
+
+        # Handle 'gh repo clone user/repo' style
+        if [[ "$input" =~ ^gh[[:space:]]+repo[[:space:]]+clone[[:space:]]+([a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)$ ]]; then
+            if command -v gh &> /dev/null; then
+                user_repo=${BASH_REMATCH[1]}
+                repo_name=$(basename "$user_repo")
+                
+                # Determine target directory
+                local target_dir=""
+                if [[ -n "$custom_path" ]]; then
+                    target_dir="$custom_path/$repo_name"
+                else
+                    target_dir="$base_dir/$repo_name"
+                fi
+                
+                if [[ -d "$target_dir" ]]; then
+                    echo "Repository already exists: $target_dir"
+                    failed_clones+=("$repo_name (already exists)")
+                    continue
+                fi
+                
+                gh repo clone "$user_repo" "$target_dir" || {
+                    echo "Failed to clone repository with gh"
+                    failed_clones+=("$repo_name")
+                    continue
+                }
+                echo "Successfully cloned $repo_name to $target_dir"
+                successful_clones+=("$repo_name")
+                final_directory="$(dirname "$target_dir")"
+                continue
+            else
+                echo "GitHub CLI (gh) is not installed."
+                failed_clones+=("$input")
+                continue
+            fi
+        fi
+
+        # SSH URL (git@...)
+        if [[ "$input" =~ ^git@([^:]+):[^/]+/.+(\.git)?$ ]]; then
+            repo_url="$input"
+            repo_name=$(basename "$input")
+            repo_name="${repo_name%.git}"
+            ssh_host="${BASH_REMATCH[1]}"
+            # Only check known_hosts if file exists
+            if [[ -f "$HOME/.ssh/known_hosts" ]]; then
+                if ! ssh-keygen -F "$ssh_host" > /dev/null; then
+                    echo "\n[INFO] You are connecting to $ssh_host via SSH for the first time."
+                    echo "You may see an authenticity prompt. This is normal and is a security feature of SSH."
+                    echo "If you trust this host, type 'yes' at the prompt.\n"
+                fi
+            fi
+        # HTTPS URL (supports github.com, codeberg.org, and other git hosts)
+        elif [[ "$input" =~ ^https?://[^/]+/[^/]+/[^/]+(\.git)?$ ]]; then
+            repo_url="$input"
+            repo_name=$(basename "$input")
+            repo_name="${repo_name%.git}"
+        # user/repo shorthand (assumes GitHub)
+        elif [[ "$input" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+(\.git)?$ ]]; then
+            repo_name=$(basename "$input")
+            repo_name="${repo_name%.git}"
+            # Only append .git if not already present
+            if [[ "$input" == *.git ]]; then
+                repo_url="https://github.com/$input"
+            else
+                repo_url="https://github.com/$input.git"
+            fi
+        # bare repo name
+        else
+            repo_name="$input"
+            repo_url="https://github.com/your-username/$repo_name.git"
+        fi
+
+        # Check if the repo name is a valid directory name
+        if [[ ! "$repo_name" =~ ^[a-zA-Z0-9_.-]+$ ]]; then
+            echo "Invalid repository name: $repo_name"
+            failed_clones+=("$repo_name (invalid name)")
+            continue
+        fi
+
+        # Determine target directory
+        local target_dir=""
+        if [[ -n "$custom_path" ]]; then
+            target_dir="$custom_path/$repo_name"
+        else
+            target_dir="$base_dir/$repo_name"
+        fi
+        
+        # Check if the target directory already exists
+        if [[ -d "$target_dir" ]]; then
+            echo "Repository already exists: $target_dir"
+            failed_clones+=("$repo_name (already exists)")
+            continue
+        fi
+
+        # Create parent directory if it doesn't exist
+        mkdir -p "$(dirname "$target_dir")"
+
+        # Clone the repo to the target directory
+        echo "Cloning $repo_name to $target_dir..."
+        if git clone "$repo_url" "$target_dir"; then
+            echo "Successfully cloned $repo_name to $target_dir"
+            successful_clones+=("$repo_name")
+            final_directory="$(dirname "$target_dir")"
+        else
+            echo "Failed to clone repository: $repo_name"
+            failed_clones+=("$repo_name")
+        fi
+    done
+
+    # Summary
+    echo "\n=== Clone Summary ==="
+    if [[ ${#successful_clones[@]} -gt 0 ]]; then
+        echo "✅ Successfully cloned ${#successful_clones[@]} repositories:"
+        for repo in "${successful_clones[@]}"; do
+            echo "  - $repo"
+        done
+    fi
+    
+    if [[ ${#failed_clones[@]} -gt 0 ]]; then
+        echo "❌ Failed to clone ${#failed_clones[@]} repositories:"
+        for repo in "${failed_clones[@]}"; do
+            echo "  - $repo"
+        done
+    fi
+
+    # Handle post-clone actions
+    if [[ ${#successful_clones[@]} -gt 0 ]]; then
+        if [[ "$multiple_repos" == true ]]; then
+            # Multiple repos: show directory listing
+            echo "\n📁 Repository listing in $final_directory:"
+            cd "$final_directory" || return 1
+            ls -lstr
+        else
+            # Single repo: change to directory and offer to open in editor
+            local single_repo_dir=""
+            if [[ -n "$custom_path" ]]; then
+                single_repo_dir="$custom_path/${successful_clones[0]}"
+            else
+                single_repo_dir="$base_dir/${successful_clones[0]}"
+            fi
+            cd "$single_repo_dir" || return 1
+            open_repo_dir
+        fi
+    fi
+}
+
+# Helper to prompt and open repo dir in editor
+open_repo_dir(){
+    echo "Do you want to open the repository? (Y/n): "
+    read open_in
+    open_in=${open_in:-y}  # Default to 'y' if no input is provided
+
+    if [[ $open_in =~ ^[Yy]$ ]]; then
+        editors=()
+        editor_labels=()
+        if command -v code &> /dev/null; then
+            editors+=("code")
+            editor_labels+=("VS Code (v)")
+        fi
+        if command -v cursor &> /dev/null; then
+            editors+=("cursor")
+            editor_labels+=("Cursor (c)")
+        fi
+        if command -v windsurf &> /dev/null; then
+            editors+=("windsurf")
+            editor_labels+=("Windsurf (w)")
+        fi
+
+        if [[ ${#editors[@]} -eq 0 ]]; then
+            echo "No supported editors (VS Code, Cursor, Windsurf) are available."
+        elif [[ ${#editors[@]} -eq 1 ]]; then
+            ${editors[0]} .
+        else
+            echo "Available editors: ${editor_labels[*]}"
+            echo -n "Open with? (v/c/w): "
+            read editor_choice
+            editor_choice=${editor_choice:-v}  # Default to 'v' if no input is provided
+            case $editor_choice in
+                v)
+                    if command -v code &> /dev/null; then code .; else echo "VS Code not found."; fi
+                    ;;
+                c)
+                    if command -v cursor &> /dev/null; then cursor .; else echo "Cursor not found."; fi
+                    ;;
+                w)
+                    if command -v windsurf &> /dev/null; then windsurf .; else echo "Windsurf not found."; fi
+                    ;;
+                *)
+                    echo "Invalid choice."
+                    ;;
+            esac
+        fi
+    fi
+}
+
+
+# ----------------------
+# GitHub Repository Management
+# ----------------------
+
+# Helper function to handle existing repositories
+handle_existing_repo() {
+    local repo_name="$1"
+    local base_dir="$2"
+    local repo_path="$base_dir/$repo_name"
+    
+    echo ""
+    echo "Repository '$repo_name' already exists!"
+    echo "Checking if you have a local copy..."
+    echo ""
+    
+    if [[ -d "$repo_path" ]]; then
+        echo "Found local repository at: $repo_path"
+        cd "$repo_path" || return 1
+        
+        echo ""
+        echo "Repository Analysis:"
+        echo "==================="
+        
+        echo "Remote URL:"
+        git remote -v 2>/dev/null | head -2 || echo "  No remote configured"
+        
+        echo ""
+        echo "Directory Contents:"
+        ls -lstra
+        
+        echo ""
+        echo "Git Status:"
+        git status 2>/dev/null || echo "  Not a git repository"
+        
+        echo ""
+        echo "Recent Commits:"
+        git log --oneline -5 2>/dev/null || echo "  No commits found"
+        
+        echo ""
+        echo "==================="
+        echo ""
+        echo "What would you like to do?"
+        echo "1) Stay in this repository"
+        echo "2) Pull latest changes and stay"
+        echo "3) Delete local copy and exit"
+        echo "4) Exit without changes"
+        
+        echo -n "Choose (1-4): "
+        read choice
+        
+        case $choice in
+            1)
+                echo "Staying in repository: $repo_path"
+                return 0
+                ;;
+            2)
+                echo "Pulling latest changes..."
+                git pull 2>/dev/null || echo "Could not pull from remote"
+                return 0
+                ;;
+            3)
+                echo "Removing local repository..."
+                cd "$base_dir" || return 1
+                rm -rf "$repo_name"
+                echo "Local repository deleted."
+                return 1
+                ;;
+            *)
+                echo "Exiting without changes"
+                return 1
+                ;;
+        esac
+    else
+        echo "No local copy found. Trying to clone existing repository..."
+        if git clone "https://github.com/$(gh api user | jq -r '.login')/$repo_name.git" "$repo_path" 2>/dev/null; then
+            echo "Successfully cloned existing repository!"
+            cd "$repo_path" || return 1
+            echo "You're now in: $repo_path"
+            return 0
+        else
+            echo "Failed to clone the repository."
+            echo "Check your permissions or repository name."
+            return 1
+        fi
+    fi
+}
+
+alias git_create="create_repo"
+create_repo(){
+    # "Usage: create_repo repo_name"
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: create_repo repo_name"
+        return 0
+    fi
+    
+    if ! command -v gh &> /dev/null; then
+        echo "Error: GitHub CLI 'gh' is not installed."
+        install_gh="y"
+        echo -n "Do you want to install GitHub CLI? (y/n):(default:y) "
+        read install_gh
+        if [[ $install_gh =~ ^[Yy]$ ]]; then
+            brew install gh
+            echo "GitHub CLI installed, continuing with repo creation"
+        else
+            echo "GitHub CLI not installed, you can install it with 'brew install gh' before running this function again"
+            return 1
+        fi
+    fi
+
+    repo_name=$(echo "$@" | tr ' ' '_')
+    local base_dir="$HOME/Documents/Git"
+    mkdir -p "$base_dir"
+
+    use_gitignore="n"
+    echo -n "Do you want to use a special .gitignore file? (y/n):(default:n) "
+    read use_gitignore
+
+    if [[ $use_gitignore =~ ^[Yy]$ ]]; then
+        echo "Available gitignore templates:"
+        echo "1) Python"
+        echo "2) Node/JavaScript"
+        echo "3) Markdown"
+        echo "4) Shell"
+        echo "5) Python + Node/JavaScript"
+        echo "6) Rust"
+        echo "7) None (basic repo setup)"
+        
+        echo -n "Select a template (1-7): "
+        read template_choice
+
+        case $template_choice in
+            1)
+                if ! gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Python; then
+                    handle_existing_repo "$repo_name" "$base_dir"
+                    return $?
+                fi
+                ;;
+            2)
+                if ! gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Node; then
+                    handle_existing_repo "$repo_name" "$base_dir"
+                    return $?
+                fi
+                ;;
+            3)
+                if ! gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Markdown; then
+                    handle_existing_repo "$repo_name" "$base_dir"
+                    return $?
+                fi
+                ;;
+            4)
+                if ! gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Shell; then
+                    handle_existing_repo "$repo_name" "$base_dir"
+                    return $?
+                fi
+                ;;
+            5)
+                # Create with Python template first, then add Node content
+                if ! gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Python; then
+                    handle_existing_repo "$repo_name" "$base_dir"
+                    return $?
+                fi
+                echo "Note: Will add Node.js gitignore content after cloning..."
+                ;;
+            6)
+                if ! gh repo create --add-readme "$repo_name" --private --license=mit --gitignore=Rust; then
+                    handle_existing_repo "$repo_name" "$base_dir"
+                    return $?
+                fi
+                ;;
+            *)
+                if ! gh repo create --add-readme "$repo_name" --private --license=mit; then
+                    handle_existing_repo "$repo_name" "$base_dir"
+                    return $?
+                fi
+                ;;
+        esac
+    else
+        if ! gh repo create --add-readme "$repo_name" --private --license=mit; then
+            handle_existing_repo "$repo_name" "$base_dir"
+            return $?
+        fi
+    fi
+
+    git clone "https://github.com/$(gh api user | jq -r '.login')/$repo_name.git" "$base_dir/$repo_name" || return 1
+    cd "$base_dir/$repo_name" || return 1
+    
+    # Add Node.js gitignore content if Python + Node was selected
+    if [[ "$template_choice" == "5" ]]; then
+        echo "Adding Node.js gitignore content..."
+        {
+            echo ""
+            echo "# Node.js"
+            echo "node_modules/"
+            echo "npm-debug.log*"
+            echo "yarn-debug.log*"
+            echo "yarn-error.log*"
+            echo "lerna-debug.log*"
+            echo ".pnpm-debug.log*"
+            echo ""
+            echo "# Runtime data"
+            echo "pids"
+            echo "*.pid"
+            echo "*.seed"
+            echo "*.pid.lock"
+            echo ""
+            echo "# Coverage directory used by tools like istanbul"
+            echo "coverage/"
+            echo "*.lcov"
+            echo ""
+            echo "# nyc test coverage"
+            echo ".nyc_output"
+            echo ""
+            echo "# Grunt intermediate storage"
+            echo ".grunt"
+            echo ""
+            echo "# Bower dependency directory"
+            echo "bower_components"
+            echo ""
+            echo "# node-waf configuration"
+            echo ".lock-wscript"
+            echo ""
+            echo "# Compiled binary addons"
+            echo "build/Release"
+            echo ""
+            echo "# Dependency directories"
+            echo "jspm_packages/"
+            echo ""
+            echo "# TypeScript cache"
+            echo "*.tsbuildinfo"
+            echo ""
+            echo "# Optional npm cache directory"
+            echo ".npm"
+            echo ""
+            echo "# Optional eslint cache"
+            echo ".eslintcache"
+            echo ""
+            echo "# Optional stylelint cache"
+            echo ".stylelintcache"
+            echo ""
+            echo "# Microbundle cache"
+            echo ".rpt2_cache/"
+            echo ".rts2_cache_cjs/"
+            echo ".rts2_cache_es/"
+            echo ".rts2_cache_umd/"
+            echo ""
+            echo "# Optional REPL history"
+            echo ".node_repl_history"
+            echo ""
+            echo "# Output of 'npm pack'"
+            echo "*.tgz"
+            echo ""
+            echo "# Yarn Integrity file"
+            echo ".yarn-integrity"
+            echo ""
+            echo "# dotenv environment variable files"
+            echo ".env"
+            echo ".env.development.local"
+            echo ".env.test.local"
+            echo ".env.production.local"
+            echo ".env.local"
+            echo ""
+            echo "# parcel-bundler cache"
+            echo ".cache"
+            echo ".parcel-cache"
+            echo ""
+            echo "# Next.js build output"
+            echo ".next"
+            echo "out"
+            echo ""
+            echo "# Nuxt.js build / generate output"
+            echo ".nuxt"
+            echo "dist"
+            echo ""
+            echo "# Gatsby files"
+            echo ".cache/"
+            echo "public"
+            echo ""
+            echo "# Storybook build outputs"
+            echo ".out"
+            echo ".storybook-out"
+            echo "storybook-static"
+            echo ""
+            echo "# Temporary folders"
+            echo "tmp/"
+            echo "temp/"
+            echo ""
+            echo "# Logs"
+            echo "logs"
+            echo "*.log"
+            echo ""
+            echo "# Editor directories and files"
+            echo ".vscode/"
+            echo ".idea/"
+            echo "*.swp"
+            echo "*.swo"
+            echo "*~"
+            echo ""
+            echo "# OS generated files"
+            echo ".DS_Store"
+            echo ".DS_Store?"
+            echo "._*"
+            echo ".Spotlight-V100"
+            echo ".Trashes"
+            echo "ehthumbs.db"
+            echo "Thumbs.db"
+        } >> .gitignore
+    fi
+    
+    echo "# $repo_name" >> README.md
+    git add .
+    git commit -m "Initial commit"
+    git branch -M main
+    git push -u origin main
+
+    echo "Repository $repo_name created and initialized successfully in $base_dir."
+} 
+
+# ----------------------
+# Project Management
+# ----------------------
+cdproj() {
+    # Usage: cdproj [repo_name]
+    # check if fzf is installed
+    if ! command -v fzf &> /dev/null; then
+        echo "Error: fzf is not installed."
+        echo "Would you like to install it? (y/n): "
+        read install_fzf
+        if [[ $install_fzf =~ ^[Yy]$ ]]; then
+            brew install fzf
+        fi
+        return 1
+    fi
+    local dir
+    dir=$(find ~/Documents/Git -maxdepth 2 -type d | fzf +m)
+    cd "$dir"
+    echo "Current directory: $(pwd)"
+}
+
+# ----------------------
+# Python Virtual Environment Management
+# ----------------------
+
+pyenv() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: pyenv [create|activate|deactivate|cleanup] [version]"
+        return 1
+    fi
+
+    case "$1" in
+        create)
+            if [[ -z "$2" ]]; then
+                echo "Creating Python virtual environment with default Python version..."
+                python3 -m venv env
+            else
+                echo "Creating Python virtual environment with Python $2..."
+                python"$2" -m venv env
+            fi
+            ;;
+        activate)
+            if [ -d "env" ]; then
+                source env/bin/activate
+            elif [ -d "venv" ]; then
+                source venv/bin/activate
+            else
+                echo "No virtual environment found. Create one with 'pyenv create'"
+                return 1
+            fi
+            ;;
+        deactivate)
+            if [[ "$VIRTUAL_ENV" != "" ]]; then
+                deactivate
+            else
+                echo "No virtual environment is currently active"
+            fi
+            ;;
+        cleanup)
+            if [ -d "env" ]; then
+                rm -rf env
+                echo "Removed env directory"
+            fi
+            if [ -d "venv" ]; then
+                rm -rf venv
+                echo "Removed venv directory"
+            fi
+            if [ -d "__pycache__" ]; then
+                rm -rf __pycache__
+                echo "Removed __pycache__ directory"
+            fi
+            if [ -d ".pytest_cache" ]; then
+                rm -rf .pytest_cache
+                echo "Removed .pytest_cache directory"
+            fi
+            ;;
+        *)
+            echo "Unknown command: $1"
+            return 1
+            ;;
+    esac
+}
+
+alias psetup="pyenv_setup"
+# Python environment setup and test running
+pyenv_setup() {
+    # Show help menu if requested
+    if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+        echo "Usage: pyenv_setup [options]"
+        echo "Options:"
+        echo "  --help, -h     Show this help menu"
+        echo "  --tests, -t    Run tests after setup"
+        echo "  --version, -v  Specify Python version (e.g., 3.9)"
+        echo "  --clean, -c    Clean up existing environment before setup"
+        echo "  No arguments   Setup environment and install requirements"
+        return 0
+    fi
+
+    local python_version="3"
+    local run_tests=false
+    local cleanup=false
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --tests|-t)
+                run_tests=true
+                shift
+                ;;
+            --version|-v)
+                python_version="$2"
+                shift 2
+                ;;
+            --clean|-c)
+                cleanup=true
+                shift
+                ;;
+            *)
+                echo "Unknown option: $1"
+                return 1
+                ;;
+        esac
+    done
+
+    # Clean up if requested
+    if [[ "$cleanup" == true ]]; then
+        pyenv cleanup
+    fi
+
+    # Check if virtual environment exists, create if not
+    if [ ! -d "venv" ] && [ ! -d "env" ]; then
+        echo "Creating virtual environment with Python $python_version..."
+        if ! python"$python_version" -m venv env; then
+            echo "Failed to create virtual environment"
+            return 1
+        fi
+    fi
+
+    # Activate virtual environment
+    if [ -d "env" ]; then
+        source env/bin/activate
+    elif [ -d "venv" ]; then
+        source venv/bin/activate
+    fi
+
+    # Verify virtual environment activation
+    if [[ "$VIRTUAL_ENV" == "" ]]; then
+        echo "Failed to activate virtual environment"
+        return 1
+    fi
+
+    # Upgrade pip
+    echo "Upgrading pip..."
+    if ! python3 -m pip install --upgrade pip; then
+        echo "Failed to upgrade pip"
+        return 1
+    fi
+
+    # Install requirements if requirements.txt exists
+    if [ -f "requirements.txt" ]; then
+        echo "Installing requirements..."
+        if ! python3 -m pip install -r requirements.txt; then
+            echo "Failed to install requirements"
+            return 1
+        fi
+    else
+        echo "No requirements.txt found"
+    fi
+
+    # Run tests if requested
+    if [[ "$run_tests" == true ]]; then
+        if [ -d "tests" ]; then
+            echo "Running tests..."
+            if ! python3 -m pytest tests/ -v; then
+                echo "Tests failed"
+                return 1
+            fi
+        else
+            echo "No tests directory found"
+        fi
+    fi
+
+    echo "Setup completed successfully"
+    return 0
+}
+
+
+# ----------------------
+# Virtual Hackathon Functions
+# ----------------------
+
+## Create Repo for Virtual Hackathon
+# Public Repo under IrregularChat Org , use the create_repo function
+# Create labels for issues that are going to apply during the hackathon
+# Create issues with titles that are easy to read, with a clear description of the issue
+# Create Issues for creating a Minimal Viable Product (MVP) for the hackathon
+# Create issues for Identifying Frameworks and Navigation (dirs and files)
+# Create issues for researching the topic and creating a plan
+
+hackathon_setup() {
+    # Help menu
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: hackathon_setup [REPO_NAME]"
+        echo "If REPO_NAME is not provided, you will be prompted to enter one."
+        echo "Options:"
+        echo "  -h, --help    Show this help message"
+        return 0
+    fi
+
+    # Accept repo name as argument or prompt if not provided
+    if [[ -n "$1" ]]; then
+        repo_name="$1"
+    else
+        echo "Enter the name of the repo: "
+        read repo_name
+        while [[ -z "$repo_name" ]]; do
+            echo "Repo name cannot be empty, please enter a valid repo name: "
+            read repo_name
+        done
+    fi
+
+    # Validate repo name: no spaces
+    if [[ "$repo_name" =~ [[:space:]] ]]; then
+        echo "Error: Repository name cannot contain spaces. Please use dashes or underscores."
+        return 1
+    fi
+
+    # gh commands to create a project (org and template as positional args)
+    gh repo create "$repo_name" --public --template="https://github.com/orgs/irregularchat/projects/7" --owner IrregularChat
+    if [[ $? -ne 0 ]]; then
+        echo "gh repo create failed. Aborting setup."
+        return 1
+    fi
+
+    # Create labels for issues (correct syntax: gh label create <name> -c <color>)
+    gh label create MVP -c "#FF0000"
+    gh label create Frameworks -c "#FF0000"
+    gh label create Research -c "#FF0000"
+
+    # create issues
+    gh issue create --title "MVP" --body "Create a Minimal Viable Product (MVP) for the hackathon"
+    gh issue create --title "Frameworks" --body "Identify the frameworks and navigation (dirs and files) for the hackathon"
+    gh issue create --title "Research" --body "Research the topic and create a plan for the hackathon"
+}
+
+# ----------------------
+# Claude Code Functions
+# ----------------------
+claude_checks() {
+    # Check if Node.js is installed (required for Claude Code)
+    if ! command -v node &> /dev/null; then
+        echo "Error: Node.js is not installed. Claude Code requires Node.js 18+."
+        echo "Would you like to install Node.js? (y/n): "
+        read install_node
+        if [[ $install_node =~ ^[Yy]$ ]]; then
+            echo "Installing Node.js via Homebrew..."
+            brew install node
+        else
+            echo "Please install Node.js 18+ before proceeding."
+            return 1
+        fi
+    fi
+
+    # Check Node.js version
+    local node_version=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
+    if [[ $node_version -lt 18 ]]; then
+        echo "Warning: Claude Code requires Node.js 18+. Current version: $(node --version)"
+        echo "Would you like to update Node.js? (y/n): "
+        read update_node
+        if [[ $update_node =~ ^[Yy]$ ]]; then
+            brew upgrade node
+        fi
+    fi
+
+    # Check if claude is installed
+    if ! command -v claude &> /dev/null; then
+        echo "Error: Claude Code is not installed."
+        echo "Claude Code Installation Options:"
+        echo "1) Global npm installation (recommended)"
+        echo "2) Native binary installation (alpha)"
+        echo "3) Manual installation"
+        echo ""
+        echo -n "Choose installation method (1-3): "
+        read install_method
+        
+        case "$install_method" in
+            1)
+                echo "Installing Claude Code globally via npm..."
+                echo "Note: Using npm install -g (not sudo) as recommended by Anthropic"
+                npm install -g @anthropic-ai/claude
+                ;;
+            2)
+                echo "Installing Claude Code via native binary (alpha)..."
+                curl -fsSL claude.ai/install.sh | bash
+                ;;
+            3)
+                echo "Manual installation instructions:"
+                echo "Run: npm install -g @anthropic-ai/claude"
+                echo "For more options, visit: https://docs.anthropic.com/claude/docs/claude-code"
+                return 1
+                ;;
+            *)
+                echo "Invalid choice. Please run claude_checks again."
+                return 1
+                ;;
+        esac
+        
+        # Verify installation
+        if ! command -v claude &> /dev/null; then
+            echo "Installation failed. Please check the error messages above."
+            return 1
+        fi
+        
+        echo "✅ Claude Code installed successfully!"
+        echo "Run 'claude doctor' to verify your installation."
+    fi
+    
+    # Check if claude is setup/authenticated
+    if ! claude auth status &>/dev/null; then
+        echo "Claude Code is installed but not authenticated."
+        echo ""
+        echo "Authentication Options:"
+        echo "1) Anthropic Console (default - requires billing)"
+        echo "2) Claude App (Pro/Max plan required)"
+        echo "3) Enterprise (Bedrock/Vertex AI)"
+        echo ""
+        echo -n "Choose authentication method (1-3): "
+        read auth_method
+        
+        case "$auth_method" in
+            1)
+                echo "Opening Anthropic Console authentication..."
+                claude auth login
+                ;;
+            2)
+                echo "Opening Claude App authentication..."
+                claude auth login --provider claude-app
+                ;;
+            3)
+                echo "Enterprise authentication setup:"
+                echo "Please refer to: https://docs.anthropic.com/claude/docs/third-party-integrations"
+                echo "Configure your cloud provider credentials separately."
+                return 1
+                ;;
+            *)
+                echo "Invalid choice. Please run claude_checks again to authenticate."
+                return 1
+                ;;
+        esac
+        
+        # Verify authentication
+        if ! claude auth status &>/dev/null; then
+            echo "Authentication may have failed. Please try again or check your credentials."
+            echo "Run 'claude doctor' to diagnose issues."
+            return 1
+        fi
+        
+        echo "✅ Claude Code authenticated successfully!"
+    fi
+    
+    # Run claude doctor for final verification
+    echo "Running Claude Code diagnostics..."
+    claude doctor
+}
+
+claude_code() {
+    # Show help menu
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: claude_code [options] [file_name_or_path]"
+        echo ""
+        echo "Options:"
+        echo "  -h, --help                    Show this help message"
+        echo "  -c, --continue               Continue previous conversation"
+        echo "  -sp, --skip-permissions      Dangerously skip permissions"
+        echo "  -csp, --continue-skip        Continue with skip permissions"
+        echo "  -m, --menu                   Show interactive menu (default)"
+        echo "  -d, --direct                 Run claude directly without menu"
+        echo ""
+        echo "Common Claude Commands:"
+        echo "  claude                                          # Basic claude command"
+        echo "  claude --continue                              # Continue previous conversation"
+        echo "  claude --dangerously-skip-permissions         # Skip permission checks"
+        echo "  claude --dangerously-skip-permissions --continue # Skip permissions + continue"
+        echo ""
+        echo "Examples:"
+        echo "  claude_code -c file.py                        # Continue with file.py"
+        echo "  claude_code -sp ./src                         # Skip permissions for src directory"
+        echo "  claude_code -csp                              # Continue + skip permissions"
+        echo "  claude_code -d file.py                        # Direct claude execution"
+        echo "  claude_code                                   # Show interactive menu"
+        return 0
+    fi
+
+    # First run the checks
+    claude_checks || return 1
+
+    local continue_flag=""
+    local skip_permissions=""
+    local show_menu=true
+    local target_path=""
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -c|--continue)
+                continue_flag="--continue"
+                show_menu=false
+                shift
+                ;;
+            -sp|--skip-permissions)
+                skip_permissions="--dangerously-skip-permissions"
+                show_menu=false
+                shift
+                ;;
+            -csp|--continue-skip)
+                continue_flag="--continue"
+                skip_permissions="--dangerously-skip-permissions"
+                show_menu=false
+                shift
+                ;;
+            -m|--menu)
+                show_menu=true
+                shift
+                ;;
+            -d|--direct)
+                show_menu=false
+                shift
+                ;;
+            -*)
+                echo "Unknown option: $1"
+                echo "Use 'claude_code --help' for usage information"
+                return 1
+                ;;
+            *)
+                target_path="$1"
+                shift
+                ;;
+        esac
+    done
+
+    # If no menu requested and flags set, run directly
+    if [[ "$show_menu" == false ]]; then
+        local cmd="claude"
+        if [[ -n "$skip_permissions" ]]; then
+            cmd="$cmd $skip_permissions"
+        fi
+        if [[ -n "$continue_flag" ]]; then
+            cmd="$cmd $continue_flag"
+        fi
+        if [[ -n "$target_path" ]]; then
+            cmd="$cmd $target_path"
+        fi
+        
+        echo "Running: $cmd"
+        eval "$cmd"
+        return $?
+    fi
+
+    # Interactive menu
+    echo "Claude Code Assistant - Select an option:"
+    echo ""
+    echo "1) Basic claude command"
+    echo "2) Continue previous conversation (--continue)"
+    echo "3) Skip permissions (--dangerously-skip-permissions)"
+    echo "4) Continue + Skip permissions (--continue --dangerously-skip-permissions)"
+    echo "5) Custom command (enter your own flags)"
+    echo "6) Help / Show all options"
+    echo ""
+    
+    if [[ -n "$target_path" ]]; then
+        echo "Target: $target_path"
+        echo ""
+    else
+        echo "Enter target file/path (optional): "
+        read target_input
+        if [[ -n "$target_input" ]]; then
+            target_path="$target_input"
+        fi
+        echo ""
+    fi
+    
+    echo -n "Choose option (1-6): "
+    read choice
+    
+    local claude_cmd="claude"
+    
+    case "$choice" in
+        1)
+            # Basic claude
+            ;;
+        2)
+            claude_cmd="$claude_cmd --continue"
+            ;;
+        3)
+            claude_cmd="$claude_cmd --dangerously-skip-permissions"
+            ;;
+        4)
+            claude_cmd="$claude_cmd --dangerously-skip-permissions --continue"
+            ;;
+        5)
+            echo "Enter custom flags (e.g., --model gpt-4): "
+            read custom_flags
+            if [[ -n "$custom_flags" ]]; then
+                claude_cmd="$claude_cmd $custom_flags"
+            fi
+            ;;
+        6)
+            claude_code --help
+            return 0
+            ;;
+        *)
+            echo "Invalid choice. Please select 1-6."
+            return 1
+            ;;
+    esac
+    
+    # Add target path if provided
+    if [[ -n "$target_path" ]]; then
+        claude_cmd="$claude_cmd $target_path"
+    fi
+    
+    echo "Running: $claude_cmd"
+    eval "$claude_cmd"
+}

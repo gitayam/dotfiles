@@ -1,0 +1,424 @@
+# Security-related functions and aliases for bash
+# (ported from .zsh_security)
+
+# Check for open ports by process
+check_ports_by_process() {
+    sudo lsof -i -P -n | grep LISTEN
+}
+
+# Check for world-writable files
+find_world_writable() {
+    find / -xdev -type f -perm -0002 -print 2>/dev/null
+}
+
+# --- Expanded security functions ported from .zsh_security ---
+
+# Format JSON output
+alias json="jq ."
+
+# Setup age encryption
+setup_age() {
+    mkdir -p ~/.age
+    username=$(whoami)
+    key_name="${1:-$username}"
+    echo "Store the following keys in a secure location:"
+    echo "Public key: ~/.age/keys/$key_name.pub"
+    echo "Private key: ~/.age/keys/$key_name.key"
+    echo "You will see a public key output to the screen that you can share with others"
+    echo "For more information on age see https://github.com/FiloSottile/age"
+    sleep 1
+    age-keygen -a -o ~/.age/keys/$key_name.key
+    ls -l ~/.age/keys
+}
+
+# Comprehensive file encryption with multiple methods
+encrypt_file(){
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: encrypt_file [-m method] [-r recipient] file1 file2 ..."
+        echo "Options:"
+        echo "  -m method       Encryption method: age (default), gpg, or aes"
+        echo "  -r recipient    Use recipient's public key instead of passphrase (only for age)"
+        echo "  -e, --encrypt   Optional flag (for consistency with other functions)"
+        return 0
+    fi
+
+    # Check if encryption tools are installed
+    local has_age=false
+    local has_gpg=false
+    local has_openssl=false
+    
+    if command -v age &> /dev/null; then
+        has_age=true
+    fi
+    
+    if command -v gpg &> /dev/null; then
+        has_gpg=true
+    fi
+    
+    if command -v openssl &> /dev/null; then
+        has_openssl=true
+    fi
+
+    local encrypt_method="age"
+    local recipient=""
+    local use_passphrase=true
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -e|--encrypt)
+                shift
+                ;;
+            -m)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: -m requires a method argument (age, gpg, or aes)"
+                    return 1
+                fi
+                encrypt_method="$2"
+                shift 2
+                ;;
+            -r)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: -r requires a recipient argument"
+                    return 1
+                fi
+                recipient="$2"
+                use_passphrase=false
+                shift 2
+                ;;
+            -h|--help)
+                echo "Usage: encrypt_file [-m method] [-r recipient] file1 file2 ..."
+                echo "Options: -m method (age|gpg|aes), -r recipient (for age), -e/--encrypt"
+                return 0
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+
+    # If no encryption tools are available, prompt to install
+    if ! $has_age && ! $has_gpg && ! $has_openssl; then
+        echo "Error: No encryption tools found (age, gpg, or openssl)."
+        echo "Please install one of these tools:"
+        echo "  age: sudo apt install age / sudo dnf install age / sudo pacman -S age"
+        echo "  gpg: sudo apt install gnupg / sudo dnf install gnupg2 / sudo pacman -S gnupg"
+        echo "  openssl: sudo apt install openssl / sudo dnf install openssl / sudo pacman -S openssl"
+        return 1
+    fi
+
+    # Check if specified method is available
+    case "$encrypt_method" in
+        age)
+            if ! $has_age; then
+                echo "Error: age is not installed. Install with your package manager."
+                return 1
+            fi
+            ;;
+        gpg)
+            if ! $has_gpg; then
+                echo "Error: gpg is not installed. Install with: sudo apt install gnupg"
+                return 1
+            fi
+            ;;
+        aes|openssl)
+            if ! $has_openssl; then
+                echo "Error: openssl is not installed. Install with your package manager."
+                return 1
+            fi
+            ;;
+        *)
+            echo "Error: Unsupported encryption method: $encrypt_method"
+            echo "Supported methods: age, gpg, aes"
+            return 1
+            ;;
+    esac
+
+    # Check if any files are provided
+    if [[ $# -eq 0 ]]; then
+        echo "Error: No files specified for encryption"
+        return 1
+    fi
+
+    # Process each file
+    for file in "$@"; do
+        if [[ ! -e "$file" ]]; then
+            echo "Error: File $file does not exist"
+            continue
+        fi
+
+        echo "Processing: $file"
+        local output_file=""
+
+        case "$encrypt_method" in
+            age)
+                output_file="${file}.age"
+                if [[ "$use_passphrase" == true ]]; then
+                    # Use passphrase encryption
+                    age -p -o "$output_file" "$file"
+                else
+                    # Use recipient's public key
+                    age -r "$recipient" -o "$output_file" "$file"
+                fi
+                ;;
+            gpg)
+                output_file="${file}.gpg"
+                if [[ "$use_passphrase" == true ]]; then
+                    gpg --symmetric --cipher-algo AES256 --output "$output_file" "$file"
+                else
+                    gpg --encrypt --recipient "$recipient" --output "$output_file" "$file"
+                fi
+                ;;
+            aes|openssl)
+                output_file="${file}.enc"
+                openssl enc -aes-256-cbc -salt -in "$file" -out "$output_file"
+                ;;
+        esac
+
+        if [[ $? -eq 0 ]]; then
+            echo "✅ Encrypted: $file -> $output_file"
+        else
+            echo "❌ Failed to encrypt: $file"
+        fi
+    done
+}
+
+# File decryption function
+decrypt_file(){
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: decrypt_file [-m method] file1 file2 ..."
+        echo "Options:"
+        echo "  -m method       Decryption method: age, gpg, or aes (auto-detect by default)"
+        echo "  -d, --decrypt   Optional flag (for consistency with other functions)"
+        return 0
+    fi
+
+    local decrypt_method=""
+    local files_to_decrypt=()
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -d|--decrypt)
+                shift
+                ;;
+            -m)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: -m requires a method argument (age, gpg, or aes)"
+                    return 1
+                fi
+                decrypt_method="$2"
+                shift 2
+                ;;
+            -h|--help)
+                echo "Usage: decrypt_file [-m method] file1 file2 ..."
+                echo "Options: -m method (age|gpg|aes), -d/--decrypt"
+                return 0
+                ;;
+            *)
+                files_to_decrypt+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    # Check if any files are provided
+    if [[ ${#files_to_decrypt[@]} -eq 0 ]]; then
+        echo "Error: No files specified for decryption"
+        return 1
+    fi
+
+    # Process each file
+    for file in "${files_to_decrypt[@]}"; do
+        if [[ ! -e "$file" ]]; then
+            echo "Error: File $file does not exist"
+            continue
+        fi
+
+        echo "Processing: $file"
+        
+        # Auto-detect decryption method if not specified
+        if [[ -z "$decrypt_method" ]]; then
+            if [[ "$file" == *.age ]]; then
+                decrypt_method="age"
+            elif [[ "$file" == *.gpg ]]; then
+                decrypt_method="gpg"
+            elif [[ "$file" == *.enc ]]; then
+                decrypt_method="aes"
+            else
+                echo "Error: Cannot auto-detect encryption method for $file"
+                continue
+            fi
+        fi
+
+        # Remove extension to get output filename
+        local output_file=""
+        case "$decrypt_method" in
+            age)
+                output_file="${file%.age}"
+                if ! command -v age &> /dev/null; then
+                    echo "Error: age is not installed"
+                    continue
+                fi
+                age -d -i ~/.age/keys/*.key -o "$output_file" "$file"
+                ;;
+            gpg)
+                output_file="${file%.gpg}"
+                if ! command -v gpg &> /dev/null; then
+                    echo "Error: gpg is not installed"
+                    continue
+                fi
+                gpg --output "$output_file" --decrypt "$file"
+                ;;
+            aes|openssl)
+                output_file="${file%.enc}"
+                if ! command -v openssl &> /dev/null; then
+                    echo "Error: openssl is not installed"
+                    continue
+                fi
+                openssl enc -aes-256-cbc -d -in "$file" -out "$output_file"
+                ;;
+            *)
+                echo "Error: Unsupported decryption method: $decrypt_method"
+                continue
+                ;;
+        esac
+
+        if [[ $? -eq 0 ]]; then
+            echo "✅ Decrypted: $file -> $output_file"
+        else
+            echo "❌ Failed to decrypt: $file"
+        fi
+    done
+}
+
+# Clean filename function
+clean_file(){
+    if [[ -z "$1" ]]; then
+        echo "Error: No file path provided."
+        return 1
+    fi
+    local path="$1"
+    local full_path=$(readlink -f "$path")
+    local dir=$(dirname "$full_path")
+    local base=$(basename "$full_path")
+    local clean_name=$(echo "$base" | tr -cd '[:alnum:]._-')
+    mv "$full_path" "$dir/$clean_name"
+    echo "$dir/$clean_name"
+}
+
+# Virus scanning using ClamAV
+virus_scan() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: virus_scan [file/directory...]"
+        echo "Features:"
+        echo "  - Scans files and directories for viruses using ClamAV"
+        echo "  - Logs scan results for future reference"
+        return 0
+    fi
+
+    local files=()
+    
+    # Check if receiving input from pipe or arguments
+    if [[ -p /dev/stdin ]]; then
+        while IFS= read -r line; do
+            files+=("$line")
+        done
+    elif [[ $# -gt 0 ]]; then
+        files=("$@")
+    else
+        echo "Usage: virus_scan [file/directory...]"
+        return 1
+    fi
+    
+    # Check if clamscan is installed
+    if ! command -v clamscan &> /dev/null; then
+        echo "Error: clamscan is not installed."
+        echo "Install with: sudo apt install clamav clamav-daemon"
+        echo "Then update virus definitions with: sudo freshclam"
+        return 1
+    fi
+    
+    # Scan each file/directory
+    for item in "${files[@]}"; do
+        if [[ ! -e "$item" ]]; then
+            echo "❌ Does not exist: $item"
+            continue
+        fi
+        
+        echo "🔍 Scanning: $item"
+        if clamscan -r --bell -i "$item"; then
+            echo "✅ Clean: $item"
+        else
+            echo "⚠️  Check results for: $item"
+        fi
+    done
+}
+
+# Security aliases
+alias scan_file="virus_scan"
+alias scan_dir="virus_scan"
+
+# Secure file deletion
+secure_delete() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: secure_delete file1 file2 ..."
+        echo "Securely delete files using shred (multiple overwrites)"
+        return 0
+    fi
+
+    if [[ $# -eq 0 ]]; then
+        echo "Error: No files specified"
+        return 1
+    fi
+
+    for file in "$@"; do
+        if [[ -f "$file" ]]; then
+            echo "Securely deleting: $file"
+            if command -v shred &> /dev/null; then
+                shred -vfz -n 3 "$file"
+            elif command -v wipe &> /dev/null; then
+                wipe -rf "$file"
+            else
+                echo "Warning: Neither shred nor wipe available, using rm"
+                rm -f "$file"
+            fi
+        else
+            echo "File not found: $file"
+        fi
+    done
+}
+
+# Check for suspicious processes
+check_suspicious_processes() {
+    echo "=== Processes listening on network ports ==="
+    sudo netstat -tulpn | grep LISTEN
+    echo ""
+    echo "=== Processes with unusual names ==="
+    ps aux | grep -E "[[:space:]][^[:space:]]*[0-9]{3,}[^[:space:]]*[[:space:]]" | head -10
+}
+
+# System security check
+security_check() {
+    echo "=== Security Check Report ==="
+    echo "Date: $(date)"
+    echo ""
+    
+    echo "1. Failed login attempts:"
+    sudo grep "Failed password" /var/log/auth.log | tail -5
+    echo ""
+    
+    echo "2. Listening ports:"
+    check_ports_by_process | head -10
+    echo ""
+    
+    echo "3. World-writable files (sample):"
+    find /tmp -type f -perm -0002 -print 2>/dev/null | head -5
+    echo ""
+    
+    echo "4. Recent sudo usage:"
+    sudo grep "sudo:" /var/log/auth.log | tail -5
+    echo ""
+    
+    echo "=== End Security Check ==="
+}

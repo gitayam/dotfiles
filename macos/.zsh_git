@@ -1,0 +1,32 @@
+#!/bin/zsh
+# Git aliases and functions
+
+# Enhanced Git Status with branch info
+git_status() {
+  git status -sb
+}
+
+# Git Diff with color
+git_diff() {
+  git diff --color "$@" | less -r
+}
+
+# Git log with graph
+git_log() {
+  git log --graph --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset' --abbrev-commit
+}
+
+# Git Push with tracking
+git_push() {
+  if [ $# -eq 0 ]; then
+    git push -u origin $(git branch --show-current)
+  else
+    git push "$@"
+  fi
+}
+
+# Aliases
+alias gs="git_status"
+alias gd="git_diff"
+alias gl="git_log"
+alias gp="git_push"

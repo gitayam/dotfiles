@@ -1,0 +1,459 @@
+# ----------------------
+# Git Aliases
+# ----------------------
+alias gita="git_add"
+alias gitcg="git_commit"
+alias gitp="git push"
+alias gitpl="git pull"
+alias gitco="git checkout"
+alias gitcb="git checkout -b"
+alias gitlog="git log --oneline --graph --all"
+alias gitup="update_git_repos"
+alias gitcl="git_clone"
+alias gitcr="create_repo"
+
+# ----------------------
+# Git Functions
+# ----------------------
+git_commit(){
+    if [[ -z "$1" ]]; then
+        echo "No commit message provided. Opening editor for interactive commit message."
+        git commit
+    else
+        git commit -m "$1"
+    fi
+}
+
+git_add(){
+    if [[ -z "$1" ]]; then
+        echo "No files specified. Defaulting to 'git add .'"
+        git add .
+    else
+        git add "$@"
+    fi
+}
+
+# Undo last local commit, keep changes staged
+git_undo() {
+  git reset --soft HEAD~1
+}
+
+# Delete all merged local branches (except main)
+git_clean_merged() {
+  git branch --merged | grep -vE '(^\*|main|master|develop)' | xargs -r git branch -d
+}
+
+# Show list of branches sorted by last commit date
+git_recent_branches() {
+  git for-each-ref --sort=-committerdate refs/heads/ --format='%(refname:short) — %(committerdate:relative)'
+}
+
+update_git_repos(){
+    # Default variables
+    search_path="$HOME/Documents/Git/"  # Default search path
+    exclude_paths=()                   # Array to store excluded paths
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --search-path)
+                search_path="$2"
+                shift 2
+                ;;
+            --exclude)
+                exclude_paths+=("$2")
+                shift 2
+                ;;
+            *)
+                echo "Unknown argument: $1"
+                return 1
+                ;;
+        esac
+    done
+
+    # Build the find command
+    find_cmd="find \"$search_path\" -type d -name \".git\""
+
+    for exclude in "${exclude_paths[@]}"; do
+        find_cmd+=" ! -path \"$exclude/*\""
+    done
+
+    find_cmd+=" -print"
+
+    # Execute the find command and update repositories
+    eval "$find_cmd" | while IFS= read -r gitdir; do
+        repo_dir=$(dirname "$gitdir")
+
+        # Ensure the directory is marked safe for Git operations
+        git config --global --add safe.directory "$repo_dir"
+
+        echo "Updating repository in $repo_dir"
+        cd "$repo_dir" || {
+            echo "Failed to access $repo_dir"
+            continue
+        }
+        git pull --rebase || echo "Failed to update $repo_dir"
+    done
+}
+
+## Git Clone Function
+### Usage: git_clone repo_name or url [destination_path]
+alias clone_repo="git_clone"
+### from any directory will clone the repo to the correct directory in the ~/Documents/Git/ directory
+git_clone(){
+    if [[ -z "$1" ]]; then
+        echo "No repository name or URL provided"
+        echo "Usage: git_clone repo_name_or_url [repo2] [repo3] ... [destination_path]"
+        echo "Examples:"
+        echo "  git_clone user/repo"
+        echo "  git_clone https://github.com/user/repo"
+        echo "  git_clone repo1 repo2 repo3 ./target_dir"
+        echo "  git_clone https://github.com/user/repo1 https://github.com/user/repo2"
+        return 1
+    fi
+
+    # Set default base directory
+    local base_dir="$HOME/Documents/Git"
+    
+    # Convert arguments to array
+    local args=("$@")
+    local repos=()
+    local custom_path=""
+    local multiple_repos=false
+    
+    # Check if last argument is a path (starts with ./ or / or ~)
+    local last_arg="${args[-1]}"
+    if [[ "$last_arg" =~ ^(\./|/|~) ]] || [[ "$last_arg" == "." ]]; then
+        custom_path="$last_arg"
+        # Remove last argument from repos list
+        repos=("${args[@]:0:$((${#args[@]}-1))}")
+    else
+        repos=("${args[@]}")
+    fi
+    
+    # Check if we have multiple repositories
+    if [[ ${#repos[@]} -gt 1 ]]; then
+        multiple_repos=true
+    fi
+    
+    # If custom path is provided, make it absolute
+    if [[ -n "$custom_path" ]]; then
+        if [[ "$custom_path" == "." ]]; then
+            custom_path="$(pwd)"
+        elif [[ "$custom_path" == "./" ]]; then
+            custom_path="$(pwd)"
+        elif [[ ! "$custom_path" =~ ^/ ]] && [[ ! "$custom_path" =~ ^~ ]]; then
+            custom_path="$(pwd)/$custom_path"
+        elif [[ "$custom_path" =~ ^~ ]]; then
+            custom_path="${custom_path/#\~/$HOME}"
+        fi
+        # Remove trailing slash if present
+        custom_path="${custom_path%/}"
+    fi
+
+    # Check if gh is installed (Linux package manager agnostic)
+    if [[ -z "$(command -v gh)" ]]; then
+        echo "GitHub CLI (gh) is not installed."
+        echo "Would you like to install it? (y/n): "
+        read install_gh
+        if [[ $install_gh =~ ^[Yy]$ ]]; then
+            # Try different package managers
+            if command -v apt &> /dev/null; then
+                sudo apt update && sudo apt install gh
+            elif command -v yum &> /dev/null; then
+                sudo yum install gh
+            elif command -v dnf &> /dev/null; then
+                sudo dnf install gh
+            elif command -v pacman &> /dev/null; then
+                sudo pacman -S github-cli
+            elif command -v zypper &> /dev/null; then
+                sudo zypper install gh
+            else
+                echo "Please install GitHub CLI manually from https://cli.github.com/"
+                return 1
+            fi
+        fi
+    fi
+    
+    # Check if gh is setup
+    if ! gh auth status &>/dev/null; then
+        echo "GitHub CLI (gh) is not logged in."
+        echo "Would you like to login? (y/n): "
+        read login_gh
+        if [[ $login_gh =~ ^[Yy]$ ]]; then
+            gh auth login
+        fi
+        return 1
+    fi
+
+    # Track successful clones and final directory
+    local successful_clones=()
+    local failed_clones=()
+    local final_directory=""
+
+    # Process each repository
+    for input in "${repos[@]}"; do
+        echo "Processing repository: $input"
+        local repo_url=""
+        local repo_name=""
+
+        # Determine if input is URL or repo name
+        if [[ "$input" =~ ^https?:// ]]; then
+            # Full URL provided
+            repo_url="$input"
+            repo_name=$(basename "$repo_url" .git)
+        elif [[ "$input" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$ ]]; then
+            # GitHub-style user/repo format
+            repo_url="https://github.com/$input.git"
+            repo_name=$(basename "$input")
+        else
+            # Assume it's just a repo name, try to find it
+            repo_name="$input"
+            repo_url="https://github.com/$input.git"
+        fi
+
+        # Determine target directory
+        local target_dir=""
+        if [[ -n "$custom_path" ]]; then
+            if [[ "$multiple_repos" == true ]]; then
+                target_dir="$custom_path/$repo_name"
+            else
+                target_dir="$custom_path"
+            fi
+        else
+            target_dir="$base_dir/$repo_name"
+        fi
+
+        # Create parent directory if it doesn't exist
+        mkdir -p "$(dirname "$target_dir")"
+
+        # Check if directory already exists
+        if [[ -d "$target_dir" ]]; then
+            echo "Repository already exists: $target_dir"
+            failed_clones+=("$repo_name (already exists)")
+            continue
+        fi
+
+        # Clone the repository
+        echo "Cloning $repo_url to $target_dir"
+        if git clone "$repo_url" "$target_dir"; then
+            echo "✅ Successfully cloned $repo_name"
+            successful_clones+=("$repo_name")
+            final_directory="$target_dir"
+        else
+            echo "❌ Failed to clone $repo_name"
+            failed_clones+=("$repo_name")
+        fi
+    done
+
+    # Print summary
+    echo ""
+    echo "=== Clone Summary ==="
+    if [[ ${#successful_clones[@]} -gt 0 ]]; then
+        echo "✅ Successfully cloned:"
+        printf '  %s\n' "${successful_clones[@]}"
+    fi
+    
+    if [[ ${#failed_clones[@]} -gt 0 ]]; then
+        echo "❌ Failed to clone:"
+        printf '  %s\n' "${failed_clones[@]}"
+    fi
+
+    # Open in editor if requested and single successful clone
+    if [[ ${#successful_clones[@]} -eq 1 ]] && [[ -n "$final_directory" ]]; then
+        echo ""
+        echo "Clone completed in: $final_directory"
+        echo -n "Would you like to open in VS Code? (y/n): "
+        read open_vscode
+        if [[ $open_vscode =~ ^[Yy]$ ]]; then
+            if command -v code &> /dev/null; then
+                code "$final_directory"
+            else
+                echo "VS Code not found. Opening directory..."
+                cd "$final_directory"
+            fi
+        else
+            echo -n "Would you like to change to the directory? (y/n): "
+            read change_dir
+            if [[ $change_dir =~ ^[Yy]$ ]]; then
+                cd "$final_directory"
+                pwd
+                ls -la
+            fi
+        fi
+    fi
+}
+
+# ----------------------
+# Python Virtual Environment Management
+# ----------------------
+
+pyenv() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: pyenv [venv_name] [python_version]"
+        echo "Examples:"
+        echo "  pyenv                    # Create venv with default name and Python version"
+        echo "  pyenv myproject          # Create venv named 'myproject'"
+        echo "  pyenv myproject 3.9      # Create venv with Python 3.9"
+        return 0
+    fi
+
+    local venv_name="${1:-venv}"
+    local python_version="${2:-3}"
+    local python_cmd="python$python_version"
+
+    # Check if specified Python version exists
+    if ! command -v "$python_cmd" &> /dev/null; then
+        echo "Python $python_version not found. Using default python3..."
+        python_cmd="python3"
+        if ! command -v "$python_cmd" &> /dev/null; then
+            echo "Error: python3 not found. Please install Python."
+            return 1
+        fi
+    fi
+
+    # Create virtual environment
+    echo "Creating virtual environment '$venv_name' with $python_cmd..."
+    if "$python_cmd" -m venv "$venv_name"; then
+        echo "Virtual environment '$venv_name' created successfully."
+        echo "Activating virtual environment..."
+        source "$venv_name/bin/activate"
+        echo "Virtual environment activated. Python version:"
+        python --version
+        echo "Pip version:"
+        pip --version
+    else
+        echo "Failed to create virtual environment."
+        return 1
+    fi
+}
+
+# Python HTTP server
+pyserver() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: pyserver [directory] [port]"
+        echo "Examples:"
+        echo "  pyserver                 # Serve current directory on port 8000"
+        echo "  pyserver ./docs          # Serve ./docs directory on port 8000"
+        echo "  pyserver ./docs 3000     # Serve ./docs directory on port 3000"
+        return 0
+    fi
+
+    local directory="${1:-.}"
+    local port="${2:-8000}"
+
+    if [[ ! -d "$directory" ]]; then
+        echo "Error: Directory '$directory' does not exist."
+        return 1
+    fi
+
+    echo "Starting Python HTTP server..."
+    echo "Serving directory: $directory"
+    echo "Port: $port"
+    echo "URL: http://localhost:$port"
+    echo "Press Ctrl+C to stop the server"
+    echo ""
+
+    cd "$directory" || return 1
+    
+    # Use Python 3 HTTP server
+    if command -v python3 &> /dev/null; then
+        python3 -m http.server "$port"
+    elif command -v python &> /dev/null; then
+        python -m http.server "$port"
+    else
+        echo "Error: Python not found."
+        return 1
+    fi
+}
+
+# GitHub Repository Creation
+create_repo() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: create_repo <repo_name> [options]"
+        echo "Options:"
+        echo "  --private/-p             Make repository private"
+        echo "  --description/-d DESC    Repository description"
+        echo "  --template/-t TEMPLATE   Use a template"
+        echo "Examples:"
+        echo "  create_repo my-project"
+        echo "  create_repo my-project --private --description 'My awesome project'"
+        return 0
+    fi
+
+    if [[ -z "$1" ]]; then
+        echo "Error: Repository name is required"
+        echo "Usage: create_repo <repo_name> [options]"
+        return 1
+    fi
+
+    local repo_name="$1"
+    local visibility="public"
+    local description=""
+    local template=""
+    shift
+
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --private|-p)
+                visibility="private"
+                shift
+                ;;
+            --description|-d)
+                description="$2"
+                shift 2
+                ;;
+            --template|-t)
+                template="$2"
+                shift 2
+                ;;
+            *)
+                echo "Unknown option: $1"
+                return 1
+                ;;
+        esac
+    done
+
+    # Check if gh is available
+    if ! command -v gh &> /dev/null; then
+        echo "Error: GitHub CLI (gh) is not installed."
+        return 1
+    fi
+
+    # Check if logged in
+    if ! gh auth status &>/dev/null; then
+        echo "Error: Not logged in to GitHub. Run 'gh auth login' first."
+        return 1
+    fi
+
+    # Create repository
+    local gh_cmd="gh repo create $repo_name --$visibility"
+    
+    if [[ -n "$description" ]]; then
+        gh_cmd+=" --description '$description'"
+    fi
+    
+    if [[ -n "$template" ]]; then
+        gh_cmd+=" --template $template"
+    fi
+
+    echo "Creating repository: $repo_name"
+    echo "Visibility: $visibility"
+    [[ -n "$description" ]] && echo "Description: $description"
+    [[ -n "$template" ]] && echo "Template: $template"
+    
+    if eval "$gh_cmd"; then
+        echo "✅ Repository created successfully!"
+        echo "🔗 Repository URL: https://github.com/$(gh api user --jq .login)/$repo_name"
+        
+        echo -n "Would you like to clone the repository locally? (y/n): "
+        read clone_repo
+        if [[ $clone_repo =~ ^[Yy]$ ]]; then
+            git_clone "$(gh api user --jq .login)/$repo_name"
+        fi
+    else
+        echo "❌ Failed to create repository"
+        return 1
+    fi
+}

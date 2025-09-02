@@ -1,0 +1,474 @@
+# ----------------------
+# General Shell Functions
+# ----------------------
+  # Normalize time to hh:mm:ss.
+  # If only seconds are provided (e.g. "10"), prepend "00:00:".
+  # If minutes and seconds are provided (e.g. "01:00"), prepend "00:".
+  normalize_time() {
+    local input="$1"
+    if [[ "$input" =~ ^[0-9]+$ ]]; then
+      printf "00:00:%02d" "$input"
+    elif [[ "$input" =~ ^[0-9]+:[0-9]+$ ]]; then
+      printf "00:%s" "$input"
+    else
+      echo "$input"
+    fi
+  }
+
+# ----------------------
+# Clip Board
+# ----------------------
+ccopy()  { pbcopy < "$1"; } # copy to clipboard
+cpaste() { pbpaste; } # paste from clipboard
+clipls() { ls -l | pbcopy; } # list directory contents and copy to clipboard
+clipcat() { cat "$1" | pbcopy; } # copy file contents to clipboard
+clippwd() { pwd | pbcopy; } # copy current directory to clipboard
+clipip() { ipconfig getifaddr en0 | pbcopy; } # copy en0 ip address to clipboard
+# temp copy to clipboard by backing up current clipboard, then copying to clipboard, then restoring clipboard
+
+
+# Fuzzy-search your shell history and re-run a command
+fhist() {
+  local cmd
+  cmd=$(fc -l 1 | sed 's/ *[0-9]* *//' | fzf --height 40% --reverse) && print -s -- "$cmd" && eval "$cmd"
+}
+
+# ----------------------
+# Video and Audio Manipulation
+# These functions are used to trim videos and audio files as well as convert them to different formats
+download_video() {
+  # Usage: download_video url [options]
+  # Options:
+  #   --output/-o FILENAME    Output filename (default: auto-generated from title)
+  #   --start/-s TIME         Start time (format: HH:MM:SS or seconds)
+  #   --end/-e TIME           End time (format: HH:MM:SS or seconds)
+  #   --quality/-q QUALITY    Video quality (best, 1080p, 720p, 480p, 360p, worst)
+  #   --format/-f FORMAT      Format (mp4, webm, mp3, etc.)
+  #   --subtitles/-sub        Download subtitles if available (default: false, default language: en)
+  #   --language/-l LANGUAGE  Language (default: en)
+  #   --audio-only/-a         Download audio only
+  #   --help/-h               Show this help message
+
+  # Show help if requested or no arguments provided
+  if [[ "$1" == "--help" || "$1" == "-h" || -z "$1" ]]; then
+    echo "Usage: download_video url [options]"
+    echo "Options:"
+    echo "  --output, -o FILENAME    Output filename (default: auto-generated from title)"
+    echo "  --start, -s TIME         Start time (format: HH:MM:SS or seconds)"
+    echo "  --end, -e TIME           End time (format: HH:MM:SS or seconds)"
+    echo "  --quality, -q QUALITY    Video quality (best, 1080p, 720p, 480p, 360p, worst)"
+    echo "  --format, -f FORMAT      Format (mp4, webm, mp3, etc.)"
+    echo "  --subtitles, -sub        Download subtitles if available (default: false, default language: en)"
+    echo "  --language, -l LANGUAGE  Language (default: en)"
+    echo "  --audio-only, -a         Download audio only"
+    echo "  --help, -h               Show this help message"
+    return 0
+  fi
+
+  # Check if youtube-dl is installed
+  if ! command -v youtube-dl &> /dev/null; then
+    echo "youtube-dl could not be found"
+    # Prompt the user to install youtube-dl
+    read -p "Do you want to install youtube-dl? (y/n) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+      brew install youtube-dl
+    else
+      return 1
+    fi
+  fi
+
+  # Parse arguments
+  local url="$1"
+  local output_filename=""
+  local start_time=""
+  local end_time=""
+  local quality="best"
+  local format=""
+  local subtitles=false
+  local language="en"
+  local audio_only=false
+  local ytdl_args=()
+  
+  shift # Skip the URL arg
+
+  # Validate the URL
+  if [[ ! "$url" =~ ^https?:// ]]; then
+    echo "❌ Invalid URL: $url"
+    echo "URL must start with http:// or https://"
+    return 1
+  fi
+
+  # Parse options
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --output|-o)
+        shift
+        output_filename="$1"
+        ;;
+      --start|-s)
+        shift
+        start_time=$(normalize_time "$1")
+        ;;
+      --end|-e)
+        shift
+        end_time=$(normalize_time "$1")
+        ;;
+      --quality|-q)
+        shift
+        quality="$1"
+        ;;
+      --format|-f)
+        shift
+        format="$1"
+        ;;
+      --subtitles|-sub)
+        subtitles=true
+        ;;
+      --language|-l)
+        shift
+        language="$1"
+        ;;
+      --audio-only|-a)
+        audio_only=true
+        ;;
+      *)
+        echo "❌ Unknown option: $1"
+        echo "Use 'download_video --help' to see available options"
+        return 1
+        ;;
+    esac
+    shift
+  done
+
+  # Build youtube-dl arguments
+  if [[ "$audio_only" == true ]]; then
+    ytdl_args+=("-x" "--audio-format" "mp3")
+  else
+    # Handle video quality
+    case "$quality" in
+      best)
+        ytdl_args+=("-f" "bestvideo+bestaudio/best")
+        ;;
+      1080p)
+        ytdl_args+=("-f" "bestvideo[height<=1080]+bestaudio/best[height<=1080]")
+        ;;
+      720p)
+        ytdl_args+=("-f" "bestvideo[height<=720]+bestaudio/best[height<=720]")
+        ;;
+      480p)
+        ytdl_args+=("-f" "bestvideo[height<=480]+bestaudio/best[height<=480]")
+        ;;
+      360p)
+        ytdl_args+=("-f" "bestvideo[height<=360]+bestaudio/best[height<=360]")
+        ;;
+      worst)
+        ytdl_args+=("-f" "worstvideo+worstaudio/worst")
+        ;;
+      *)
+        ytdl_args+=("-f" "best") # Default to best quality
+        ;;
+    esac
+  fi
+
+  # Handle format if specified
+  if [[ -n "$format" ]]; then
+    ytdl_args+=(--recode-video "$format")
+  fi
+
+  # Handle subtitles
+  if [[ "$subtitles" == true ]]; then
+    ytdl_args+=(--write-sub --convert-subs srt --sub-lang "$language")
+  fi
+
+  # Handle output filename
+  if [[ -n "$output_filename" ]]; then
+    # Sanitize filename: replace spaces with underscores, remove special characters
+    output_filename=$(echo "$output_filename" | tr ' ' '_' | tr -cd '[:alnum:]._-')
+    ytdl_args+=(-o "$output_filename.%(ext)s")
+  else
+    # Auto-generate filename from title
+    ytdl_args+=(-o "%(title)s.%(ext)s")
+  fi
+
+  # Download the video
+  echo "🎬 Downloading from: $url"
+  echo "⚙️ Options: quality=$quality, format=$format"
+  [[ -n "$start_time" ]] && echo "Starting at: $start_time"
+  [[ -n "$end_time" ]] && echo "Ending at: $end_time"
+  
+  # Download with youtube-dl
+  if youtube-dl "${ytdl_args[@]}" "$url"; then
+    echo "✅ Download complete!"
+    
+    # Post-processing: trim if start/end times were specified
+    local downloaded_file=$(youtube-dl --get-filename -o "%(title)s.%(ext)s" "$url")
+    
+    if [[ -n "$start_time" || -n "$end_time" ]]; then
+      echo "🔪 Trimming video..."
+      # Call trim_vid to handle the trimming
+      trim_vid "$downloaded_file" --start "$start_time" --end "$end_time"
+    fi
+    
+    return 0
+  else
+    echo "❌ Download failed!"
+    return 1
+  fi
+}
+
+
+trim_vid() {
+  local file=""
+  local start=""
+  local end=""
+  # Parse arguments.
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --start|-ss)
+        shift
+        start=$(normalize_time "$1")
+        ;;
+      --end|-to)
+        shift
+        end=$(normalize_time "$1")
+        ;;
+      *)
+        # Assume the first non-option is the filename.
+        if [[ -z "$file" ]]; then
+          file="$1"
+        fi
+        ;;
+    esac
+    shift
+  done
+
+  if [[ -z "$file" ]]; then
+    echo "❌ No valid input file provided."
+    return 1
+  fi
+
+  if [[ ! -f "$file" ]]; then
+    echo "❌ File not found: $file"
+    return 1
+  fi
+
+  # Generate output filename by replacing spaces and special characters with underscores.
+  local filename="${file##*/}"
+  local basename="${filename%.*}"
+  local extension="${filename##*.}"
+  local cleanname
+  cleanname="$(echo "$basename" | tr -cs '[:alnum:]' '_')_trimmed.$extension"
+
+  # Build and run ffmpeg command.
+  local cmd=(ffmpeg)
+  [[ -n "$start" ]] && cmd+=(-ss "$start")
+  cmd+=(-i "$file")
+  [[ -n "$end" ]] && cmd+=(-to "$end")
+  cmd+=(-c:v libx264 -c:a aac "$cleanname")
+
+  echo "🎬 Trimming: $file"
+  echo "➡️ Output:   $cleanname"
+  echo "Running: ${cmd[*]}"
+  "${cmd[@]}"
+}
+
+# Create a directory and cd to it if only one arg is passed else just make the dir
+mkd(){
+    if [[ -z "$1" ]]; then
+        echo "No directory name provided"
+        return 1
+    # If multiple args are passed then make the dirs and list them
+    elif [[ $# -gt 1 ]]; then
+        mkdir -p "$@" && ls -l "$@"
+    # Otherwise, make the dir and cd to it (single argument case)
+    else
+        mkdir -p "$1" && cd "$1"
+        pwd # print the current directory
+        lt # list the directory contents 
+    fi
+}
+
+# Reset file content
+reset_file(){
+    # usage: reset_file file1 file2 ...
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: reset_file file1 file2 ..."
+        return 0
+    fi
+    
+    # Check if arguments are provided
+    if [[ $# -eq 0 ]]; then
+        echo "Error: No files specified"
+        echo "Usage: reset_file file1 file2 ..."
+        return 1
+    fi
+    
+    # Reset the file content to an empty string
+    # use the backup function to create a backup of the file before erasing
+    #handle one or multiple files
+    # catch escapes and errors to handle prompting user to restore backup or delete
+    for file in "$@"; do
+        # Check if file exists
+        if [[ ! -f "$file" ]]; then
+            echo "Error: File '$file' does not exist"
+            continue
+        fi
+        
+        # Generate backup filename first
+        local backup_suffix=".bak_$(date +%Y-%m-%d_%H-%M-%S)"
+        local backup_filename="${file}${backup_suffix}"
+        
+        # Create backup manually
+        if command -v rsync &> /dev/null; then
+            rsync "$file" "$backup_filename"
+        else
+            cp "$file" "$backup_filename"
+        fi
+        echo "Backup of $file created as $backup_filename"
+        
+        # Clear the file content
+        echo "" > "$file"
+        echo "File content backed up and erased."
+        echo "Opening $file in nano editor"
+        
+        # Add a comment with the filename
+        echo "# $file" >> "$file"
+        
+        # Sleep briefly
+        sleep 0.5
+        
+        # Open in nano editor
+        nano "$file"
+        
+        # Show the backup file
+        ls "$backup_filename"
+        
+        # Ask user about seeing diff
+        local see_diff="n"
+        echo -n "Do you want to see the difference between the original and backup file? (y/n):(default:n) "
+        read see_diff
+        
+        if [[ "$see_diff" == "y" ]]; then
+            # Use diff command safely
+            if command -v diff &> /dev/null; then
+                diff "$file" "$backup_filename"
+            else
+                echo "diff command not found"
+            fi
+            
+            # Ask about restoring backup
+            local restore_backup="n"
+            echo -n "Do you want to restore the backup file? (y/n):(default:n) "
+            read restore_backup
+            
+            if [[ "$restore_backup" == "y" ]]; then
+                mv "$backup_filename" "$file"
+                echo "Backup file restored."
+            fi
+        fi
+    done
+}
+
+# Create a zip archive
+zipfile(){
+    # usage: zipfile name file_or_dir1 file_or_dir2 ...
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "usage: zipfile name_of_zip_file file_or_dir1 file_or_dir2 ..."
+        return 0
+    fi
+    # check if args are passed
+    # check if name is passed or if file or dir is passed
+    # If name is passed then zip the file or dir with the name
+    # if no name is passed then zip the file or dir with the name of the file or dir
+    # if multiple files or dirs are passed then zip them all with the name of the first file or dir + more + .zip
+}
+
+# create backup of a file or directory
+backup(){
+  # human readiable date and time with backup
+  # check if dir or files exists
+  backup_name=".bak_$(date +%Y-%m-%d_%H-%M-%S)"
+  # check if rsync is installed if not set copy command to cp
+  if command -v rsync &> /dev/null; then
+    COPY_CMD="rsync"
+  else
+    COPY_CMD="cp"
+  fi
+  
+  # take files, dictionaries as arguments get full path as needed many args possible
+  for file in "$@"; do
+    if [ -f "$file" ]; then
+      $COPY_CMD "$file" "$file$backup_name"
+      echo "Backup of $file created as $file$backup_name"
+    elif [ -d "$file" ]; then
+      $COPY_CMD -r "$file" "$file$backup_name"
+      echo "Backup of $file created as $file$backup_name"
+    else
+      echo "$file does not exist"
+    fi
+  done
+}
+
+# change dir and List Directory Contents
+cdl(){
+  if [ -n "$1" ]; then
+    cd "$1" && ll
+  else
+    cd ~ && ll
+  fi
+}
+
+# Help functions
+show_func(){
+    # usage: show_help function_name
+    # show the help for a specific function
+    local files=("$HOME/.zsh_aliases" "$HOME/.zsh_functions" "$HOME/.zsh_git" "$HOME/.zsh_apps" "$HOME/.zsh_network" "$HOME/.zsh_transfer" "$HOME/.zsh_security" "$HOME/.zsh_utils")
+    for file in "${files[@]}"; do
+        if [ -f "$file" ]; then
+            grep -E "^\s*${1}\s*\(\)|^\s*function\s+${1}" "$file"
+        fi
+    done
+}
+
+alias show_function="show_func"
+
+show_alias(){
+    # usage: show_alias
+    # show all the aliases in all zsh config files
+    local files=("$HOME/.zsh_aliases" "$HOME/.zsh_functions" "$HOME/.zsh_git" "$HOME/.zsh_apps" "$HOME/.zsh_network" "$HOME/.zsh_transfer" "$HOME/.zsh_security" "$HOME/.zsh_utils")
+    for file in "${files[@]}"; do
+        if [ -f "$file" ]; then
+            echo "Aliases in $file:"
+            grep -E "^alias " "$file" | cut -d '=' -f 1 | sort | uniq
+            echo ""
+        fi
+    done
+}
+
+show_help(){
+    # usage: show_help function_name
+    # show the help for a specific function
+    local files=("$HOME/.zsh_aliases" "$HOME/.zsh_functions" "$HOME/.zsh_git" "$HOME/.zsh_apps" "$HOME/.zsh_network" "$HOME/.zsh_transfer" "$HOME/.zsh_security" "$HOME/.zsh_utils")
+    
+    if [[ -z "$1" ]]; then
+        # If no argument provided, show helpmenu
+        helpmenu
+        return 0
+    fi
+    
+    for file in "${files[@]}"; do
+        if [ -f "$file" ]; then
+            grep -E "^\s*${1}\s*\(\)|^\s*function\s+${1}" "$file"
+        fi
+    done
+}
+
+helpmenu(){
+    echo "Help Menu:"
+    echo "----------"
+    echo "See all functions: show_function"
+    echo "See all aliases: show_alias"
+    echo "See help for a function: show_help function_name"
+    echo "See help for an alias: show_help alias_name"
+} 

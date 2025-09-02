@@ -1,0 +1,77 @@
+# Command line keepassxc
+alias kp="keepassxc"
+# Open database in keepassxc
+alias run-kp="kp --db $1"
+
+# ----------------------
+# Applications Management
+# ----------------------
+
+# Setup profiles directory
+setup_profiles(){
+    mkdir -p $HOME/Profiles
+    cd $HOME/Profiles
+}
+
+# Application launchers
+alias run-matrix="run-element"
+alias run-irregular="run-element irregularchat"
+
+run-element(){
+    # usage: run-element
+    # open element desktop in the default browser
+    # if a profile is passed then use it
+    setup_profiles
+    /Applications/Element.app/Contents/MacOS/Element --profile "$1"&
+    cd - # go back to the previous directory
+}
+
+run-firefox(){
+    # usage: run-firefox
+    # open firefox in the default browser
+    # if a profile is passed then use it 
+    setup_profiles
+    /Applications/Firefox.app/Contents/MacOS/firefox --profile "$1" --new-window "https://sso.irregularchat.com"&
+    cd - # go back to the previous directory
+}
+
+run-discord(){
+    # usage: run-discord
+    # open discord in the default browser
+    # if a profile is passed then use it
+    setup_profiles
+    /Applications/Discord.app/Contents/MacOS/Discord --profile "$1"&
+    cd - # go back to the previous directory
+}
+
+# System Updates
+update_all(){
+    sudo echo "Updating brew" # using sudo with echo to get user password, sudo used for softwareupdate
+    brew update && brew upgrade && brew cleanup && brew doctor
+    echo "Updating App Store apps"
+    if command -v mas >/dev/null 2>&1; then
+        mas upgrade
+    else
+        echo "mas (Mac App Store CLI) not installed."
+        printf "Would you like to install mas now? (y/n): "
+        read install_mas
+        if [[ $install_mas =~ ^[Yy]$ ]]; then
+            echo "Installing mas..."
+            brew install mas
+            if command -v mas >/dev/null 2>&1; then
+                echo "mas installed successfully. Updating App Store apps..."
+                mas upgrade
+            else
+                echo "Failed to install mas. Please check App Store manually for updates."
+            fi
+        else
+            echo "Skipping App Store updates. Check App Store manually for updates."
+        fi
+    fi
+    echo "Updating macOS"
+    sudo softwareupdate --install --all
+    echo "Updating git repositories"
+    update_git_repos
+    echo "Clearing cache"
+    clear
+}

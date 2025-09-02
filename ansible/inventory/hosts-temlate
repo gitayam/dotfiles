@@ -1,0 +1,6 @@
+#remove the template from the name of this file and fill in the template information with your servers
+
+[example_servers]
+example_name1 ansible_host=example1 ansible_user=root ansible_port=2220
+example_name2 ansible_host=example2 ansible_user=root
+example_name3 ansible_host=example3 ansible_user=root
