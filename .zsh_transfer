@@ -1,0 +1,391 @@
+# ----------------------
+# File Transfer Functions
+# ----------------------
+
+# Clean and sanitize media filenames
+clean_media_name() {
+    local filename="$1"
+    local clean_name="$filename"
+    
+    # Remove file extension for processing
+    clean_name="${clean_name%.*}"
+    
+    # Common torrent/release group patterns to remove (case insensitive)
+    local patterns=(
+        # Year patterns
+        '\.[0-9]{4}\.'
+        '\([0-9]{4}\)'
+        '\[0-9]{4}'
+        
+        # Quality indicators
+        '\.2160p\.' '\.1080p\.' '\.720p\.' '\.480p\.' '\.360p\.'
+        '\.4K\.' '\.UHD\.' '\.HD\.' '\.SD\.'
+        '\.BluRay\.' '\.BRRip\.' '\.BDRip\.' '\.WEBRip\.' '\.WEB-DL\.' '\.WEBDL\.'
+        '\.HDRip\.' '\.DVDRip\.' '\.DVDSCR\.' '\.CAM\.' '\.TS\.' '\.TC\.'
+        '\.HDTV\.' '\.PDTV\.' '\.DSR\.'
+        
+        # Codecs and formats
+        '\.x264\.' '\.x265\.' '\.h264\.' '\.h265\.' '\.HEVC\.' '\.10bit\.'
+        '\.AAC\.' '\.AC3\.' '\.DTS\.' '\.DD5\.1\.' '\.TrueHD\.' '\.Atmos\.'
+        '\.FLAC\.' '\.MP3\.'
+        
+        # Release groups (common ones, surrounded by brackets or at end)
+        '\[YIFY\]' '\[YTS.*\]' '\[RARBG\]' '\[ETRG\]' '\[FGT\]'
+        '\[SPARKS\]' '\[GECKOS\]' '\[EVO\]' '\[CMRrG\]' '\[BOKUTOX\]'
+        '\[UTR\]' '\[PSA\]' '\[ION10\]' '\[MEGUSTA\]' '\[TGx\]'
+        '\-YIFY$' '\-YTS$' '\-RARBG$' '\-ETRG$' '\-FGT$'
+        '\-SPARKS$' '\-GECKOS$' '\-EVO$' '\-CMRrG$' '\-BOKUTOX$'
+        
+        # Language and subtitle tags
+        '\.DUAL\.' '\.DUBBED\.' '\.SUBBED\.' '\.MultiSub\.'
+        '\.ENG\.' '\.ENGLISH\.' '\.Hindi\.' '\.Tamil\.'
+        
+        # Other common tags
+        '\.REPACK\.' '\.PROPER\.' '\.EXTENDED\.' '\.UNRATED\.'
+        '\.Directors\.Cut\.' '\.THEATRICAL\.' '\.REMUX\.'
+        '\.iNTERNAL\.' '\.EXTERNAL\.'
+        
+        # Season/Episode patterns for TV shows
+        '\.S[0-9]{2}E[0-9]{2}\.' '\.S[0-9]{2}\.' '\.E[0-9]{2}\.'
+        
+        # Brackets content (often contains metadata)
+        '\[[^\]]*\]' '\([^\)]*\)'
+    )
+    
+    # Apply all cleaning patterns
+    for pattern in "${patterns[@]}"; do
+        # Use perl-style regex for more complex patterns
+        clean_name=$(echo "$clean_name" | sed -E "s/${pattern}//gi" 2>/dev/null || echo "$clean_name")
+    done
+    
+    # Additional cleaning with simpler patterns
+    clean_name=$(echo "$clean_name" | sed -E '
+        # Remove quality indicators without dots
+        s/2160p|1080p|720p|480p|360p//gi
+        s/4K|UHD|HD|SD//gi
+        s/BluRay|BRRip|BDRip|WEBRip|WEB-DL|WEBDL//gi
+        s/HDRip|DVDRip|DVDSCR|CAM|TS|TC//gi
+        s/HDTV|PDTV|DSR//gi
+        
+        # Remove codecs without dots
+        s/x264|x265|h264|h265|HEVC|10bit//gi
+        s/AAC|AC3|DTS|DD5\.1|TrueHD|Atmos//gi
+        s/FLAC|MP3//gi
+        
+        # Remove other tags
+        s/DUAL|DUBBED|SUBBED|MultiSub//gi
+        s/REPACK|PROPER|EXTENDED|UNRATED//gi
+        s/Directors Cut|THEATRICAL|REMUX//gi
+        s/iNTERNAL|EXTERNAL//gi
+        
+        # Remove years in various formats
+        s/\b(19|20)[0-9]{2}\b//g
+        
+        # Remove any remaining bracketed content
+        s/\[[^\]]*\]//g
+        s/\([^\)]*\)//g
+        s/\{[^\}]*\}//g
+        
+        # Clean up file size indicators
+        s/[0-9]+(\.[0-9]+)?\s?(GB|MB|gb|mb)//gi
+        
+        # Remove resolution indicators
+        s/[0-9]{3,4}x[0-9]{3,4}//g
+        
+        # Remove multiple dots, dashes, underscores
+        s/\.+/./g
+        s/\-+/-/g
+        s/_+/_/g
+        
+        # Remove dots used as spaces
+        s/\./ /g
+        
+        # Remove leading/trailing spaces, dots, dashes
+        s/^[\s\.\-_]+//
+        s/[\s\.\-_]+$//
+    ')
+    
+    # Final cleanup: 
+    # Replace remaining special characters with spaces
+    clean_name="${clean_name//[^[:alnum:][:space:]-]/ }"
+    
+    # Collapse multiple spaces
+    clean_name=$(echo "$clean_name" | tr -s ' ')
+    
+    # Trim spaces
+    clean_name="${clean_name#"${clean_name%%[![:space:]]*}"}"
+    clean_name="${clean_name%"${clean_name##*[![:space:]]}"}"
+    
+    # Replace spaces with underscores for filesystem safety
+    clean_name="${clean_name// /_}"
+    
+    # Remove multiple underscores
+    clean_name="${clean_name//__/_}"
+    
+    echo "$clean_name"
+}
+
+# Transfer files to a remote host using rsync
+transfer_file() {
+    # usage: transfer_file [file1] [file2] ...
+    # transfers files to a remote host using rsync
+    
+    # Default remote settings (can be overridden by environment variables)
+    local REMOTE_HOST=${TRANSFER_REMOTE_HOST:-""}
+    local REMOTE_USER=${TRANSFER_REMOTE_USER:-""}
+    local REMOTE_PORT=${TRANSFER_REMOTE_PORT:-22}
+    local REMOTE_BASE_PATH=${TRANSFER_REMOTE_PATH:-""}
+    
+    # Help text
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: transfer_file [file1] [file2] ..."
+        echo "Transfer files to a remote host using rsync."
+        echo ""
+        echo "Environment variables:"
+        echo "  TRANSFER_REMOTE_HOST - Remote host to connect to"
+        echo "  TRANSFER_REMOTE_USER - Remote username"
+        echo "  TRANSFER_REMOTE_PORT - SSH port to use (default: 22)"
+        echo "  TRANSFER_REMOTE_PATH - Base path on remote host"
+        echo ""
+        echo "Example:"
+        echo "  export TRANSFER_REMOTE_HOST=proxmox-main"
+        echo "  export TRANSFER_REMOTE_USER=root"
+        echo "  export TRANSFER_REMOTE_PATH=/datadrive/media/Movies"
+        echo "  transfer_file movie.mkv"
+        return 0
+    fi
+    
+    # Check if required variables are set, prompt if not
+    if [[ -z "$REMOTE_HOST" ]]; then
+        echo -n "Enter remote hostname: "
+        read REMOTE_HOST
+        if [[ -z "$REMOTE_HOST" ]]; then
+            echo "Error: Remote host is required"
+            return 1
+        fi
+    fi
+    
+    if [[ -z "$REMOTE_USER" ]]; then
+        echo -n "Enter remote username: "
+        read REMOTE_USER
+        if [[ -z "$REMOTE_USER" ]]; then
+            echo "Error: Remote username is required"
+            return 1
+        fi
+    fi
+    
+    if [[ -z "$REMOTE_BASE_PATH" ]]; then
+        echo -n "Enter remote destination path: "
+        read REMOTE_BASE_PATH
+        if [[ -z "$REMOTE_BASE_PATH" ]]; then
+            echo "Error: Remote path is required"
+            return 1
+        fi
+    fi
+    
+    # Check if any arguments were provided
+    if [[ $# -eq 0 ]]; then
+        echo "Error: No files specified"
+        echo "Use -h or --help for usage information"
+        return 1
+    fi
+    
+    # Iterate through all paths provided
+    for path in "$@"; do
+        if [[ ! -e "$path" ]]; then
+            echo "Error: '$path' does not exist"
+            continue
+        fi
+        
+        # Get basename and create safe directory name
+        local basename="${path##*/}"
+        # Use the clean_media_name function for better sanitization
+        local safe_name=$(clean_media_name "$basename")
+        
+        if [[ -d "$path" ]]; then # if the path is a directory
+            # create the directory on the remote host if it doesn't exist
+            ssh -p "$REMOTE_PORT" "$REMOTE_USER@$REMOTE_HOST" "mkdir -p '$REMOTE_BASE_PATH/$safe_name'"
+            # transfer the directory to the remote host
+            rsync -avP -e "ssh -p $REMOTE_PORT" "$path/" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_BASE_PATH/$safe_name/" || echo "Failed to transfer directory '$path'"
+        elif [[ -f "$path" ]]; then # if the path is a file
+            # For media files, create a folder with the sanitized name
+            local ext="${basename##*.}"
+            if [[ "$ext" =~ ^(mkv|mp4|avi|mov|MKV|MP4|AVI|MOV)$ ]]; then
+                # create the directory on the remote host if it doesn't exist
+                ssh -p "$REMOTE_PORT" "$REMOTE_USER@$REMOTE_HOST" "mkdir -p '$REMOTE_BASE_PATH/$safe_name'"
+                # transfer the file to the remote host in its own folder
+                rsync -avP -e "ssh -p $REMOTE_PORT" -- "$path" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_BASE_PATH/$safe_name/" || echo "Failed to transfer file '$path'"
+            else
+                # For non-media files, transfer directly to base path
+                ssh -p "$REMOTE_PORT" "$REMOTE_USER@$REMOTE_HOST" "mkdir -p '$REMOTE_BASE_PATH'"
+                rsync -avP -e "ssh -p $REMOTE_PORT" -- "$path" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_BASE_PATH/" || echo "Failed to transfer file '$path'"
+            fi
+        else
+            echo "Error: '$path' is neither a file nor a directory"
+        fi
+    done
+    
+    # Optionally save the configuration for next time
+    echo ""
+    echo -n "Save these settings for future use? (y/n): "
+    read save_config
+    if [[ "$save_config" == "y" ]]; then
+        echo "# Transfer file configuration" >> ~/.zshrc
+        echo "export TRANSFER_REMOTE_HOST='$REMOTE_HOST'" >> ~/.zshrc
+        echo "export TRANSFER_REMOTE_USER='$REMOTE_USER'" >> ~/.zshrc
+        echo "export TRANSFER_REMOTE_PATH='$REMOTE_BASE_PATH'" >> ~/.zshrc
+        echo "Settings saved to ~/.zshrc"
+    fi
+}
+
+# Transfer media files with automatic organization
+transfer_media() {
+    # Specialized function for transferring media files with sanitized names
+    local REMOTE_HOST=${TRANSFER_REMOTE_HOST:-""}
+    local REMOTE_USER=${TRANSFER_REMOTE_USER:-"root"}
+    local REMOTE_PATH=${TRANSFER_REMOTE_PATH:-"/datadrive/media/Movies"}
+    
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: transfer_media"
+        echo "Transfer all media files (mkv, mp4, avi, mov) in current directory"
+        echo "Files are organized into sanitized folders on the remote host"
+        return 0
+    fi
+    
+    # Check if remote host is configured
+    if [[ -z "$REMOTE_HOST" ]]; then
+        echo -n "Enter remote hostname: "
+        read REMOTE_HOST
+        if [[ -z "$REMOTE_HOST" ]]; then
+            echo "Error: Remote host is required"
+            return 1
+        fi
+    fi
+    
+    # Process all video files in current directory
+    for f in ./*.{mkv,mp4,avi,mov,MKV,MP4,AVI,MOV}(N); do
+        [ -e "$f" ] || continue
+        
+        # Get basename and create safe directory name
+        local basename="${f##*/}"
+        # Use the clean_media_name function for better sanitization
+        local safe_name=$(clean_media_name "$basename")
+        
+        echo "Transferring: $basename -> $safe_name/"
+        
+        # Create directory on remote host
+        ssh "$REMOTE_USER@$REMOTE_HOST" "mkdir -p '$REMOTE_PATH/$safe_name'"
+        
+        # Transfer file using rsync with progress
+        rsync -avP -- "$f" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/$safe_name/"
+    done
+}
+
+# Transfer using wormhole
+wh-transfer() {
+    # Check if wormhole is installed
+    if ! command -v wormhole &> /dev/null; then
+        echo "Error: wormhole is not installed"
+        echo "Install it with: brew install magic-wormhole"
+        return 1
+    fi
+    
+    # Show help if requested
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: wh-transfer [file/directory]"
+        echo "Securely transfer files using Magic Wormhole"
+        return 0
+    fi
+    
+    # Check if a path was provided
+    if [[ -z "$1" ]]; then
+        echo "Error: No file or directory specified"
+        return 1
+    fi
+    
+    # Send the file or directory
+    if [[ -d "$1" ]]; then
+        # For directories, create a zip first
+        local zip_file="/tmp/$(basename "$1").zip"
+        echo "Creating zip archive of directory..."
+        zip -r "$zip_file" "$1"
+        echo "Sending zip archive via wormhole..."
+        wormhole send "$zip_file"
+        echo "Cleaning up temporary zip file..."
+        rm "$zip_file"
+    else
+        # For regular files, send directly
+        wormhole send "$1"
+    fi
+}
+
+# Upload to pCloud
+upload_to_pcloud() {
+    # Check if rclone is installed
+    if ! command -v rclone &> /dev/null; then
+        echo "Error: rclone is not installed"
+        echo "Install it with: brew install rclone"
+        return 1
+    fi
+    
+    # Show help if requested
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: upload_to_pcloud [file/directory]"
+        echo "Upload files to pCloud using rclone"
+        return 0
+    fi
+    
+    # Check if a path was provided
+    if [[ -z "$1" ]]; then
+        echo "Error: No file or directory specified"
+        return 1
+    fi
+    
+    # Check if pCloud remote is configured
+    if ! rclone listremotes | grep -q "pcloud:"; then
+        echo "Error: pCloud remote not configured in rclone"
+        echo "Run 'rclone config' to set up pCloud"
+        return 1
+    fi
+    
+    # Upload the file or directory
+    rclone copy "$1" pcloud:uploads/ -P
+}
+
+# Firefox Send alternative
+fsend() {
+    # Check if ffsend is installed
+    if ! command -v ffsend &> /dev/null; then
+        echo "Error: ffsend is not installed"
+        echo "Install it with: brew install ffsend"
+        return 1
+    fi
+    
+    # Show help if requested
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: fsend [file/directory]"
+        echo "Send files using Firefox Send (ffsend)"
+        return 0
+    fi
+    
+    # Check if a path was provided
+    if [[ -z "$1" ]]; then
+        echo "Error: No file or directory specified"
+        return 1
+    fi
+    
+    # Upload with Firefox Send
+    if [[ -d "$1" ]]; then
+        # For directories, create a zip first
+        local zip_file="/tmp/$(basename "$1").zip"
+        echo "Creating zip archive of directory..."
+        zip -r "$zip_file" "$1"
+        echo "Sending zip archive via Firefox Send..."
+        ffsend upload "$zip_file" --copy
+        echo "Cleaning up temporary zip file..."
+        rm "$zip_file"
+    else
+        # For regular files, send directly
+        ffsend upload "$1" --copy
+    fi
+} 
