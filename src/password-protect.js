@@ -36,11 +36,21 @@ export default {
       const providedHash = await hashPassword(password);
       
       if (storedHash === providedHash) {
-        // Password correct - serve the file
+        // Password correct - serve the file inline (render in browser)
         const file = await env.PROTECTED_FILES.get(filename);
         const headers = new Headers();
         file.writeHttpMetadata(headers);
-        headers.set('Content-Disposition', `attachment; filename="${filename}"`);
+        
+        // Set proper content type for inline display
+        const contentType = getContentType(filename);
+        headers.set('Content-Type', contentType);
+        
+        // For images and viewable files, display inline; for others, keep as attachment
+        if (isViewableInline(filename)) {
+          headers.set('Content-Disposition', `inline; filename="${filename}"`);
+        } else {
+          headers.set('Content-Disposition', `attachment; filename="${filename}"`);
+        }
         
         return new Response(file.body, { headers });
       } else {
@@ -82,6 +92,83 @@ async function hashPassword(password) {
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function getContentType(filename) {
+  const ext = filename.split('.').pop()?.toLowerCase();
+  const contentTypes = {
+    // Images
+    'jpg': 'image/jpeg',
+    'jpeg': 'image/jpeg',
+    'png': 'image/png',
+    'gif': 'image/gif',
+    'webp': 'image/webp',
+    'svg': 'image/svg+xml',
+    'bmp': 'image/bmp',
+    'ico': 'image/x-icon',
+    
+    // Text files
+    'txt': 'text/plain',
+    'md': 'text/markdown',
+    'json': 'application/json',
+    'js': 'text/javascript',
+    'css': 'text/css',
+    'html': 'text/html',
+    'htm': 'text/html',
+    'xml': 'text/xml',
+    'csv': 'text/csv',
+    
+    // Documents
+    'pdf': 'application/pdf',
+    'doc': 'application/msword',
+    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'xls': 'application/vnd.ms-excel',
+    'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'ppt': 'application/vnd.ms-powerpoint',
+    'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    
+    // Video
+    'mp4': 'video/mp4',
+    'webm': 'video/webm',
+    'ogg': 'video/ogg',
+    'avi': 'video/x-msvideo',
+    'mov': 'video/quicktime',
+    
+    // Audio
+    'mp3': 'audio/mpeg',
+    'wav': 'audio/wav',
+    'flac': 'audio/flac',
+    'm4a': 'audio/mp4',
+    
+    // Archives
+    'zip': 'application/zip',
+    'tar': 'application/x-tar',
+    'gz': 'application/gzip',
+    'rar': 'application/vnd.rar',
+    '7z': 'application/x-7z-compressed',
+  };
+  
+  return contentTypes[ext] || 'application/octet-stream';
+}
+
+function isViewableInline(filename) {
+  const ext = filename.split('.').pop()?.toLowerCase();
+  const inlineTypes = [
+    // Images - always display inline
+    'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp',
+    
+    // Text files - display inline
+    'txt', 'md', 'json', 'js', 'css', 'html', 'htm', 'xml', 'csv',
+    
+    // PDFs - display inline (browser will show PDF viewer)
+    'pdf',
+    
+    // Video and audio - display inline (browser will show media player)
+    'mp4', 'webm', 'ogg', 'avi', 'mov',
+    'mp3', 'wav', 'flac', 'm4a'
+  ];
+  
+  return inlineTypes.includes(ext);
 }
 
 function generateHomePage() {
