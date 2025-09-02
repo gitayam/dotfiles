@@ -1378,8 +1378,37 @@ cfpu_enhanced() {
 cfshot_function() {
     _cf_ensure_setup || return 1
     
-    local filename="${1:-screenshot_$(date +%Y%m%d_%H%M%S).png}"
-    local is_public="${2:-public}"  # Default to public
+    local filename=""
+    local password=""
+    local is_private=false
+    local public=true
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -p|--password)
+                password="$2"
+                public=false
+                is_private=true
+                shift 2
+                ;;
+            --private)
+                is_private=true
+                public=false
+                shift
+                ;;
+            *)
+                filename="$1"
+                shift
+                ;;
+        esac
+    done
+    
+    # Set default filename if not provided
+    if [[ -z "$filename" ]]; then
+        filename="screenshot_$(date +%Y%m%d_%H%M%S).png"
+    fi
+    
     local temp_file="/tmp/$filename"
     
     echo "📸 Taking screenshot..."
@@ -1390,17 +1419,20 @@ cfshot_function() {
     if [[ -f "$temp_file" ]]; then
         echo "✅ Screenshot captured"
         
-        # Choose bucket based on privacy setting
-        if [[ "$is_public" == "private" ]]; then
+        # Choose upload method based on protection level
+        if [[ "$public" == false && -n "$password" ]]; then
+            echo "🔐 Uploading with password protection..."
+            cfprotect_function "$temp_file" "$password"
+        elif [[ "$is_private" == true ]]; then
             echo "🔒 Uploading as PRIVATE (no public URL)"
-            cfupload "$temp_file" "screenshots-private" "$filename"
+            cfupload "$temp_file" "screenshots" "$filename"
         else
             echo "🌍 Uploading as PUBLIC (shareable URL)"
-            cfupload "$temp_file" "screenshots-public" "$filename"
+            cfpage-upload "$temp_file" "$filename"
         fi
         
         # Clean up temp file
-        rm "$temp_file"
+        rm -f "$temp_file"
     else
         echo "❌ Screenshot cancelled or failed"
         return 1
@@ -1687,65 +1719,97 @@ cfsign() {
 
 # Share file temporarily using Cloudflare Pages
 cftemp_function() {
-    local source_path="$1"
-    local duration_hours="${2:-24}"
+    local file_path=""
+    local duration_hours="24"
+    local password=""
+    local protected=false
     
-    if [[ -z "$source_path" ]]; then
-        echo "Usage: cftemp FILE_PATH [HOURS]"
-        echo ""
-        echo "Examples:"
-        echo "  cftemp document.pdf      # Share for 24 hours"
-        echo "  cftemp image.jpg 1       # Share for 1 hour"
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -e|--expire)
+                duration_hours="$2"
+                shift 2
+                ;;
+            -p|--password)
+                password="$2"
+                protected=true
+                shift 2
+                ;;
+            -h|--help)
+                echo "Usage: cftemp FILE [OPTIONS]"
+                echo ""
+                echo "Options:"
+                echo "  -e, --expire HOURS    Set expiration time in hours (default: 24)"
+                echo "  -p, --password PASS   Password protect the temporary share"
+                echo "  -h, --help           Show this help message"
+                echo ""
+                echo "Examples:"
+                echo "  cftemp document.pdf                    # Share for 24 hours, public"
+                echo "  cftemp image.jpg -e 2                  # Share for 2 hours, public"
+                echo "  cftemp secret.txt -p mypassword        # Share for 24 hours, password-protected"
+                echo "  cftemp report.pdf -e 4 -p secret123    # Share for 4 hours, password-protected"
+                return 0
+                ;;
+            *)
+                file_path="$1"
+                shift
+                ;;
+        esac
+    done
+    
+    if [[ -z "$file_path" ]]; then
+        echo "❌ No file specified"
+        echo "Usage: cftemp FILE [OPTIONS]"
+        echo "Use 'cftemp -h' for help"
         return 1
     fi
     
-    if [[ ! -f "$source_path" ]]; then
-        echo "❌ File not found: $source_path"
+    if [[ ! -f "$file_path" ]]; then
+        echo "❌ File not found: $file_path"
         return 1
     fi
     
-    echo "📤 Creating temporary public share..."
+    echo "📤 Creating temporary share..."
     
     # Generate temporary filename with expiry timestamp
     local timestamp=$(date +%s)
     local expiry=$((timestamp + (duration_hours * 3600)))
-    local filename=$(basename "$source_path")
+    local filename=$(basename "$file_path")
     local temp_name="temp_${expiry}_${filename}"
-    local public_dir="$HOME/public-files"
     
-    # Copy file to public directory with temp name
-    cp "$source_path" "$public_dir/$temp_name"
-    
-    # Update files.json
-    cd "$public_dir" || return 1
-    if [[ -f "files.json" ]]; then
-        local temp_json=$(mktemp)
-        jq --arg name "$temp_name" --arg size "$(ls -lh "$temp_name" | awk '{print $5}')" \
-           --arg expires "Expires in ${duration_hours}h" \
-           '. + [{"name": $name, "size": $size, "expires": $expires}] | unique_by(.name) | reverse' \
-           files.json > "$temp_json" && mv "$temp_json" files.json
+    if [[ "$protected" == true ]]; then
+        echo "🔐 Creating password-protected temporary share..."
+        # Use password protection via our cfprotect_function
+        # Create temp file with the temp name for protected upload
+        local temp_file="/tmp/$temp_name"
+        cp "$file_path" "$temp_file"
+        cfprotect_function "$temp_file" "$password"
+        rm -f "$temp_file"
+        
+        # Store expiry info in a temp log for cleanup
+        echo "$temp_name:$expiry:protected" >> ~/.cf-temp-shares.log
+        
+        echo "✅ Password-protected temporary share created!"
+        echo "⏰ Expires in: $duration_hours hours"
+        echo "🔑 Password required for access"
     else
-        jq -n --arg name "$temp_name" --arg size "$(ls -lh "$temp_name" | awk '{print $5}')" \
-           --arg expires "Expires in ${duration_hours}h" \
-           '[{"name": $name, "size": $size, "expires": $expires}]' > files.json
+        echo "🌍 Creating public temporary share..."
+        # Use public Pages upload
+        local temp_file="/tmp/$temp_name"
+        cp "$file_path" "$temp_file"
+        cfpage-upload "$temp_file" "$temp_name"
+        rm -f "$temp_file"
+        
+        # Store expiry info in a temp log for cleanup
+        echo "$temp_name:$expiry:public" >> ~/.cf-temp-shares.log
+        
+        echo "✅ Public temporary share created!"
+        echo "⏰ Expires in: $duration_hours hours"
     fi
-    
-    # Deploy to Pages
-    echo "🚀 Deploying to Cloudflare Pages..."
-    npx wrangler pages deploy . --project-name public-files >/dev/null 2>&1
-    
-    local public_url="https://public-files-5kg.pages.dev/$temp_name"
-    
-    echo "✅ Temporary share created!"
-    echo "🔗 Public URL: $public_url"
-    echo "⏰ Expires in: $duration_hours hours"
-    echo "📋 URL copied to clipboard"
-    echo "$public_url" | pbcopy
     
     echo ""
     echo "💡 Remember to clean up expired shares with: cfclean"
-    
-    cd - > /dev/null
 }
 
 # Clean up expired temporary shares from Pages
