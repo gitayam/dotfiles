@@ -1,0 +1,13 @@
+# Wrangler Configuration for MacOS Dotfiles
+name = "macos-dotfiles-secrets"
+main = "src/index.js"
+compatibility_date = "2024-09-02"
+compatibility_flags = ["nodejs_compat"]
+
+# Worker configuration
+workers_dev = true
+
+# Environment variables (non-secret)
+[vars]
+ENVIRONMENT = "development"
+LOG_LEVEL = "info"
