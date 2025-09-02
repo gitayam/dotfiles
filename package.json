@@ -1,0 +1,44 @@
+{
+  "name": "macos-dotfiles",
+  "version": "1.0.0",
+  "description": "MacOS dotfiles and configuration with Cloudflare Wrangler integration",
+  "scripts": {
+    "secrets:list": "wrangler secret list",
+    "secrets:put": "wrangler secret put",
+    "secrets:delete": "wrangler secret delete",
+    "secrets:get": "node scripts/get-secrets.js",
+    "secrets:sync": "node scripts/sync-secrets.js",
+    "setup": "npm install && npm run setup:cloudflare",
+    "setup:cloudflare": "node scripts/setup-cloudflare.js",
+    "setup:wrangler": "wrangler login",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "r2:list": "wrangler r2 bucket list",
+    "r2:create": "wrangler r2 bucket create"
+  },
+  "dependencies": {
+    "wrangler": "^3.78.0",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.4"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "local"
+  },
+  "keywords": [
+    "dotfiles",
+    "macos",
+    "cloudflare",
+    "wrangler",
+    "secrets-management"
+  ],
+  "author": "sac",
+  "license": "MIT"
+}
