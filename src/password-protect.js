@@ -3,7 +3,6 @@
  * Files are stored in R2 with metadata containing the password hash
  */
 
-import { createHash } from 'crypto';
 
 export default {
   async fetch(request, env) {
@@ -29,8 +28,11 @@ export default {
         return new Response('File not found', { status: 404 });
       }
       
-      // Check password
-      const storedHash = object.customMetadata?.passwordHash;
+      // Check password  
+      // For password-protected files, the password hash is stored as a KV pair
+      // Key format: hash_{filename}
+      const hashKey = `hash_${filename}`;
+      const storedHash = await env.PASSWORDS?.get(hashKey);
       const providedHash = await hashPassword(password);
       
       if (storedHash === providedHash) {
@@ -57,7 +59,9 @@ export default {
     }
     
     // If file has password, show password form
-    if (object.customMetadata?.passwordHash) {
+    const hashKey = `hash_${path}`;
+    const hasPassword = await env.PASSWORDS?.get(hashKey);
+    if (hasPassword) {
       return new Response(generatePasswordPage(path), {
         headers: { 'Content-Type': 'text/html' }
       });

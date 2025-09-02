@@ -9,5 +9,10 @@ compatibility_flags = ["nodejs_compat"]
 binding = "PROTECTED_FILES"
 bucket_name = "protected-files"
 
+# KV namespace for storing password hashes
+[[kv_namespaces]]
+binding = "PASSWORDS"
+id = "33eebef30dd54140a0485f4ae6dd9e9d"
+
 # Custom domain (optional)
 # route = "protected.yourdomain.com/*"
