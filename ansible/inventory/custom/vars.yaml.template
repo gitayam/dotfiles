@@ -1,0 +1,14 @@
+# SSH keys
+## This is the public key for the user to add to the authorized_keys file
+ssh_keys:
+  - PUBLIC_KEY_HERE
+  - ANOTHER_PUBLIC_KEY_HERE
+
+# Default or placeholder variables
+log_path: "/var/log/maintenance_log.txt"
+search_path: "/home/"
+exclude_path: "/home/discourse"
+authentik_version: "2024.10" # this is the version of authentik that will be used to download the docker-compose.yml file
+
+# This is the user that will be used to run the maintenance tasks
+user: "{{ inventory_hostname }}"

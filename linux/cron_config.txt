@@ -1,0 +1,76 @@
+# cron_configs.txt
+
+# 1. Update Package List, Security Patches, and Git Repositories
+# This cron job runs system updates, applies security patches, and updates Git repositories.
+# It uses the `upgrade_system` and `update_git_repos` functions from .bash_aliases for a complete update.
+# Runs daily at 2:00 AM.
+0 2 * * * /bin/bash -c "source ~/.bash_aliases && upgrade_system && update_git_repos --home"
+
+# 2. Clear Old Docker Cache
+# This job calls `clear_docker_cache` to remove unused Docker images, containers, and volumes, freeing up disk space.
+# Useful on servers with regular Docker container changes.
+# Runs weekly on Sundays at 3:00 AM.
+0 3 * * 0 /bin/bash -c "source ~/.bash_aliases && clear_docker_cache"
+
+# 3. Optimize Memory
+# Runs `optimize_memory` to clear cached memory, helping maintain optimal memory usage on memory-intensive workloads.
+# Runs daily at 4:00 AM.
+0 4 * * * /bin/bash -c "source ~/.bash_aliases && optimize_memory"
+
+# 4. Backup Important Directory
+# Uses `backup_directory` to create a compressed backup of a specified directory (e.g., /home), retaining a set number of backups.
+# This task helps prevent data loss for critical directories.
+# Runs daily at 1:00 AM.
+0 1 * * * /bin/bash -c "source ~/.bash_aliases && backup_directory /home"
+
+# 5. Monitor Disk Usage and Send Alerts
+# Uses `check_disk_usage` to monitor disk space. If any partition exceeds 80%, sends an email alert.
+# Prevents unexpected storage issues by notifying admins of high disk usage.
+# Runs hourly.
+0 * * * * /bin/bash -c "source ~/.bash_aliases && check_disk_usage | mail -s 'Disk Usage Alert' admin@example.com"
+
+# 6. Prune Log Files to Save Space
+# Rotates or truncates log files monthly, preventing excessive disk space consumption.
+# Useful on systems with limited storage or high log volume.
+# Runs on the first day of every month at midnight.
+0 0 1 * * find /var/log -type f -name "*.log" -exec truncate -s 0 {} \;
+
+# 7. Scan for Failed Login Attempts
+# Uses `list_failed_logins` to scan for failed login attempts and emails the report to the administrator.
+# Helps identify unauthorized access attempts.
+# Runs daily at 6:00 AM.
+0 6 * * * /bin/bash -c "source ~/.bash_aliases && list_failed_logins | mail -s 'Failed Login Attempts' admin@example.com"
+
+# 8. Update ClamAV Virus Definitions and Run Scan
+# Updates ClamAV definitions and runs a full system scan, helping detect any malicious files.
+# Important for servers with high security requirements.
+# Runs weekly on Saturdays at 2:30 AM.
+30 2 * * 6 freshclam && clamscan -r / --bell -i
+
+# 9. Network Speed Test and Log Results
+# Uses `network_speed_test` to check network speed and logs the results, tracking connectivity issues over time.
+# Useful for network-reliant servers.
+# Runs daily at 5:00 AM.
+0 5 * * * /bin/bash -c "source ~/.bash_aliases && network_speed_test >> /var/log/network_speed.log"
+
+# 10. Reboot the Server if Needed
+# Checks if the server requires a reboot (e.g., after kernel updates) and reboots if necessary.
+# Ensures updates requiring a reboot are applied without manual intervention.
+# Runs daily at 3:30 AM.
+30 3 * * * [ -f /var/run/reboot-required ] && reboot
+
+
+# Summary Table
+
+# | Task                             | Frequency          | Cron Job                                      |
+# |----------------------------------|--------------------|-----------------------------------------------|
+# | Update system & Git repositories | Daily at 2:00 AM   | 0 2 * * * /bin/bash -c "source ~/.bash_aliases && upgrade_system && update_git_repos --home" |
+# | Clear Docker cache               | Weekly at 3:00 AM  | 0 3 * * 0 /bin/bash -c "source ~/.bash_aliases && clear_docker_cache" |
+# | Optimize memory                  | Daily at 4:00 AM   | 0 4 * * * /bin/bash -c "source ~/.bash_aliases && optimize_memory" |
+# | Backup important directory       | Daily at 1:00 AM   | 0 1 * * * /bin/bash -c "source ~/.bash_aliases && backup_directory /home" |
+# | Disk usage monitoring            | Hourly             | 0 * * * * /bin/bash -c "source ~/.bash_aliases && check_disk_usage | mail -s 'Disk Usage Alert' admin@example.com" |
+# | Log pruning                      | Monthly on 1st     | 0 0 1 * * find /var/log -type f -name "*.log" -exec truncate -s 0 {} \; |
+# | Failed login alerts              | Daily at 6:00 AM   | 0 6 * * * /bin/bash -c "source ~/.bash_aliases && list_failed_logins | mail -s 'Failed Login Attempts' admin@example.com" |
+# | Virus scan                       | Weekly at 2:30 AM  | 30 2 * * 6 freshclam && clamscan -r / --bell -i |
+# | Network speed test               | Daily at 5:00 AM   | 0 5 * * * /bin/bash -c "source ~/.bash_aliases && network_speed_test >> /var/log/network_speed.log" |
+# | Reboot if required               | Daily at 3:30 AM   | 30 3 * * * [ -f /var/run/reboot-required ] && reboot |

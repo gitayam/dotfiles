@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  bash-function-tests:
+    build:
+      context: ..
+      dockerfile: tests/Dockerfile
+    container_name: bash_functions_test
+    volumes:
+      # Mount the bash function files for live editing during development
+      - ../.bash_aliases:/home/testuser/.bash_aliases:ro
+      - ../.bash_apps:/home/testuser/.bash_apps:ro
+      - ../.bash_aws:/home/testuser/.bash_aws:ro
+      - ../.bash_developer:/home/testuser/.bash_developer:ro
+      - ../.bash_docker:/home/testuser/.bash_docker:ro
+      - ../.bash_encryption:/home/testuser/.bash_encryption:ro
+      - ../.bash_functions:/home/testuser/.bash_functions:ro
+      - ../.bash_handle_files:/home/testuser/.bash_handle_files:ro
+      - ../.bash_network:/home/testuser/.bash_network:ro
+      - ../.bash_security:/home/testuser/.bash_security:ro
+      - ../.bash_system:/home/testuser/.bash_system:ro
+      - ../.bash_transfer:/home/testuser/.bash_transfer:ro
+      - ../.bash_utils:/home/testuser/.bash_utils:ro
+      - ../.bashrc:/home/testuser/.bashrc:ro
+      # Mount test output directory
+      - ./test_output:/home/testuser/test_output
+      - ./test_logs:/home/testuser/test_logs
+      # Mount docker socket for docker function testing
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - DISPLAY=${DISPLAY:-:0}
+      - TERM=xterm-256color
+    stdin_open: true
+    tty: true
+    network_mode: "bridge"
+    privileged: true  # Needed for some system functions and Docker access
+    
+  # Separate service for testing network functions
+  network-test:
+    build:
+      context: ..
+      dockerfile: tests/Dockerfile
+    container_name: bash_network_test
+    volumes:
+      - ../.bash_network:/home/testuser/.bash_network:ro
+      - ../.bash_utils:/home/testuser/.bash_utils:ro
+      - ./test_output:/home/testuser/test_output
+    network_mode: "host"  # For network testing
+    stdin_open: true
+    tty: true

@@ -1,0 +1,21 @@
+all:
+  children:
+    server_category1:
+      hosts:
+        server1_name:
+          ansible_host: IP1_here  # Replace with actual Tailscale IPs
+          ansible_user: root
+        server2_name:
+          ansible_host: IP2_here
+          ansible_user: username_here
+        server3_name:
+          ansible_host: IP3_here
+          ansible_user: username_here
+        server4_name:
+          ansible_host: IP4_here
+          ansible_user: username_here
+    server_category2:
+      hosts:
+        server5_name:
+          ansible_host: IP5_here
+          ansible_user: username_here

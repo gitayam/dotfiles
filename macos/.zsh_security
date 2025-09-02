@@ -1,0 +1,681 @@
+# ----------------------
+# Security Functions and Aliases
+# ----------------------
+
+# JSON and utility aliases
+alias json="jq ."  # Format JSON output
+
+# Setup age encryption
+setup_age(){
+    # setup age directory and keys
+    mkdir -p ~/.age
+    #get username
+    username=$(whoami)
+    #if no argument passed for key name then use username
+    if [[ -z "$1" ]]; then
+        key_name="$username"
+    else
+        key_name="$1"
+    fi
+    
+    #echo guidance on storying and using the age keys
+    echo "Store the following keys in a secure location:"
+    echo "Public key: ~/.age/keys/$key_name.pub"
+    echo "Private key: ~/.age/keys/$key_name.key"
+    echo "You will see a public key output to the screen that you can share with others"
+    echo "For more information on age see https://github.com/FiloSottile/age"
+    sleep 1
+    # generate keys
+    age-keygen -a -o ~/.age/keys/$key_name.key
+    ls -l ~/.age/keys
+}
+
+# File encryption
+encrypt_file(){
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: encrypt_file [-m method] [-r recipient] file1 file2 ..."
+        echo "Options:"
+        echo "  -m method       Encryption method: age (default), gpg, or aes"
+        echo "  -r recipient    Use recipient's public key instead of passphrase (only for age)"
+        echo "  -e, --encrypt   Optional flag (for consistency with other functions)"
+        return 0
+    fi
+
+    # Check if encryption tools are installed
+    local has_age=false
+    local has_gpg=false
+    local has_openssl=false
+    
+    if command -v age &> /dev/null; then
+        has_age=true
+    fi
+    if command -v gpg &> /dev/null; then
+        has_gpg=true
+    fi
+    if command -v openssl &> /dev/null; then
+        has_openssl=true
+    fi
+    
+    # If no encryption tools are available, prompt to install age
+    if ! $has_age && ! $has_gpg && ! $has_openssl; then
+        echo "Error: No encryption tools found (age, gpg, or openssl)."
+        echo -n "Do you want to install 'age'? (y/n):(default:y) "
+        read install_age
+        if [[ $install_age =~ ^[Yy]$ || -z "$install_age" ]]; then
+            brew install age
+            has_age=true
+        else
+            return 1
+        fi
+    fi
+
+    # Initialize variables
+    local recipient=""
+    local use_passphrase=true
+    local encrypt_method="age"  # Default encryption method
+    local zip_file=""
+    local password=""
+
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -e|--encrypt)
+                # Just a flag for consistency with other functions
+                shift
+                ;;
+            -m)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: -m requires a method argument (age, gpg, or aes)"
+                    return 1
+                fi
+                encrypt_method="$2"
+                shift 2
+                ;;
+            -r)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: -r requires a recipient argument"
+                    return 1
+                fi
+                recipient="$2"
+                use_passphrase=false
+                shift 2
+                ;;
+            -*)
+                echo "Unknown option: $1"
+                echo "Usage: encrypt_file [-m method] [-r recipient] file1 file2 ..."
+                return 1
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+
+    # Validate encryption method
+    case "$encrypt_method" in
+        age)
+            if ! $has_age; then
+                echo "Error: 'age' is not installed but specified as encryption method."
+                return 1
+            fi
+            ;;
+        gpg)
+            if ! $has_gpg; then
+                echo "Error: 'gpg' is not installed but specified as encryption method."
+                return 1
+            fi
+            ;;
+        aes)
+            if ! $has_openssl; then
+                echo "Error: 'openssl' is not installed but specified as encryption method."
+                return 1
+            fi
+            ;;
+        *)
+            echo "Error: Invalid encryption method '$encrypt_method'. Use age, gpg, or aes."
+            return 1
+            ;;
+    esac
+
+    # Check if files are provided
+    if [[ "$#" -eq 0 ]]; then
+        echo "Error: No files provided for encryption."
+        return 1
+    fi
+
+    # If multiple files are passed, zip them and encrypt the zip file
+    local files_to_encrypt
+    if [[ "$#" -gt 1 ]]; then
+        # zip the files
+        zip_file="./$(basename "$1")_encrypted_$(date +%Y%m%d%H%M%S).zip"
+        echo "Creating zip file with multiple files..."
+        zip -q "$zip_file" "$@"
+        files_to_encrypt="$zip_file"
+    else
+        # if only one file is passed then set the file to encrypt
+        files_to_encrypt="$1"
+    fi
+
+    # Encrypt the file(s) based on the selected method
+    local encrypted_file
+    case "$encrypt_method" in
+        age)
+            encrypted_file="${files_to_encrypt}.age"
+            echo "Encrypting with age..."
+            
+            if $use_passphrase; then
+                # Capture the passphrase from age output
+                echo "Using passphrase encryption..."
+                local age_output=$(age -p -o "$encrypted_file" "$files_to_encrypt" 2>&1)
+                # Extract the passphrase from the output
+                password=$(echo "$age_output" | grep -o 'passphrase: "[^"]*"' | cut -d '"' -f 2)
+                if [[ -z "$password" ]]; then
+                    # Try alternate format
+                    password=$(echo "$age_output" | grep -o 'passphrase "[^"]*"' | cut -d '"' -f 2)
+                fi
+                
+                if [[ -n "$password" ]]; then
+                    echo "Generated passphrase: $password"
+                    echo "Save this passphrase securely - you'll need it to decrypt the file."
+                fi
+            else
+                echo "Using recipient key encryption..."
+                age -r "$recipient" -o "$encrypted_file" "$files_to_encrypt"
+                echo "Recipient key used for encryption: $recipient"
+            fi
+            ;;
+            
+        gpg)
+            encrypted_file="${files_to_encrypt}.gpg"
+            echo "Encrypting with GPG..."
+            echo "You will be prompted to enter a passphrase for encryption."
+            gpg --output "$encrypted_file" --symmetric "$files_to_encrypt"
+            echo "File encrypted with GPG. Remember your passphrase for decryption."
+            ;;
+            
+        aes)
+            encrypted_file="${files_to_encrypt}.aes"
+            echo "Encrypting with OpenSSL AES-256-CBC..."
+            echo "You will be prompted to enter a passphrase for encryption."
+            openssl enc -aes-256-cbc -salt -in "$files_to_encrypt" -out "$encrypted_file"
+            echo "File encrypted with AES-256. Remember your passphrase for decryption."
+            ;;
+    esac
+
+    # Verify the encrypted file was created
+    if [[ ! -f "$encrypted_file" ]]; then
+        echo "Error: Encryption failed. Encrypted file not created."
+        # Clean up zip file if it was created
+        [[ -n "$zip_file" && -f "$zip_file" ]] && rm -f "$zip_file"
+        return 1
+    fi
+
+    # Clean up zip file if it was created
+    if [[ -n "$zip_file" && -f "$zip_file" ]]; then
+        rm -f "$zip_file"
+    fi
+
+    # Instructions for decryption
+    echo "Encrypted file created: $encrypted_file"
+    echo ""
+}
+
+# Clean filename
+clean_file(){
+    # Check if a file path is provided
+    if [[ -z "$1" ]]; then
+        echo "Error: No file path provided."
+        return 1
+    fi
+
+    # Use the provided file path
+    local path="$1"
+    # get full path
+    local full_path=$(realpath "$path")
+
+    # Remove spaces and special characters from the file name
+    local clean_file=$(echo "$full_path" | tr -cd '[:alnum:]_.-')
+
+    # Move the file to the new name
+    mv "$full_path" "$clean_file"
+
+    # Return the cleaned file name with full path
+    echo "$clean_file"
+}
+
+# Virus scanning
+alias scan_file="virus_scan"
+alias scan_dir="virus_scan"
+alias scan_files="virus_scan"
+alias scan_dirs="virus_scan"
+
+virus_scan() {
+    # help menu with -h or --help and usage
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: virus_scan [file/directory...]"
+        echo "   function from dotfiles or: findex \"*.pdf\" | virus_scan"
+        echo "   or: virus_scan \$(findex \"*.pdf\")"
+        echo ""
+        echo "Features:"
+        echo "  - Scans files and directories for viruses using ClamAV"
+        echo "  - Can sanitize PDF files to remove potential malicious code"
+        echo "  - Sanitized PDFs are automatically considered safe (not scanned)"
+        echo "  - Logs scan results for future reference"
+        return 0
+    fi
+    local files=()
+    
+    # Check if receiving input from pipe or arguments
+    if [[ -p /dev/stdin ]]; then
+        # Read from pipe (e.g., findex output)
+        while IFS= read -r line; do
+            files+=("$line")
+        done
+    elif [[ $# -gt 0 ]]; then
+        # Read from arguments
+        files=("$@")
+    else
+        # No input provided
+        echo "Usage: virus_scan [file/directory...]"
+        echo "   function from dotfiles or: findex \"*.pdf\" | virus_scan"
+        echo "   or: virus_scan \$(findex \"*.pdf\")"
+        echo ""
+        echo "Examples:"
+        echo "  virus_scan ~/Downloads"
+        echo "  virus_scan document.pdf image.jpg"
+        echo "  findex \"*.pdf\" | virus_scan"
+        echo "  virus_scan \$(findex \"*.pdf\")"
+        return 1
+    fi
+    
+    # Check if clamscan is installed
+    if ! command -v clamscan &> /dev/null; then
+        echo "Error: clamscan is not installed."
+        # Prompt user to install
+        local install_clamav="n"
+        echo -n "Do you want to install ClamAV? (y/n): " 
+        read install_clamav
+        if [[ $install_clamav =~ ^[Yy]$ ]]; then
+            echo "Installing and Configuring ClamAV"
+            clamav_maintenance
+            # Verify installation succeeded
+            if ! command -v clamscan &> /dev/null; then
+                echo "Installation failed. Please install ClamAV manually."
+                return 1
+            fi
+        else
+            return 1
+        fi
+    fi
+
+    # Create log directory if it doesn't exist
+    local log_dir="$HOME/logs/clamscan"
+    mkdir -p "$log_dir"
+    local log_file="$log_dir/scan_$(date +%Y%m%d_%H%M%S).log"
+    
+    # Check for PDF files and offer to sanitize them
+    local pdf_files=()
+    local non_pdf_files=()
+    
+    for file in "${files[@]}"; do
+        if [[ ! -e "$file" ]]; then
+            echo "Warning: $file does not exist, skipping"
+            continue
+        fi
+        
+        if [[ ! -r "$file" ]]; then
+            echo "Warning: $file is not readable, skipping"
+            continue
+        fi
+        
+        # Check if it's a PDF file
+        if [[ "$file" =~ \.pdf$ ]]; then
+            pdf_files+=("$file")
+        else
+            non_pdf_files+=("$file")
+        fi
+    done
+    
+    # If we found PDF files, offer to sanitize them
+    local sanitized_count=0
+    local files_to_scan=("${non_pdf_files[@]}")
+    
+    if [[ ${#pdf_files[@]} -gt 0 ]]; then
+        echo "📄 Found ${#pdf_files[@]} PDF file(s) in the scan list."
+        echo "PDF files can contain malicious code. Would you like to sanitize them?"
+        echo "This will create clean copies and remove the originals."
+        echo "Sanitized PDFs are automatically considered safe and won't need scanning."
+        echo -n "Sanitize PDF files? (y/n): "
+        read sanitize_pdfs
+        
+        if [[ $sanitize_pdfs =~ ^[Yy]$ ]]; then
+            # Check if handle_pdf function exists
+            if ! typeset -f handle_pdf > /dev/null; then
+                echo "❌ Error: handle_pdf function not found. Cannot sanitize PDFs."
+                # Add PDFs to scan list if we can't sanitize them
+                files_to_scan+=("${pdf_files[@]}")
+            else
+                echo "🔄 Sanitizing PDF files..."
+                local unsanitized_pdfs=()
+                
+                for pdf in "${pdf_files[@]}"; do
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    echo "🔄 Sanitizing: $pdf"
+                    
+                    # Get the sanitized filename that handle_pdf would create
+                    local dirname=$(dirname "$pdf")
+                    local basename=$(basename "$pdf" .pdf)
+                    local sanitized_name=$(echo "$basename" | tr -cd '[:alnum:]._-')
+                    local sanitized_pdf="${dirname}/${sanitized_name}.pdf"
+                    
+                    # Don't overwrite input file
+                    if [[ "$sanitized_pdf" == "$pdf" ]]; then
+                        sanitized_pdf="${dirname}/${sanitized_name}_clean.pdf"
+                    fi
+                    
+                    # Run handle_pdf with sanitize option and automatically delete original
+                    handle_pdf -s -q "$pdf"
+                    
+                    # Check if sanitization was successful
+                    if [[ -f "$sanitized_pdf" || -f "${dirname}/${sanitized_name}_clean.pdf" ]]; then
+                        if [[ -f "$sanitized_pdf" ]]; then
+                            echo "✅ Sanitized PDF created: $sanitized_pdf"
+                        else
+                            echo "✅ Sanitized PDF created: ${dirname}/${sanitized_name}_clean.pdf"
+                        fi
+                        
+                        # Automatically delete the original when prompted by handle_pdf
+                        # The sanitized file is already clean and doesn't need scanning
+                        ((sanitized_count++))
+                        
+                        # Log the sanitization in the scan log
+                        echo "$(date): Sanitized PDF: $pdf" >> "$log_file"
+                    else
+                        echo "⚠️ Sanitization failed for: $pdf"
+                        # Add to list of PDFs that need scanning
+                        unsanitized_pdfs+=("$pdf")
+                    fi
+                done
+                
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                echo "📄 PDF sanitization complete. $sanitized_count PDFs sanitized."
+                
+                # Add any unsanitized PDFs to the scan list
+                if [[ ${#unsanitized_pdfs[@]} -gt 0 ]]; then
+                    echo "⚠️ ${#unsanitized_pdfs[@]} PDFs could not be sanitized and will be scanned."
+                    files_to_scan+=("${unsanitized_pdfs[@]}")
+                fi
+            fi
+        else
+            # User chose not to sanitize, add all PDFs to scan list
+            files_to_scan+=("${pdf_files[@]}")
+        fi
+    fi
+    
+    # Process each file for scanning
+    local valid_files=0
+    
+    # Check if we have any files left to scan
+    if [[ ${#files_to_scan[@]} -eq 0 ]]; then
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "✅ All files have been sanitized. No virus scanning needed."
+        echo "📝 Sanitization log saved to: $log_file"
+        return 0
+    fi
+    
+    echo "Files to be scanned:"
+    for file in "${files_to_scan[@]}"; do
+        if [[ -e "$file" && -r "$file" ]]; then
+            echo "  - $file"
+            ((valid_files++))
+        fi
+    done
+    
+    # Check if we have any valid files to scan
+    if [[ $valid_files -eq 0 ]]; then
+        if [[ $sanitized_count -gt 0 ]]; then
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "✅ All files have been sanitized. No virus scanning needed."
+            echo "📝 Sanitization log saved to: $log_file"
+            return 0
+        else
+            echo "No valid files to scan"
+            return 1
+        fi
+    fi
+    
+    # Run the actual scan with logging
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "🔍 Starting virus scan at $(date)" | tee -a "$log_file"
+    echo "📝 Scan log saved to: $log_file"
+    
+    clamscan --recursive=yes --infected "${files_to_scan[@]}" | tee -a "$log_file"
+    local scan_status=$?
+    
+    # Report results
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # Include sanitized files in the summary
+    if [[ $sanitized_count -gt 0 ]]; then
+        echo "📋 Summary:"
+        echo "  - $sanitized_count PDF files sanitized and considered safe"
+        echo "  - $valid_files other files scanned"
+    fi
+    
+    case $scan_status in
+        0) echo "✅ No viruses found" ;;
+        1) echo "⚠️ Viruses found! Check $log_file for details" ;;
+        2) echo "❌ Error occurred during scanning" ;;
+    esac
+    
+    return $scan_status
+}
+
+# ClamAV maintenance
+clamav_maintenance() {
+    CONFIG="/opt/homebrew/etc/clamav/freshclam.conf"
+    DB_DIR="/opt/homebrew/var/lib/clamav"
+    EXPECTED_MIRROR="DatabaseMirror database.clamav.net"
+    # Check if clamav is installed
+
+    echo "=== ClamAV Maintenance ==="
+    # Check if clamav is installed
+    echo "Checking if clamav is installed"
+    if ! command -v clamav &> /dev/null; then
+        echo "Error: clamav is not installed"
+        #prompt to install if yes install and continue else return 1
+        install_clamav="n"
+        echo -n "Do you want to install clamav? (y/n): " 
+        read install_clamav
+        if [[ $install_clamav =~ ^[Yy]$ ]]; then
+            brew install clamav
+            echo "clamav installed, continuing with maintenance"
+        else
+            return 1
+        fi
+    fi
+    # Check if config file exists; if not, search for it.
+    if [ ! -f "$CONFIG" ]; then
+        echo "Error: $CONFIG not found."
+        echo "Searching for freshclam.conf in /opt/homebrew..."
+        new_config=$(find /opt/homebrew -type f -name freshclam.conf 2>/dev/null | head -n 1)
+        if [ -n "$new_config" ]; then
+            echo "Found config file at: $new_config"
+            read -p "Use this config file? (y/n): " use_new_config
+            if [[ "$use_new_config" =~ ^[Yy] ]]; then
+                CONFIG="$new_config"
+                echo "Using config: $CONFIG"
+            else
+                echo "No valid config selected. Exiting."
+                return 1
+            fi
+        else
+            echo "No freshclam.conf found on the system."
+            return 1
+        fi
+    fi
+
+    # Remove the "Example" marker if present.
+    if grep -q "^Example" "$CONFIG"; then
+        echo "Removing 'Example' marker from config file..."
+        sudo sed -i.bak '/^Example/d' "$CONFIG"
+    fi
+
+    # Check the DatabaseMirror setting.
+    current_mirror=$(grep "^DatabaseMirror" "$CONFIG" | head -n1)
+    if [ -z "$current_mirror" ]; then
+        echo "No DatabaseMirror setting found. Appending expected value."
+        echo "$EXPECTED_MIRROR" | sudo tee -a "$CONFIG" >/dev/null
+    elif ! echo "$current_mirror" | grep -qi "database\.clamav\.net"; then
+        echo "Found DatabaseMirror: $current_mirror"
+        echo "Updating to use: $EXPECTED_MIRROR..."
+        sudo sed -i.bak "s|^DatabaseMirror.*|$EXPECTED_MIRROR|" "$CONFIG"
+    else
+        echo "DatabaseMirror is correctly set: $current_mirror"
+    fi
+
+    # Ensure the database directory exists; if not, search or create it.
+    if [ ! -d "$DB_DIR" ]; then
+        echo "Database directory $DB_DIR not found."
+        echo "Searching for a possible ClamAV database directory in /opt/homebrew..."
+        new_db_dir=$(find /opt/homebrew -type d -name clamav 2>/dev/null | head -n 1)
+        if [ -n "$new_db_dir" ]; then
+            echo "Found potential database directory: $new_db_dir"
+            read -p "Use this directory? (y/n): " use_new_db
+            if [[ "$use_new_db" =~ ^[Yy] ]]; then
+                DB_DIR="$new_db_dir"
+                echo "Using database directory: $DB_DIR"
+            else
+                echo "No valid directory selected. Creating default: $DB_DIR..."
+                sudo mkdir -p "$DB_DIR" || { echo "Failed to create directory"; return 1; }
+            fi
+        else
+            echo "No alternate database directory found. Creating default: $DB_DIR..."
+            sudo mkdir -p "$DB_DIR" || { echo "Failed to create directory"; return 1; }
+        fi
+    fi
+
+    # Set ownership of the database directory.
+    echo "Setting ownership of $DB_DIR to _clamav:_clamav..."
+    sudo chown -R _clamav:_clamav "$DB_DIR"
+
+    # Run freshclam update.
+    echo "Running freshclam update..."
+    echo "This ensures the virus database is up to date"
+    echo "This may take a while..."
+    sudo freshclam
+    if [ $? -eq 0 ]; then
+        echo "ClamAV database updated successfully."
+    else
+        echo "ClamAV update encountered errors. Please review the output above."
+    fi
+
+    echo "=== ClamAV Maintenance Completed ==="
+}
+
+# OCR processing
+ocr_files(){
+    # Display help if requested
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: ocr_files file1 file2 dir1 dir2 ..."
+        echo "Processes PDF files to add OCR text layer."
+        #examples of single, directory, and multiple files
+        echo "Examples:"
+        echo "ocr_files file1.pdf"
+        echo "ocr_files dir1/ dir2/"
+        echo "ocr_files file1.pdf file2.pdf dir1/ dir2/"
+        return 0
+    fi
+
+    # Check if any arguments were provided
+    if [[ $# -eq 0 ]]; then
+        echo "Error: No files or directories specified."
+        echo "Usage: ocr_files file1 file2 dir1 dir2 ..."
+        return 1
+    fi
+
+    # Check if ocrmypdf is installed
+    if ! command -v ocrmypdf &> /dev/null; then
+        echo "Error: 'ocrmypdf' is not installed."
+        echo "You can install it with: brew install ocrmypdf"
+        return 1
+    fi
+
+    # Check if tesseract is installed
+    if ! command -v tesseract &> /dev/null; then
+        echo "Error: 'tesseract' is not installed."
+        echo "You can install it with: brew install tesseract"
+        return 1
+    fi
+
+    # Process a single PDF file
+    process_pdf_file() {
+        local input_file="$1"
+        local output_file="${input_file%.*}-ocr.pdf"
+        
+        echo "Processing: $input_file"
+        
+        # Run ocrmypdf in a subshell to prevent terminal breakage
+        (
+            set +e
+            ocrmypdf --skip-text "$input_file" "$output_file"
+            if [[ $? -ne 0 ]]; then 
+                echo "Failed to process $input_file"
+            else
+                echo "Successfully processed $input_file to $output_file"
+            fi
+        )
+    }
+
+    # Process a directory
+    process_directory() {
+        local dir="$1"
+        echo "Processing directory: $dir"
+        
+        # Find PDF files (case insensitive)
+        local pdf_files=()
+        while IFS= read -r -d '' file; do
+            pdf_files+=("$file")
+        done < <(find "$dir" -type f -iname "*.pdf" -print0 2>/dev/null)
+        
+        # Check if any PDF files were found
+        if [[ ${#pdf_files[@]} -eq 0 ]]; then
+            echo "No PDF files found in directory: $dir"
+            return
+        fi
+        
+        # Process each PDF file
+        for file in "${pdf_files[@]}"; do
+            process_pdf_file "$file"
+        done
+    }
+
+    # Process each argument
+    for item in "$@"; do
+        # Check if item exists
+        if [[ ! -e "$item" ]]; then
+            echo "Error: '$item' does not exist"
+            continue
+        fi
+        
+        # Check if it's a directory
+        if [[ -d "$item" ]]; then
+            process_directory "$item"
+        # Check if it's a PDF file (case insensitive)
+        elif [[ -f "$item" && $(echo "$item" | tr '[:upper:]' '[:lower:]') == *".pdf" ]]; then
+            process_pdf_file "$item"
+        else
+            echo "Skipping $item: Not a PDF file or directory."
+        fi
+    done
+    
+    return 0
+}
+
+# PDF handling aliases
+alias ocr-pdf="handle_pdf -o"
+alias extract-text="handle_pdf -t"
+alias compress-pdf="handle_pdf -c"
+alias rotate-pdf="handle_pdf -r"
+alias sanitize-pdf="handle_pdf -s"
+alias metadata-pdf="handle_pdf -m" 

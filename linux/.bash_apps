@@ -1,0 +1,251 @@
+# Application launcher and app-related functions for bash
+# (ported from .zsh_apps)
+
+# Example: open default browser
+open_browser() {
+    if command -v xdg-open &> /dev/null; then
+        xdg-open "$1"
+    elif command -v gnome-open &> /dev/null; then
+        gnome-open "$1"
+    elif command -v kde-open &> /dev/null; then
+        kde-open "$1"
+    else
+        echo "No supported open command found."
+        return 1
+    fi
+}
+
+# --- Expanded app launchers and helpers ported from .zsh_apps ---
+
+# Open a PDF file in the default viewer
+open_pdf() {
+    if command -v xdg-open &> /dev/null; then
+        xdg-open "$1"
+    elif command -v evince &> /dev/null; then
+        evince "$1"
+    elif command -v okular &> /dev/null; then
+        okular "$1"
+    else
+        echo "No supported PDF viewer found."
+        return 1
+    fi
+}
+
+# Open a text editor (prefer micro, then nano, then vi)
+edit_file() {
+    if command -v nano &> /dev/null; then
+        nano "$1"
+    elif command -v micro &> /dev/null; then
+        micro "$1"
+    else
+        vi "$1"
+    fi
+}
+
+# Open file manager (prefer nautilus, then thunar, then xdg-open)
+open_file_manager() {
+    if command -v nautilus &> /dev/null; then
+        nautilus "$1" &
+    elif command -v thunar &> /dev/null; then
+        thunar "$1" &
+    elif command -v xdg-open &> /dev/null; then
+        xdg-open "$1"
+    else
+        echo "No supported file manager found."
+        return 1
+    fi
+}
+# --- End expanded ---
+
+# Setup profiles directory
+setup_profiles(){
+    mkdir -p "$HOME/Profiles"
+    cd "$HOME/Profiles" || return 1
+}
+
+# KeePassXC launcher (Linux version)
+alias kp="keepassxc"
+run_kp(){
+    if [[ -n "$1" ]]; then
+        keepassxc --db "$1" &
+    else
+        keepassxc &
+    fi
+}
+
+# Element (Matrix client) launcher for Linux
+run_element(){
+    setup_profiles
+    local profile_name="${1:-default}"
+    
+    if command -v element-desktop &> /dev/null; then
+        element-desktop --profile "$profile_name" &
+    elif command -v element &> /dev/null; then
+        element --profile "$profile_name" &
+    elif [[ -f /opt/Element/element-desktop ]]; then
+        /opt/Element/element-desktop --profile "$profile_name" &
+    elif [[ -f /usr/bin/element-desktop ]]; then
+        /usr/bin/element-desktop --profile "$profile_name" &
+    else
+        echo "Element not found. Install it with:"
+        echo "  Ubuntu/Debian: sudo apt install element-desktop"
+        echo "  Fedora: sudo dnf install element"
+        echo "  Arch: sudo pacman -S element-desktop"
+        echo "  Or download from: https://element.io/get-started"
+        return 1
+    fi
+    
+    cd - > /dev/null || return 1
+}
+
+# Matrix client aliases
+alias run-matrix="run_element"
+alias run-irregular="run_element irregularchat"
+
+# Firefox launcher with profile support (Linux version)
+run_firefox(){
+    setup_profiles
+    local profile_name="${1:-default}"
+    local url="${2:-https://sso.irregularchat.com}"
+    
+    if command -v firefox &> /dev/null; then
+        firefox -P "$profile_name" --new-window "$url" &
+    elif [[ -f /usr/bin/firefox ]]; then
+        /usr/bin/firefox -P "$profile_name" --new-window "$url" &
+    elif [[ -f /opt/firefox/firefox ]]; then
+        /opt/firefox/firefox -P "$profile_name" --new-window "$url" &
+    else
+        echo "Firefox not found. Install it with:"
+        echo "  Ubuntu/Debian: sudo apt install firefox"
+        echo "  Fedora: sudo dnf install firefox"
+        echo "  Arch: sudo pacman -S firefox"
+        return 1
+    fi
+    
+    cd - > /dev/null || return 1
+}
+
+# Discord launcher with profile support (Linux version)
+run_discord(){
+    setup_profiles
+    local profile_name="${1:-default}"
+    
+    if command -v discord &> /dev/null; then
+        discord --profile "$profile_name" &
+    elif [[ -f /opt/Discord/Discord ]]; then
+        /opt/Discord/Discord --profile "$profile_name" &
+    elif [[ -f /usr/bin/discord ]]; then
+        /usr/bin/discord --profile "$profile_name" &
+    elif command -v flatpak &> /dev/null && flatpak list | grep -q discord; then
+        flatpak run com.discordapp.Discord &
+    elif command -v snap &> /dev/null && snap list | grep -q discord; then
+        snap run discord &
+    else
+        echo "Discord not found. Install it with:"
+        echo "  Ubuntu/Debian: Download from https://discord.com/download"
+        echo "  Fedora: sudo dnf install discord"
+        echo "  Arch: yay -S discord"
+        echo "  Flatpak: flatpak install flathub com.discordapp.Discord"
+        echo "  Snap: sudo snap install discord"
+        return 1
+    fi
+    
+    cd - > /dev/null || return 1
+}
+
+# VS Code launcher
+run_vscode(){
+    local path="${1:-.}"
+    
+    if command -v code &> /dev/null; then
+        code "$path" &
+    elif command -v codium &> /dev/null; then
+        codium "$path" &
+    elif [[ -f /usr/bin/code ]]; then
+        /usr/bin/code "$path" &
+    else
+        echo "VS Code not found. Install it with:"
+        echo "  Ubuntu/Debian: https://code.visualstudio.com/docs/setup/linux"
+        echo "  Fedora: sudo dnf install code"
+        echo "  Arch: yay -S visual-studio-code-bin"
+        echo "  Snap: sudo snap install code --classic"
+        return 1
+    fi
+}
+
+# Terminal emulator launcher
+run_terminal(){
+    if command -v gnome-terminal &> /dev/null; then
+        gnome-terminal &
+    elif command -v konsole &> /dev/null; then
+        konsole &
+    elif command -v xfce4-terminal &> /dev/null; then
+        xfce4-terminal &
+    elif command -v alacritty &> /dev/null; then
+        alacritty &
+    elif command -v kitty &> /dev/null; then
+        kitty &
+    elif command -v terminator &> /dev/null; then
+        terminator &
+    else
+        echo "No terminal emulator found"
+        return 1
+    fi
+}
+
+# Application installer helper
+install_app(){
+    if [[ -z "$1" ]]; then
+        echo "Usage: install_app <package_name>"
+        return 1
+    fi
+    
+    local package="$1"
+    
+    # Detect package manager and install
+    if command -v apt &> /dev/null; then
+        sudo apt update && sudo apt install -y "$package"
+    elif command -v dnf &> /dev/null; then
+        sudo dnf install -y "$package"
+    elif command -v yum &> /dev/null; then
+        sudo yum install -y "$package"
+    elif command -v pacman &> /dev/null; then
+        sudo pacman -S --noconfirm "$package"
+    elif command -v zypper &> /dev/null; then
+        sudo zypper install -y "$package"
+    elif command -v apk &> /dev/null; then
+        sudo apk add "$package"
+    else
+        echo "No supported package manager found"
+        echo "Supported: apt, dnf, yum, pacman, zypper, apk"
+        return 1
+    fi
+}
+
+# Quick application search
+search_app(){
+    if [[ -z "$1" ]]; then
+        echo "Usage: search_app <search_term>"
+        return 1
+    fi
+    
+    local search_term="$1"
+    
+    # Search using appropriate package manager
+    if command -v apt &> /dev/null; then
+        apt search "$search_term"
+    elif command -v dnf &> /dev/null; then
+        dnf search "$search_term"
+    elif command -v yum &> /dev/null; then
+        yum search "$search_term"
+    elif command -v pacman &> /dev/null; then
+        pacman -Ss "$search_term"
+    elif command -v zypper &> /dev/null; then
+        zypper search "$search_term"
+    elif command -v apk &> /dev/null; then
+        apk search "$search_term"
+    else
+        echo "No supported package manager found"
+        return 1
+    fi
+}
