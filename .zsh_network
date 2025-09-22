@@ -945,11 +945,235 @@ EOF
     esac
 }
 
+# Old cffile_function - DEPRECATED - Use cffile instead
+# This function is kept for reference but should not be used
+# It doesn't actually proxy files through the Worker
+cffile_function_old_deprecated() {
+    local port=8004
+    local password=""
+    local description=""
+    local use_multi=false
+    local admin_password=""
+    local users=""
+    local original_dir
+    local server_pid
+    local tunnel_pid
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -p|--password)
+                password="$2"
+                shift 2
+                ;;
+            -m|--multi)
+                use_multi=true
+                shift
+                ;;
+            -a|--admin)
+                admin_password="$2"
+                shift 2
+                ;;
+            -u|--users)
+                users="$2"
+                shift 2
+                ;;
+            --port)
+                port="$2"
+                shift 2
+                ;;
+            -d|--description)
+                description="$2"
+                shift 2
+                ;;
+            -h|--help)
+                echo "Usage: cffile [OPTIONS] [files/directories...]"
+                echo ""
+                echo "Share files via secure Cloudflare tunnel with Python server."
+                echo ""
+                echo "Options:"
+                echo "  -p, --password PWD    Single-user mode: Set tunnel password"
+                echo "  -m, --multi          Enable multi-user mode"
+                echo "  -a, --admin PWD      Multi-user mode: Admin password"
+                echo "  -u, --users USERS    Multi-user mode: User credentials"
+                echo "  --port PORT          Local server port (default: 8004)"
+                echo "  -d, --description    Description for the tunnel"
+                echo "  -h, --help           Show this help"
+                echo ""
+                echo "Examples:"
+                echo "  cffile document.pdf                    # Share single file"
+                echo "  cffile -p secret123 document.pdf      # Share with password"
+                echo "  cffile -m -a admin123 -u \"user1:pass1;user2:pass2\" files/"
+                return 0
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+    
+    # Check Python 3
+    if ! command -v python3 &> /dev/null; then
+        echo "❌ Error: Python 3 is required"
+        echo "Install it with: brew install python"
+        return 1
+    fi
+    
+    # Store original directory
+    original_dir=$(pwd)
+    
+    # Handle file arguments
+    if [ $# -gt 0 ]; then
+        echo "📁 Preparing files for sharing..."
+        mkdir -p "/tmp/cffile-$$"
+        
+        for item in "$@"; do
+            if [[ -e "$item" ]]; then
+                if [[ -d "$item" ]]; then
+                    # For directories, copy contents instead of symlinking the directory itself
+                    if [[ "$item" == "." || "$item" == "./" ]]; then
+                        echo "   ✓ Adding current directory contents..."
+                        cp -r ./* "/tmp/cffile-$$/" 2>/dev/null || true
+                        cp -r ./.[^.]* "/tmp/cffile-$$/" 2>/dev/null || true
+                    else
+                        echo "   ✓ Adding directory: $(basename "$item")"
+                        cp -r "$item" "/tmp/cffile-$$/"
+                    fi
+                else
+                    # For files, create symlinks
+                    ln -sf "$(realpath "$item")" "/tmp/cffile-$$/"
+                    echo "   ✓ Added file: $(basename "$item")"
+                fi
+            else
+                echo "   ⚠️  Warning: $item not found"
+            fi
+        done
+        
+        cd "/tmp/cffile-$$" || { echo "❌ Failed to access temp directory"; return 1; }
+    else
+        echo "📂 Serving current directory: $(pwd)"
+    fi
+    
+    # Set description
+    if [[ -z "$description" ]]; then
+        description="cffile sharing ($(ls | wc -l | tr -d ' ') items)"
+    fi
+    
+    # Find available port if default is in use
+    local attempts=0
+    while [[ $attempts -lt 10 ]]; do
+        if ! lsof -ti:$port >/dev/null 2>&1; then
+            break
+        fi
+        echo "⚠️  Port $port is in use, trying $((port + 1))..."
+        port=$((port + 1))
+        attempts=$((attempts + 1))
+    done
+    
+    if [[ $attempts -eq 10 ]]; then
+        echo "❌ Could not find available port after 10 attempts"
+        cd "$original_dir"
+        [[ -d "/tmp/cffile-$$" ]] && rm -rf "/tmp/cffile-$$"
+        return 1
+    fi
+    
+    # Start Python server
+    echo "🚀 Starting Python HTTP server on port $port..."
+    python3 -m http.server "$port" &
+    server_pid=$!
+    sleep 2
+    
+    if ! kill -0 "$server_pid" 2>/dev/null; then
+        echo "❌ Failed to start Python server on port $port"
+        cd "$original_dir"
+        [[ -d "/tmp/cffile-$$" ]] && rm -rf "/tmp/cffile-$$"
+        return 1
+    fi
+    
+    echo "✅ Server running at http://localhost:$port"
+    
+    # Cleanup function
+    cleanup_cffile() {
+        echo ""
+        echo "🛑 Shutting down cffile..."
+        [[ -n "$server_pid" ]] && kill "$server_pid" 2>/dev/null && echo "   ✓ Python server stopped"
+        [[ -n "$tunnel_pid" ]] && kill "$tunnel_pid" 2>/dev/null && echo "   ✓ Tunnel stopped"
+        cd "$original_dir"
+        [[ -d "/tmp/cffile-$$" ]] && rm -rf "/tmp/cffile-$$" && echo "   ✓ Temporary files cleaned"
+        echo "✅ cffile stopped"
+    }
+    
+    trap cleanup_cffile SIGINT SIGTERM
+    
+    # Start tunnel
+    if $use_multi; then
+        if [[ -z "$admin_password" ]] || [[ -z "$users" ]]; then
+            echo "❌ Multi-user mode requires -a admin_password and -u users"
+            cleanup_cffile
+            return 1
+        fi
+        echo "🌐 Creating multi-user tunnel..."
+        node "$original_dir/src/multi-user-client.js" create "$port" "$admin_password" "$users" "$description" &
+        tunnel_pid=$!
+    else
+        if [[ -z "$password" ]]; then
+            password="cffile-$(date +%s | tail -c 4)"
+            echo "🔑 Generated password: $password"
+        fi
+        echo "🌐 Creating single-user tunnel..."
+        node "$original_dir/src/tunnel-client.js" "$port" "$password" "$description" &
+        tunnel_pid=$!
+    fi
+    
+    echo ""
+    echo "🎯 File sharing is active!"
+    echo "🛑 Press Ctrl+C to stop"
+    
+    wait "$tunnel_pid"
+    cleanup_cffile
+}
+
+# Unalias cffile if it exists to avoid conflicts
+unalias cffile 2>/dev/null || true
+unalias cffile_function 2>/dev/null || true
+
+# Main cffile implementation - uses hybrid approach (Worker auth + cloudflared proxy)
+cffile() {
+    /Users/sac/Git/dotfiles/macos/cffile-hybrid.sh "$@"
+}
+
+# Alias cffile_function to use the same hybrid implementation
+cffile_function() {
+    /Users/sac/Git/dotfiles/macos/cffile-hybrid.sh "$@"
+}
+
+# Short aliases for cffile
+alias cff=cffile                  # Quick file sharing
+alias cfshare=cffile              # Alternative name for file sharing
+
+# Secure file sharing (true end-to-end encryption)
+alias cfsecure="/Users/sac/Git/dotfiles/macos/cfsecure-integrated.sh"  # True secure sharing
+alias cfs="/Users/sac/Git/dotfiles/macos/cfsecure-integrated.sh"       # Short secure sharing
+
+# Quick secure sharing functions
+cfsecure_quick() {
+    cfsecure -m openssl "$@"
+}
+
+cfsecure_age() {
+    cfsecure -m age "$@"
+}
+
+cfsecure_gpg() {
+    cfsecure -m gpg "$@"
+}
+
 # Aliases for cloudflare tunnel
 alias cftunnel_share=cftunnel  # Tunnel sharing (renamed to avoid conflict)
 alias cloudshare=cftunnel
 alias cft=cftunnel
 alias cfmulti=cfmulti_function  # Multi-user tunnels
+# cffile is now a function that calls the hybrid script
 
 # ----------------------
 # Cloudflare Wrangler Functions
@@ -1425,12 +1649,25 @@ cfpage-upload() {
     cd - > /dev/null
 }
 
-# Take screenshot and upload to Pages
+# Take screenshot and upload to Pages (or with password protection)
 cfpage-shot() {
-    local public_dir="$HOME/public-files"
     local timestamp=$(date +%Y%m%d_%H%M%S)
     local filename="screenshot_${timestamp}.png"
     local temp_file="/tmp/$filename"
+    local password=""
+    
+    # Parse arguments for password
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -p|--password)
+                password="$2"
+                shift 2
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
     
     echo "📸 Taking screenshot..."
     echo "Press Cmd+Shift+4 and select area to capture"
@@ -1443,11 +1680,19 @@ cfpage-shot() {
         return 1
     fi
     
-    # Upload using cfpage-upload
-    cfpage-upload "$temp_file"
+    if [[ -n "$password" ]]; then
+        # Use cffile for password-protected sharing
+        echo "🔐 Creating password-protected share..."
+        cffile -p "$password" "$temp_file"
+    else
+        # Upload publicly using cfpage-upload
+        cfpage-upload "$temp_file"
+    fi
     
-    # Clean up
-    rm "$temp_file"
+    # Keep temp file if using cffile (it handles cleanup)
+    if [[ -z "$password" ]]; then
+        rm "$temp_file"
+    fi
 }
 
 # List files on Pages
