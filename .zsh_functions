@@ -18,12 +18,74 @@
 # ----------------------
 # Clip Board
 # ----------------------
-ccopy()  { pbcopy < "$1"; } # copy to clipboard
-cpaste() { pbpaste; } # paste from clipboard
-clipls() { ls -l | pbcopy; } # list directory contents and copy to clipboard
-clipcat() { cat "$1" | pbcopy; } # copy file contents to clipboard
-clippwd() { pwd | pbcopy; } # copy current directory to clipboard
-clipip() { ipconfig getifaddr en0 | pbcopy; } # copy en0 ip address to clipboard
+# Cross-platform clipboard functions (uses .zsh_linux_compat if loaded)
+ccopy() {
+    # Copy to clipboard (cross-platform)
+    if [[ -n "$1" ]]; then
+        # File input mode
+        if declare -f copy_to_clipboard &>/dev/null; then
+            copy_to_clipboard < "$1"
+        else
+            pbcopy < "$1"
+        fi
+    else
+        # Stdin mode
+        if declare -f copy_to_clipboard &>/dev/null; then
+            copy_to_clipboard
+        else
+            pbcopy
+        fi
+    fi
+}
+
+cpaste() {
+    # Paste from clipboard (cross-platform)
+    if declare -f paste_from_clipboard &>/dev/null; then
+        paste_from_clipboard
+    else
+        pbpaste
+    fi
+}
+
+clipls() {
+    # List directory and copy to clipboard
+    ls -l "$@" | ccopy
+    echo "Directory listing copied to clipboard"
+}
+
+clipcat() {
+    # Copy file contents to clipboard
+    if [[ -z "$1" ]]; then
+        echo "Usage: clipcat <file>"
+        return 1
+    fi
+    cat "$1" | ccopy
+    echo "File contents copied to clipboard"
+}
+
+clippwd() {
+    # Copy current directory to clipboard
+    pwd | ccopy
+    echo "Current directory path copied to clipboard: $(pwd)"
+}
+
+clipip() {
+    # Copy IP address to clipboard (cross-platform)
+    local ip=""
+    case "$OSTYPE" in
+        darwin*)
+            ip=$(ipconfig getifaddr en0 2>/dev/null || curl -s ifconfig.me)
+            ;;
+        linux*)
+            ip=$(hostname -I | awk '{print $1}' 2>/dev/null || curl -s ifconfig.me)
+            ;;
+        *)
+            ip=$(curl -s ifconfig.me)
+            ;;
+    esac
+    echo "$ip" | ccopy
+    echo "IP address copied to clipboard: $ip"
+}
 # temp copy to clipboard by backing up current clipboard, then copying to clipboard, then restoring clipboard
 
 
@@ -374,14 +436,132 @@ reset_file(){
 zipfile(){
     # usage: zipfile name file_or_dir1 file_or_dir2 ...
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-        echo "usage: zipfile name_of_zip_file file_or_dir1 file_or_dir2 ..."
+        echo "Usage: zipfile [options] <name> <file_or_dir1> [file_or_dir2 ...]"
+        echo "       zipfile <file_or_dir> (auto-names the archive)"
+        echo ""
+        echo "Options:"
+        echo "  -e, --encrypt    Encrypt the zip file with a password"
+        echo "  -x, --exclude    Exclude pattern (can be used multiple times)"
+        echo "  -h, --help       Show this help message"
+        echo ""
+        echo "Examples:"
+        echo "  zipfile archive.zip file1.txt dir1/"
+        echo "  zipfile -e secure.zip sensitive_data/"
+        echo "  zipfile -x '*.log' -x '.git' project.zip project/"
         return 0
     fi
-    # check if args are passed
-    # check if name is passed or if file or dir is passed
-    # If name is passed then zip the file or dir with the name
-    # if no name is passed then zip the file or dir with the name of the file or dir
-    # if multiple files or dirs are passed then zip them all with the name of the first file or dir + more + .zip
+
+    local encrypt=false
+    local excludes=()
+    local args=()
+
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -e|--encrypt)
+                encrypt=true
+                shift
+                ;;
+            -x|--exclude)
+                excludes+=("-x" "$2")
+                shift 2
+                ;;
+            *)
+                args+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    # Check if any arguments remain
+    if [[ ${#args[@]} -eq 0 ]]; then
+        echo "Error: No files or directories specified"
+        return 1
+    fi
+
+    local zipname=""
+    local items=()
+
+    # Determine zip name and items
+    if [[ ${#args[@]} -eq 1 ]]; then
+        # Single argument - auto-name based on the item
+        local item="${args[0]}"
+        if [[ ! -e "$item" ]]; then
+            echo "Error: '$item' does not exist"
+            return 1
+        fi
+
+        # Remove trailing slash and get basename
+        item="${item%/}"
+        zipname="$(basename "$item").zip"
+        items=("$item")
+    else
+        # Multiple arguments - first is zip name, rest are items
+        zipname="${args[0]}"
+        items=("${args[@]:1}")
+
+        # Add .zip extension if not present
+        [[ "$zipname" != *.zip ]] && zipname="${zipname}.zip"
+    fi
+
+    # Verify all items exist
+    for item in "${items[@]}"; do
+        if [[ ! -e "$item" ]]; then
+            echo "Error: '$item' does not exist"
+            return 1
+        fi
+    done
+
+    # Check if zip file already exists
+    if [[ -f "$zipname" ]]; then
+        echo "Warning: '$zipname' already exists"
+        echo -n "Overwrite? (y/N): "
+        read -r response
+        if [[ ! "$response" =~ ^[Yy]$ ]]; then
+            echo "Aborted"
+            return 1
+        fi
+        rm -f "$zipname"
+    fi
+
+    # Build zip command
+    local zip_cmd=(zip -r)
+
+    # Add encryption flag if requested
+    if [[ "$encrypt" == true ]]; then
+        zip_cmd+=(-e)
+    fi
+
+    # Add exclude patterns
+    if [[ ${#excludes[@]} -gt 0 ]]; then
+        zip_cmd+=("${excludes[@]}")
+    fi
+
+    # Add output file and items
+    zip_cmd+=("$zipname" "${items[@]}")
+
+    # Show what we're doing
+    echo "📦 Creating archive: $zipname"
+    echo "📁 Items to compress: ${items[*]}"
+    [[ "$encrypt" == true ]] && echo "🔒 Encryption: enabled"
+    [[ ${#excludes[@]} -gt 0 ]] && echo "🚫 Exclusions: ${excludes[*]}"
+    echo ""
+
+    # Execute the zip command
+    "${zip_cmd[@]}"
+
+    if [[ $? -eq 0 ]]; then
+        local size=$(ls -lh "$zipname" | awk '{print $5}')
+        echo ""
+        echo "✅ Successfully created: $zipname ($size)"
+
+        # Show contents summary
+        echo "📋 Archive contents:"
+        unzip -l "$zipname" | tail -n 1
+    else
+        echo "❌ Failed to create zip file"
+        return 1
+    fi
 }
 
 # create backup of a file or directory

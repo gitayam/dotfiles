@@ -1,0 +1,696 @@
+#!/bin/zsh
+# Linux/Cross-Platform Compatibility Layer
+# This file provides Linux equivalents for macOS-specific functions
+# and adds server-specific utilities
+
+# OS Detection
+detect_os() {
+    case "$OSTYPE" in
+        darwin*)
+            export OS_TYPE="macos"
+            export OS_DIST="macos"
+            ;;
+        linux*)
+            export OS_TYPE="linux"
+            if [[ -f /etc/os-release ]]; then
+                source /etc/os-release
+                export OS_DIST="${ID:-linux}"
+                export OS_VERSION="${VERSION_ID:-unknown}"
+            elif [[ -f /etc/debian_version ]]; then
+                export OS_DIST="debian"
+            elif [[ -f /etc/redhat-release ]]; then
+                export OS_DIST="redhat"
+            else
+                export OS_DIST="unknown"
+            fi
+            ;;
+        freebsd*)
+            export OS_TYPE="freebsd"
+            export OS_DIST="freebsd"
+            ;;
+        *)
+            export OS_TYPE="unknown"
+            export OS_DIST="unknown"
+            ;;
+    esac
+}
+
+# Initialize OS detection
+detect_os
+
+# ========================================
+# Package Management Abstraction
+# ========================================
+
+# Universal package installer
+install_package() {
+    local packages=("$@")
+
+    case "$OS_TYPE" in
+        macos)
+            if command -v brew &> /dev/null; then
+                brew install "${packages[@]}"
+            else
+                echo "Error: Homebrew not installed"
+                return 1
+            fi
+            ;;
+        linux)
+            case "$OS_DIST" in
+                ubuntu|debian)
+                    sudo apt-get update && sudo apt-get install -y "${packages[@]}"
+                    ;;
+                fedora|centos|rhel|redhat)
+                    sudo yum install -y "${packages[@]}"
+                    ;;
+                arch|manjaro)
+                    sudo pacman -S --noconfirm "${packages[@]}"
+                    ;;
+                alpine)
+                    sudo apk add "${packages[@]}"
+                    ;;
+                *)
+                    echo "Unsupported Linux distribution: $OS_DIST"
+                    return 1
+                    ;;
+            esac
+            ;;
+        freebsd)
+            sudo pkg install -y "${packages[@]}"
+            ;;
+        *)
+            echo "Unsupported OS: $OS_TYPE"
+            return 1
+            ;;
+    esac
+}
+
+# Universal package update
+update_packages() {
+    case "$OS_TYPE" in
+        macos)
+            brew update && brew upgrade
+            ;;
+        linux)
+            case "$OS_DIST" in
+                ubuntu|debian)
+                    sudo apt-get update && sudo apt-get upgrade -y
+                    ;;
+                fedora|centos|rhel|redhat)
+                    sudo yum update -y
+                    ;;
+                arch|manjaro)
+                    sudo pacman -Syu --noconfirm
+                    ;;
+                alpine)
+                    sudo apk update && sudo apk upgrade
+                    ;;
+            esac
+            ;;
+        freebsd)
+            sudo pkg update && sudo pkg upgrade -y
+            ;;
+    esac
+}
+
+# ========================================
+# Clipboard Operations
+# ========================================
+
+# Cross-platform clipboard copy
+copy_to_clipboard() {
+    case "$OS_TYPE" in
+        macos)
+            pbcopy
+            ;;
+        linux)
+            if [[ -n "$DISPLAY" ]]; then
+                if command -v xclip &> /dev/null; then
+                    xclip -selection clipboard
+                elif command -v xsel &> /dev/null; then
+                    xsel --clipboard --input
+                else
+                    echo "No clipboard utility found. Install xclip or xsel."
+                    return 1
+                fi
+            else
+                # Server without X11 - save to temp file
+                local tmpfile="/tmp/clipboard_$$"
+                cat > "$tmpfile"
+                echo "Saved to: $tmpfile (no X11 display)"
+            fi
+            ;;
+        freebsd)
+            if command -v xclip &> /dev/null; then
+                xclip -selection clipboard
+            else
+                echo "Install xclip for clipboard support"
+                return 1
+            fi
+            ;;
+    esac
+}
+
+# Cross-platform clipboard paste
+paste_from_clipboard() {
+    case "$OS_TYPE" in
+        macos)
+            pbpaste
+            ;;
+        linux|freebsd)
+            if [[ -n "$DISPLAY" ]]; then
+                if command -v xclip &> /dev/null; then
+                    xclip -selection clipboard -o
+                elif command -v xsel &> /dev/null; then
+                    xsel --clipboard --output
+                else
+                    echo "No clipboard utility found"
+                    return 1
+                fi
+            else
+                # Server without X11 - read from temp file
+                local tmpfile="/tmp/clipboard_$$"
+                if [[ -f "$tmpfile" ]]; then
+                    cat "$tmpfile"
+                else
+                    echo "No clipboard data available"
+                    return 1
+                fi
+            fi
+            ;;
+    esac
+}
+
+# Aliases for compatibility
+alias ccopy='copy_to_clipboard'
+alias cpaste='paste_from_clipboard'
+
+# ========================================
+# File Operations
+# ========================================
+
+# Cross-platform file opener
+open_file() {
+    case "$OS_TYPE" in
+        macos)
+            open "$@"
+            ;;
+        linux)
+            if [[ -n "$DISPLAY" ]]; then
+                xdg-open "$@" 2>/dev/null || echo "Cannot open file"
+            else
+                echo "No display available. File: $@"
+            fi
+            ;;
+        freebsd)
+            xdg-open "$@" 2>/dev/null || echo "Cannot open file"
+            ;;
+    esac
+}
+
+# ========================================
+# Network Operations
+# ========================================
+
+# Cross-platform network interface listing
+list_interfaces() {
+    case "$OS_TYPE" in
+        macos)
+            networksetup -listallhardwareports
+            ;;
+        linux|freebsd)
+            ip link show 2>/dev/null || ifconfig -a
+            ;;
+    esac
+}
+
+# Cross-platform MAC address management
+get_mac_address() {
+    local interface="${1:-}"
+
+    case "$OS_TYPE" in
+        macos)
+            if [[ -z "$interface" ]]; then
+                interface="en0"
+            fi
+            ifconfig "$interface" | grep ether | awk '{print $2}'
+            ;;
+        linux)
+            if [[ -z "$interface" ]]; then
+                interface=$(ip route | grep default | awk '{print $5}' | head -n1)
+            fi
+            ip link show "$interface" | grep ether | awk '{print $2}'
+            ;;
+        freebsd)
+            if [[ -z "$interface" ]]; then
+                interface="em0"
+            fi
+            ifconfig "$interface" | grep ether | awk '{print $2}'
+            ;;
+    esac
+}
+
+# Cross-platform DNS flush
+flush_dns() {
+    case "$OS_TYPE" in
+        macos)
+            sudo dscacheutil -flushcache
+            sudo killall -HUP mDNSResponder
+            echo "DNS cache flushed (macOS)"
+            ;;
+        linux)
+            # Try multiple methods as different distros use different DNS caching
+            if systemctl is-active systemd-resolved &>/dev/null; then
+                sudo systemd-resolve --flush-caches
+                echo "DNS cache flushed (systemd-resolved)"
+            elif command -v nscd &>/dev/null; then
+                sudo service nscd restart
+                echo "DNS cache flushed (nscd)"
+            elif command -v dnsmasq &>/dev/null; then
+                sudo killall -HUP dnsmasq
+                echo "DNS cache flushed (dnsmasq)"
+            else
+                echo "No DNS cache service detected"
+            fi
+            ;;
+        freebsd)
+            sudo service nscd restart 2>/dev/null || echo "No DNS cache to flush"
+            ;;
+    esac
+}
+
+# ========================================
+# Server-Specific Utilities
+# ========================================
+
+# System resource monitoring
+server_stats() {
+    echo "═══════════════════════════════════════════════════════════════"
+    echo "                    SYSTEM STATISTICS                          "
+    echo "═══════════════════════════════════════════════════════════════"
+
+    # CPU and Load
+    echo -e "\n📊 CPU & Load Average:"
+    echo "───────────────────────────────────────────────────────────────"
+    uptime
+
+    if command -v mpstat &>/dev/null; then
+        echo -e "\nCPU Usage:"
+        mpstat 1 1 | tail -2
+    fi
+
+    # Memory
+    echo -e "\n💾 Memory Usage:"
+    echo "───────────────────────────────────────────────────────────────"
+    case "$OS_TYPE" in
+        linux)
+            free -h
+            ;;
+        macos)
+            vm_stat | grep -E "Pages (free|active|inactive|speculative|wired)"
+            ;;
+        freebsd)
+            freecolor -m -o
+            ;;
+    esac
+
+    # Disk
+    echo -e "\n💿 Disk Usage:"
+    echo "───────────────────────────────────────────────────────────────"
+    df -h | grep -E "^/|Filesystem"
+
+    # Network
+    echo -e "\n🌐 Network Connections:"
+    echo "───────────────────────────────────────────────────────────────"
+    ss -tulpn 2>/dev/null | head -10 || netstat -tulpn | head -10
+
+    # Top Processes
+    echo -e "\n🔥 Top CPU Processes:"
+    echo "───────────────────────────────────────────────────────────────"
+    ps aux --sort=-%cpu | head -6
+}
+
+# Service management wrapper
+service_manage() {
+    local action="${1:-status}"
+    local service="${2:-}"
+
+    if [[ -z "$service" && "$action" != "list" ]]; then
+        echo "Usage: service_manage {start|stop|restart|status|list} [service_name]"
+        return 1
+    fi
+
+    case "$OS_TYPE" in
+        linux)
+            if command -v systemctl &>/dev/null; then
+                case "$action" in
+                    list)
+                        systemctl list-units --type=service --state=running
+                        ;;
+                    *)
+                        sudo systemctl "$action" "$service"
+                        ;;
+                esac
+            elif command -v service &>/dev/null; then
+                sudo service "$service" "$action"
+            else
+                echo "No service manager found"
+                return 1
+            fi
+            ;;
+        macos)
+            case "$action" in
+                list)
+                    launchctl list | grep -v "^-"
+                    ;;
+                start)
+                    sudo launchctl load -w "/System/Library/LaunchDaemons/${service}.plist" 2>/dev/null || \
+                    launchctl load -w "$HOME/Library/LaunchAgents/${service}.plist"
+                    ;;
+                stop)
+                    sudo launchctl unload -w "/System/Library/LaunchDaemons/${service}.plist" 2>/dev/null || \
+                    launchctl unload -w "$HOME/Library/LaunchAgents/${service}.plist"
+                    ;;
+                *)
+                    launchctl list | grep "$service"
+                    ;;
+            esac
+            ;;
+        freebsd)
+            case "$action" in
+                list)
+                    service -l
+                    ;;
+                *)
+                    sudo service "$service" "$action"
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+# Log analysis function
+analyze_logs() {
+    local log_type="${1:-system}"
+    local lines="${2:-50}"
+
+    echo "📋 Analyzing $log_type logs (last $lines lines)..."
+    echo "───────────────────────────────────────────────────────────────"
+
+    case "$log_type" in
+        system)
+            case "$OS_TYPE" in
+                linux)
+                    if command -v journalctl &>/dev/null; then
+                        sudo journalctl -xe --no-pager -n "$lines"
+                    else
+                        sudo tail -n "$lines" /var/log/syslog 2>/dev/null || \
+                        sudo tail -n "$lines" /var/log/messages
+                    fi
+                    ;;
+                macos)
+                    log show --last "${lines}m" --style syslog
+                    ;;
+                freebsd)
+                    sudo tail -n "$lines" /var/log/messages
+                    ;;
+            esac
+            ;;
+        auth)
+            case "$OS_TYPE" in
+                linux)
+                    sudo tail -n "$lines" /var/log/auth.log 2>/dev/null || \
+                    sudo journalctl -u sshd -n "$lines"
+                    ;;
+                macos)
+                    log show --predicate 'subsystem == "com.apple.securityd"' --last "${lines}m"
+                    ;;
+                freebsd)
+                    sudo tail -n "$lines" /var/log/auth.log
+                    ;;
+            esac
+            ;;
+        web)
+            # Common web server logs
+            for log in /var/log/nginx/access.log /var/log/apache2/access.log /var/log/httpd/access_log; do
+                if [[ -f "$log" ]]; then
+                    sudo tail -n "$lines" "$log"
+                    break
+                fi
+            done
+            ;;
+    esac
+}
+
+# Security scan function
+security_scan() {
+    echo "🔒 Security Scan Report"
+    echo "═══════════════════════════════════════════════════════════════"
+
+    # Failed login attempts
+    echo -e "\n❌ Recent Failed Login Attempts:"
+    echo "───────────────────────────────────────────────────────────────"
+    case "$OS_TYPE" in
+        linux)
+            sudo grep "Failed password\|authentication failure" /var/log/auth.log 2>/dev/null | tail -5 || \
+            sudo journalctl -u sshd --grep="Failed" -n 5 --no-pager
+            ;;
+        macos)
+            log show --predicate 'eventMessage contains "failed authentication"' --last 1h | tail -5
+            ;;
+    esac
+
+    # Open ports
+    echo -e "\n🔌 Open Ports:"
+    echo "───────────────────────────────────────────────────────────────"
+    ss -tulpn 2>/dev/null || netstat -tulpn 2>/dev/null || lsof -i -P -n | grep LISTEN
+
+    # Suspicious processes
+    echo -e "\n⚠️  Checking for Suspicious Processes:"
+    echo "───────────────────────────────────────────────────────────────"
+    ps aux | grep -E "(nc|netcat|nmap|masscan|nikto)" | grep -v grep || echo "✅ None found"
+
+    # Firewall status
+    echo -e "\n🛡️  Firewall Status:"
+    echo "───────────────────────────────────────────────────────────────"
+    case "$OS_TYPE" in
+        linux)
+            if command -v ufw &>/dev/null; then
+                sudo ufw status verbose
+            elif command -v firewall-cmd &>/dev/null; then
+                sudo firewall-cmd --list-all
+            else
+                sudo iptables -L -n | head -20
+            fi
+            ;;
+        macos)
+            /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate
+            ;;
+        freebsd)
+            sudo pfctl -s rules 2>/dev/null || echo "PF not configured"
+            ;;
+    esac
+}
+
+# Backup utility
+backup_system() {
+    local backup_dir="${BACKUP_DIR:-/backup}"
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+
+    echo "💾 Starting System Backup..."
+    echo "Backup directory: $backup_dir"
+    echo "Timestamp: $timestamp"
+
+    # Create backup directory
+    sudo mkdir -p "$backup_dir"
+
+    # Backup system configs
+    echo "Backing up /etc..."
+    sudo tar -czf "$backup_dir/etc_$timestamp.tar.gz" /etc 2>/dev/null
+
+    # Backup user configs
+    echo "Backing up user configs..."
+    tar -czf "$backup_dir/user_configs_$timestamp.tar.gz" \
+        ~/.zsh* ~/.bash* ~/.ssh/config ~/.gitconfig 2>/dev/null
+
+    # Backup databases if they exist
+    if command -v mysqldump &>/dev/null; then
+        echo "Backing up MySQL databases..."
+        sudo mysqldump --all-databases > "$backup_dir/mysql_$timestamp.sql" 2>/dev/null
+    fi
+
+    if command -v pg_dumpall &>/dev/null; then
+        echo "Backing up PostgreSQL databases..."
+        sudo -u postgres pg_dumpall > "$backup_dir/postgres_$timestamp.sql" 2>/dev/null
+    fi
+
+    # List backups
+    echo -e "\n✅ Backup completed. Recent backups:"
+    ls -lah "$backup_dir" | head -10
+}
+
+# Performance monitoring
+performance_check() {
+    echo "⚡ Performance Metrics"
+    echo "═══════════════════════════════════════════════════════════════"
+
+    # CPU performance
+    echo -e "\n🔥 CPU Performance:"
+    echo "───────────────────────────────────────────────────────────────"
+    if command -v vmstat &>/dev/null; then
+        vmstat 1 5
+    fi
+
+    # I/O statistics
+    echo -e "\n💿 I/O Statistics:"
+    echo "───────────────────────────────────────────────────────────────"
+    if command -v iostat &>/dev/null; then
+        iostat -x 1 3
+    elif [[ "$OS_TYPE" == "macos" ]]; then
+        iostat -w 1 -c 3
+    fi
+
+    # Network statistics
+    echo -e "\n🌐 Network Statistics:"
+    echo "───────────────────────────────────────────────────────────────"
+    if command -v ss &>/dev/null; then
+        ss -s
+    else
+        netstat -s | head -20
+    fi
+}
+
+# Container management (Docker/Podman)
+container_stats() {
+    local runtime=""
+
+    if command -v docker &>/dev/null; then
+        runtime="docker"
+    elif command -v podman &>/dev/null; then
+        runtime="podman"
+    else
+        echo "No container runtime found"
+        return 1
+    fi
+
+    echo "🐳 Container Statistics ($runtime)"
+    echo "═══════════════════════════════════════════════════════════════"
+
+    echo -e "\n📦 Running Containers:"
+    echo "───────────────────────────────────────────────────────────────"
+    $runtime ps
+
+    echo -e "\n💾 Container Resource Usage:"
+    echo "───────────────────────────────────────────────────────────────"
+    $runtime stats --no-stream
+
+    echo -e "\n💿 Images:"
+    echo "───────────────────────────────────────────────────────────────"
+    $runtime images
+}
+
+# Process monitoring
+monitor_process() {
+    local process="${1:-}"
+
+    if [[ -z "$process" ]]; then
+        echo "Usage: monitor_process <process_name>"
+        return 1
+    fi
+
+    echo "👁️  Monitoring process: $process"
+    echo "Press Ctrl+C to stop..."
+
+    while true; do
+        clear
+        echo "Process: $process - $(date)"
+        echo "───────────────────────────────────────────────────────────────"
+        ps aux | grep -E "PID|$process" | grep -v grep
+        sleep 2
+    done
+}
+
+# Disk usage analysis
+disk_analysis() {
+    echo "💿 Disk Usage Analysis"
+    echo "═══════════════════════════════════════════════════════════════"
+
+    echo -e "\n📊 Overall Disk Usage:"
+    echo "───────────────────────────────────────────────────────────────"
+    df -h
+
+    echo -e "\n📁 Largest Directories (/):"
+    echo "───────────────────────────────────────────────────────────────"
+    sudo du -h / 2>/dev/null | sort -hr | head -20
+
+    echo -e "\n📄 Largest Files in /var/log:"
+    echo "───────────────────────────────────────────────────────────────"
+    sudo find /var/log -type f -exec ls -lh {} \; 2>/dev/null | sort -k5 -hr | head -10
+}
+
+# ========================================
+# Aliases for cross-platform compatibility
+# ========================================
+
+# Override macOS-specific aliases based on OS
+if [[ "$OS_TYPE" != "macos" ]]; then
+    alias flushdns='flush_dns'
+    alias open='open_file'
+fi
+
+# Universal aliases
+alias sysinfo='server_stats'
+alias svc='service_manage'
+alias logs='analyze_logs'
+alias secscan='security_scan'
+alias backup='backup_system'
+alias perfcheck='performance_check'
+alias containers='container_stats'
+alias diskusage='disk_analysis'
+alias procmon='monitor_process'
+
+# ========================================
+# Help function
+# ========================================
+
+linux_compat_help() {
+    echo "🐧 Linux/Cross-Platform Compatibility Functions"
+    echo "═══════════════════════════════════════════════════════════════"
+    echo ""
+    echo "📦 Package Management:"
+    echo "  install_package <pkg>  - Install package (cross-platform)"
+    echo "  update_packages        - Update all packages"
+    echo ""
+    echo "📋 Clipboard:"
+    echo "  copy_to_clipboard      - Copy to clipboard (or ccopy)"
+    echo "  paste_from_clipboard   - Paste from clipboard (or cpaste)"
+    echo ""
+    echo "🌐 Network:"
+    echo "  list_interfaces        - List network interfaces"
+    echo "  get_mac_address [if]   - Get MAC address"
+    echo "  flush_dns             - Flush DNS cache"
+    echo ""
+    echo "💻 Server Utilities:"
+    echo "  server_stats          - System resource overview (or sysinfo)"
+    echo "  service_manage        - Manage services (or svc)"
+    echo "  analyze_logs [type]   - Analyze system logs (or logs)"
+    echo "  security_scan         - Security audit (or secscan)"
+    echo "  backup_system         - Backup system (or backup)"
+    echo "  performance_check     - Performance metrics (or perfcheck)"
+    echo "  container_stats       - Container statistics (or containers)"
+    echo "  disk_analysis         - Disk usage analysis (or diskusage)"
+    echo "  monitor_process <p>   - Monitor specific process (or procmon)"
+    echo ""
+    echo "🔧 System Variables:"
+    echo "  OS_TYPE: $OS_TYPE"
+    echo "  OS_DIST: $OS_DIST"
+    echo "  OS_VERSION: ${OS_VERSION:-unknown}"
+}
+
+# Add help alias
+alias linux-help='linux_compat_help'
+
+# Note: Functions are automatically available in zsh without export
+# The export -f syntax is for bash, not zsh
+
+echo "✅ Linux compatibility layer loaded. Type 'linux-help' for available commands."
