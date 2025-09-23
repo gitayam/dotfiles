@@ -13,7 +13,7 @@ export PS1="%n@%m %1~ %# "
 # autoload -U compinit && compinit
 
 # Load zsh configuration files
-for config_file in ~/.zsh_{aliases,aws,functions,developer,apps,network,transfer,security,utils,docker,handle_files,encryption,git}; do
+for config_file in ~/.zsh_{aliases,aws,functions,developer,apps,network,transfer,security,utils,docker,handle_files,encryption,git,linux_compat}; do
   if [ -f "$config_file" ]; then
     source "$config_file"
   fi
@@ -80,4 +80,5 @@ alias initial-install="./initial_macos_setup.sh"
 sudotouch
 
 # Add local bin to PATH
-export PATH=$PATH:$HOME/.local/bin
+export PATH=$PATH:$HOME/.local/binexport PATH="/opt/homebrew/sbin:$PATH"
+export PATH="/opt/homebrew/bin:$PATH"
