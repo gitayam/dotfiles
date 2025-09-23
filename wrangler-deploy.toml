@@ -1,0 +1,7 @@
+name = "secure-tunnel"
+main = "src/hybrid-tunnel.js"
+compatibility_date = "2024-01-01"
+
+[[kv_namespaces]]
+binding = "TUNNEL_CONFIG"
+id = "a2802d0ff93a4b62b4e7f1eea3494d78"
