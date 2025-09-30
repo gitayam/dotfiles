@@ -622,26 +622,36 @@
       when: inventory_hostname == 'proxmox-main'
       tags: [vaultwarden, custom, docker]
 
-    - name: Update Authentik on irregularchat-information
-      shell: |
-        # rename the backup file to include the current date
-        mv docker-compose.yml docker-compose.yml.bak.$(date +%Y%m%d)
-        # confirm the file was renamed
-        ls -l docker-compose.yml.bak.$(date +%Y%m%d) && echo "File renamed"
-        # download the new docker-compose.yml file
-        wget -O docker-compose.yml https://goauthentik.io/version/{{ authentik_version }}/docker-compose.yml
-        # confirm the file was downloaded
-        ls -l docker-compose.yml && echo "File downloaded"
-        # pull the new images
-        docker compose pull
-        # restart the services
-        docker compose up -d
-      args:
-        chdir: /home/authentik/authentik
-      async: 0
-      poll: 1
-      no_log: False
-      when: inventory_hostname == 'irregularchat-information'
+    - name: Update Authentik
+      block:
+        - name: Check if authentik directory exists
+          stat:
+            path: /home/authentik
+          register: authentik_dir
+
+        - name: Update Authentik service
+          shell: |
+            # Backup current docker-compose.yml
+            if [ -f docker-compose.yml ]; then
+              cp docker-compose.yml docker-compose.yml.bak.$(date +%Y%m%d_%H%M%S)
+              echo "Backed up existing docker-compose.yml"
+            fi
+            # Download the new docker-compose.yml file
+            wget -O docker-compose.yml https://goauthentik.io/version/{{ authentik_version }}/docker-compose.yml
+            # Verify download
+            if [ -f docker-compose.yml ]; then
+              echo "✓ docker-compose.yml downloaded"
+              # Pull new images
+              docker compose pull
+              # Restart services
+              docker compose up -d
+            else
+              echo "✗ Failed to download docker-compose.yml"
+              exit 1
+            fi
+          args:
+            chdir: /home/authentik
+          when: authentik_dir.stat.exists
       tags: [authentik, custom, docker]
 
     - name: Update SearxNG on proxmox-main
