@@ -1,0 +1,14 @@
+---
+# Test Inventory for Safe Ansible Testing
+# Target: root@100.107.228.108 (Tailscale IP)
+all:
+  children:
+    test_servers:
+      hosts:
+        test-server:
+          ansible_host: 100.107.228.108
+          ansible_user: root
+          ansible_port: 22
+          ansible_python_interpreter: /usr/bin/python3
+          # Test server specific vars
+          test_mode: true
