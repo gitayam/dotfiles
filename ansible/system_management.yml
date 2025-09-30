@@ -17,12 +17,13 @@
       private: yes
 
   vars:
-    custom_vars: "{{ lookup('file', 'inventory/custom/vars.yaml') | from_yaml }}"
-    ssh_keys: "{{ custom_vars.ssh_keys }}"
+    # Load custom vars with error handling - file must exist in inventory/custom/vars.yaml
+    custom_vars: "{{ lookup('file', 'inventory/custom/vars.yaml', errors='warn') | default('{}') | from_yaml }}"
+    ssh_keys: "{{ custom_vars.ssh_keys | default([]) }}"
     log_path: "{{ custom_vars.log_path | default('/var/log/ansible_maintenance.log') }}"
     search_path: "{{ custom_vars.search_path | default('/home') }}"
     exclude_path: "{{ custom_vars.exclude_path | default('/home/discourse') }}"
-    authentik_version: "{{ custom_vars.authentik_version | default('latest') }}"
+    authentik_version: "{{ custom_vars.authentik_version | default('2025.8.4') }}"
     ansible_become_pass: "{{ become_pass if user != 'root' else omit }}"
     ansible_user: "{{ user }}"
     required_packages:
@@ -739,14 +740,20 @@
             state: present
             backup: yes
           loop:
-            - { regexp: '^#?PermitRootLogin', line: 'PermitRootLogin no' }
+            # WARNING: Disabling root login requires non-root user with sudo access first!
+            # Uncomment the next line ONLY after creating non-root user and testing access
+            # - { regexp: '^#?PermitRootLogin', line: 'PermitRootLogin no' }
+            - { regexp: '^#?PermitRootLogin', line: 'PermitRootLogin prohibit-password' }  # Allow key-based root login only
             - { regexp: '^#?PasswordAuthentication', line: 'PasswordAuthentication no' }
             - { regexp: '^#?X11Forwarding', line: 'X11Forwarding no' }
             - { regexp: '^#?MaxAuthTries', line: 'MaxAuthTries 3' }
-            - { regexp: '^#?AllowTcpForwarding', line: 'AllowTcpForwarding no' }
+            # NOTE: Allowing TCP forwarding for tunneling (Tailscale, port forwarding, etc.)
+            # Set to 'no' only if you never need SSH tunnels
+            - { regexp: '^#?AllowTcpForwarding', line: 'AllowTcpForwarding yes' }
             - { regexp: '^#?ClientAliveInterval', line: 'ClientAliveInterval 300' }
             - { regexp: '^#?ClientAliveCountMax', line: 'ClientAliveCountMax 2' }
-            - { regexp: '^#?Protocol', line: 'Protocol 2' }
+            # Protocol 2 is default in modern SSH, no longer needed
+            # - { regexp: '^#?Protocol', line: 'Protocol 2' }
             - { regexp: '^#?LogLevel', line: 'LogLevel VERBOSE' }
             - { regexp: '^#?IgnoreRhosts', line: 'IgnoreRhosts yes' }
             - { regexp: '^#?HostbasedAuthentication', line: 'HostbasedAuthentication no' }
@@ -755,10 +762,11 @@
             - { regexp: '^#?GSSAPIAuthentication', line: 'GSSAPIAuthentication no' }
             - { regexp: '^#?KerberosAuthentication', line: 'KerberosAuthentication no' }
             - { regexp: '^#?StrictModes', line: 'StrictModes yes' }
-            - { regexp: '^#?MaxSessions', line: 'MaxSessions 2' }
-            - { regexp: '^#?TCPKeepAlive', line: 'TCPKeepAlive no' }
+            - { regexp: '^#?MaxSessions', line: 'MaxSessions 10' }  # Increased from 2 for usability
+            # NOTE: TCPKeepAlive should remain 'yes' to prevent connection drops
+            - { regexp: '^#?TCPKeepAlive', line: 'TCPKeepAlive yes' }
             - { regexp: '^#?Compression', line: 'Compression no' }
-            - { regexp: '^#?AllowAgentForwarding', line: 'AllowAgentForwarding no' }
+            - { regexp: '^#?AllowAgentForwarding', line: 'AllowAgentForwarding yes' }  # Useful for git, etc.
             - { regexp: '^#?AllowStreamLocalForwarding', line: 'AllowStreamLocalForwarding no' }
             - { regexp: '^#?GatewayPorts', line: 'GatewayPorts no' }
             - { regexp: '^#?PermitTunnel', line: 'PermitTunnel no' }

@@ -1,0 +1,19 @@
+---
+all:
+  children:
+    my_servers:
+      hosts:
+        proxmox-main:
+          ansible_host: 192.168.4.222
+          ansible_user: root
+        irregularchat-information:
+          ansible_host: 192.168.4.4
+          ansible_user: root
+        econ_proxmox:
+          ansible_host: 192.168.4.164
+          ansible_user: root
+    econchat:
+      hosts:
+        econ_matrix:
+          ansible_host: 192.168.4.3
+          ansible_user: root

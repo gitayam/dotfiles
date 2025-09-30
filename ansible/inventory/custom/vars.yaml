@@ -1,0 +1,14 @@
+# SSH keys
+## This is the public key for the user to add to the authorized_keys file
+ssh_keys:
+  - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDBwGuMlXvMQ8nyz+mFHWY0UHFAu1ZBM5gEtm48bKnLH2oUAv6SvoMl1fy4I9pPD+RUB38VpufV6zvg7H96WZ9klMtoYl3nL74mRkKs4r3Mrea4Rq/6P83k+Vp4tDdkj/cgIJvojza4EKiTHexNLBsL6WlMSo4VRg1g69gh6mrTT35IPHYIj08AbyfNc50ODn5C2QQZ/+mkflDMNdqTuojVYpW3g3AWbPI4GF0kIL+FMu34ZfyXh9dYHqOcjr0mTIQxE4ejf0JjfnrWXX8zvdtqjEl6qUgQdw3fac/eNPMZ/CRX38i5/IW4AtbJ2Fuc/0ljdf6ZFrcDFFG2pzXf6ERkumJnKFxQMFk0+ocGZwg/ZASYUVPZkF1VU4PgSm5yqYDewwMWWhcfSX1tvdlS2BNaf4pvVcrUIgZXk+YSv0aGk7fAHs8KDkQhfPtFiOlN5uXhzj8qaAwMEsDlNJLmDK0jquW5ulw4jNUKdudQUCuf8NDDok1nQGqg8X1SXq3kYnHCvUhfWSkm/JhYcazQnS+R8njlA9+KHL815SYQsHKNrsbT9Mf8q78k4r0k5cYgYyMPB/pU0Gin8FZwns/zbL/yeYpk+ZQ4IcY1H2PVi++gqwSjMJ301paP6oU7HgYalKK5h/DjD9IDzfFlg6sAg/ZIOoKCAl6dawfmAGKS7zHRgQ== juntogroup
+
+
+# Default or placeholder variables
+log_path: "/var/log/maintenance_log.txt"
+search_path: "/home/"
+exclude_path: "/home/discourse"
+authentik_version: "2025.8.4" # Latest version as of 2025-09-29 - Update periodically from https://docs.goauthentik.io/releases/
+
+# This is the user that will be used to run the maintenance tasks
+user: "{{ inventory_hostname | default('root') }}"
