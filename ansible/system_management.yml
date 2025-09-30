@@ -114,11 +114,12 @@
       debug:
         msg:
           - "=== SERVICE-SPECIFIC UPDATES ==="
-          - "researchtools → Update research tools on proxmox-main"
-          - "cryptpad      → Update Cryptpad on irregularchat-information"
-          - "vaultwarden   → Update Vaultwarden on proxmox-main"
-          - "authentik     → Update Authentik on irregularchat-information"
-          - "searxng       → Update SearxNG on proxmox-main"
+          - "researchtools → Update research tools"
+          - "cryptpad      → Update Cryptpad"
+          - "vaultwarden   → Update Vaultwarden"
+          - "authentik     → Update Authentik (SSO/Identity provider)"
+          - "searxng       → Update SearxNG (Search engine)"
+          - "clapper/clap  → Update Clapper (Interactive presentations)"
       tags: always
 
     - name: Display system hardening tags
@@ -654,20 +655,41 @@
           when: authentik_dir.stat.exists
       tags: [authentik, custom, docker]
 
-    - name: Update SearxNG on proxmox-main
-      shell: |
-        git stash
-        git pull
-        git stash pop
-        docker compose pull
-        docker compose up -d
-      args:
-        chdir: /home/searxng/searxng-docker
-      async: 0
-      poll: 1
-      no_log: False
-      when: inventory_hostname == 'proxmox-main'
+    - name: Update SearxNG
+      block:
+        - name: Check if searxng directory exists
+          stat:
+            path: /home/searxng/searxng-docker
+          register: searxng_dir
+
+        - name: Update SearxNG service
+          shell: |
+            git stash
+            git pull
+            git stash pop
+            docker compose pull
+            docker compose up -d
+          args:
+            chdir: /home/searxng/searxng-docker
+          when: searxng_dir.stat.exists
       tags: [searxng, custom, docker]
+
+    - name: Update Clapper
+      block:
+        - name: Check if clapper directory exists
+          stat:
+            path: /home/clapper/Claper
+          register: clapper_dir
+
+        - name: Update Clapper service
+          shell: |
+            # Pull latest image and restart
+            docker compose pull
+            docker compose up -d
+          args:
+            chdir: /home/clapper/Claper
+          when: clapper_dir.stat.exists
+      tags: [clapper, clap, custom, docker]
 
     #############################
     # Maintenance Tasks
