@@ -1,0 +1,171 @@
+---
+# Docker Compose Services Inventory
+# This file defines all docker-compose services for automated updates
+docker_compose_services:
+  # System Databases
+  - name: postgres-system
+    path: /home/postgres-system
+    tags: [postgres, system, database]
+    enabled: true
+
+  - name: mariadb-system
+    path: /home/mariadb-system
+    tags: [mariadb, system, database]
+    enabled: true
+
+  # Authentication & Security
+  - name: authentik
+    path: /home/authentik
+    tags: [authentik, sso, auth, custom]
+    enabled: true
+
+  - name: vaultwarden
+    path: /home/vaultwarden
+    tags: [vaultwarden, vault, passwords, custom]
+    enabled: true
+    note: "Standalone container - check for compose file location"
+
+  - name: headscale
+    path: /home/headscale
+    tags: [headscale, vpn, tailscale, custom]
+    enabled: true
+
+  # Media Services
+  - name: jellyfin
+    path: /home/jellyfin
+    tags: [jellyfin, media, custom]
+    enabled: true
+
+  - name: audiobookshelf
+    path: /home/audiobookshelfuser
+    tags: [audiobookshelf, audiobooks, media, custom]
+    enabled: true
+
+  - name: funkwhale
+    path: /home/funkwhale
+    tags: [funkwhale, music, media, custom]
+    enabled: true
+
+  - name: peertube
+    path: /home/PeerTube
+    tags: [peertube, video, media, custom]
+    enabled: true
+
+  - name: torrent
+    path: /home/torrent
+    tags: [torrent, arr, media, custom]
+    enabled: true
+    note: "Consolidated torrent stack (radarr, sonarr, bazarr, etc)"
+
+  # Knowledge & Documentation
+  - name: cryptpad
+    path: /home/cryptpad
+    tags: [cryptpad, docs, custom]
+    enabled: true
+    note: "Check for subdirectory: /home/cryptpad/cryptpad"
+
+  - name: mediawiki
+    path: /home/mediawiki
+    tags: [mediawiki, wiki, docs, custom]
+    enabled: true
+
+  - name: outline-irregularchat
+    path: /home/outline/irregularchat_outline
+    tags: [outline, docs, wiki, custom]
+    enabled: true
+
+  - name: outline-norequirement
+    path: /home/outline/norequirement_outline
+    tags: [outline, docs, wiki, custom]
+    enabled: true
+
+  - name: outline-alfaren
+    path: /home/outline/alfaren_outline
+    tags: [outline, docs, wiki, custom]
+    enabled: false
+    note: "Missing .env file - not configured"
+
+  - name: calibre-web
+    path: /home/calibre-web
+    tags: [calibre, books, library, custom]
+    enabled: true
+
+  # Development & Tools
+  - name: forgejo
+    path: /home/forgejo
+    tags: [forgejo, git, dev, custom]
+    enabled: true
+
+  - name: researchtoolspy
+    path: /home/researchtoolspy
+    tags: [research, tools, custom]
+    enabled: false
+    needs_build: true
+    note: "Build-based service - requires docker compose up --build"
+
+  - name: rstudio
+    path: /home/rstudio
+    tags: [rstudio, r, stats, custom]
+    enabled: false
+    needs_build: true
+    note: "Build-based service - requires docker compose up --build"
+
+  - name: muse-and-co
+    path: /home/Muse_and_Co
+    tags: [muse, custom]
+    enabled: false
+    needs_build: true
+    note: "Build-based service - requires docker compose up --build"
+
+  # Productivity
+  - name: clapper
+    path: /home/clapper/Claper
+    tags: [clapper, clap, presentations, custom]
+    enabled: true
+
+  - name: openslides
+    path: /home/OpenSlides
+    tags: [openslides, slides, meetings, custom]
+    enabled: true
+    note: "Complex multi-container setup - monitor for OOM issues"
+
+  - name: linkwarden
+    path: /home/linkwarden
+    tags: [linkwarden, bookmarks, custom]
+    enabled: true
+
+  - name: infisical
+    path: /home/infisical
+    tags: [infisical, secrets, custom]
+    enabled: true
+
+  # Communication & Email
+  - name: simplelogin
+    path: /home/simplelogin-app
+    tags: [simplelogin, email, privacy, custom]
+    enabled: true
+
+  # Sync & Backup
+  - name: syncthing
+    path: /home/syncthing
+    tags: [syncthing, sync, backup, custom]
+    enabled: true
+
+  # Search
+  - name: searxng
+    path: /home/searxng
+    tags: [searxng, search, custom]
+    enabled: true
+
+  # Archived/Empty Services
+  - name: archive
+    path: /home/archive
+    tags: [archived]
+    enabled: false
+    note: "Empty docker-compose - no services defined"
+
+  - name: chat-dashboard
+    path: /home/chat-based-community-dashboard
+    tags: [archived]
+    enabled: false
+    note: "Empty docker-compose - no services defined"
