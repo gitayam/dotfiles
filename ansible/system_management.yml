@@ -692,6 +692,47 @@
       tags: [clapper, clap, custom, docker]
 
     #############################
+    # Generic Service Updates (Loop-based)
+    # Updates all docker-compose services from services.yaml inventory
+    #############################
+    - name: Load service inventory
+      include_vars:
+        file: inventory/custom/services.yaml
+        name: service_inventory
+      tags: [custom, docker, allservices]
+
+    - name: Update docker compose services from inventory
+      block:
+        - name: Update enabled docker compose services
+          shell: |
+            if [ -d "{{ item.path }}" ]; then
+              cd "{{ item.path }}"
+              if [ -f docker-compose.yml ] || [ -f docker-compose.yaml ]; then
+                echo "Updating {{ item.name }}..."
+                {% if item.needs_build | default(false) %}
+                # Build-based service
+                docker compose pull || true
+                docker compose up -d --build
+                {% else %}
+                # Image-based service
+                docker compose pull
+                docker compose up -d
+                {% endif %}
+                echo "✓ {{ item.name }} updated"
+              else
+                echo "⚠ No docker-compose file found in {{ item.path }}"
+              fi
+            else
+              echo "⚠ Directory {{ item.path }} does not exist"
+            fi
+          loop: "{{ service_inventory.docker_compose_services }}"
+          when:
+            - item.enabled | default(false)
+          loop_control:
+            label: "{{ item.name }}"
+      tags: [custom, docker, allservices]
+
+    #############################
     # Maintenance Tasks
     # System health checks, logging, and maintenance
     # operations with comprehensive error recovery
