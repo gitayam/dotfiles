@@ -358,6 +358,13 @@ normalize_time() {
     fi
 }
 
+# Sanitize filename - remove spaces and special characters
+sanitize_filename() {
+    local filename="$1"
+    # Convert to lowercase, replace spaces with underscores, keep only alphanumeric, underscores, dots, and dashes
+    echo "$filename" | tr '[:upper:]' '[:lower:]' | tr ' ' '_' | tr -cd '[:alnum:]_.-'
+}
+
 download_video() {
     if [[ "$1" == "--help" || "$1" == "-h" || -z "$1" ]]; then
         echo "Usage: download_video url [options]"
@@ -370,7 +377,10 @@ download_video() {
         echo "  --subtitles, -sub        Download subtitles if available (default: false, default language: en)"
         echo "  --language, -l LANGUAGE  Language (default: en)"
         echo "  --audio-only, -a         Download audio only"
+        echo "  --no-sanitize            Keep original filename (don't remove spaces/special chars)"
         echo "  --help, -h               Show this help message"
+        echo ""
+        echo "Note: Filenames are sanitized by default (lowercase, underscores instead of spaces)"
         return 0
     fi
 
@@ -400,6 +410,7 @@ download_video() {
     local subtitles=false
     local language="en"
     local audio_only=false
+    local sanitize=true
     local ytdl_args=()
     
     shift # Skip the URL arg
@@ -443,6 +454,9 @@ download_video() {
                 ;;
             --audio-only|-a)
                 audio_only=true
+                ;;
+            --no-sanitize)
+                sanitize=false
                 ;;
             *)
                 echo "❌ Unknown option: $1"
@@ -508,16 +522,39 @@ download_video() {
     
     if $dl_cmd "${ytdl_args[@]}" "$url"; then
         echo "✅ Download complete!"
-        
+
+        # Get the downloaded filename
+        local downloaded_file=$($dl_cmd --get-filename -o "%(title)s.%(ext)s" "$url" 2>/dev/null)
+
+        # Sanitize filename if enabled
+        if [[ "$sanitize" == true && -f "$downloaded_file" ]]; then
+            local dir=$(dirname "$downloaded_file")
+            local basename=$(basename "$downloaded_file")
+            local extension="${basename##*.}"
+            local filename_no_ext="${basename%.*}"
+
+            # Sanitize the filename (without extension)
+            local sanitized_name=$(sanitize_filename "$filename_no_ext")
+            local new_file="${dir}/${sanitized_name}.${extension}"
+
+            if [[ "$downloaded_file" != "$new_file" ]]; then
+                echo "📝 Sanitizing filename..."
+                echo "   From: $basename"
+                echo "   To: $(basename "$new_file")"
+                mv "$downloaded_file" "$new_file"
+                downloaded_file="$new_file"
+            fi
+        fi
+
         # Post-processing: trim if start/end times were specified
         if [[ -n "$start_time" || -n "$end_time" ]]; then
-            local downloaded_file=$($dl_cmd --get-filename -o "%(title)s.%(ext)s" "$url" 2>/dev/null)
             if [[ -f "$downloaded_file" ]]; then
                 echo "🔪 Trimming video..."
                 trim_vid "$downloaded_file" --start "$start_time" --end "$end_time"
             fi
         fi
-        
+
+        echo "📁 Final file: $downloaded_file"
         return 0
     else
         echo "❌ Download failed!"
