@@ -525,6 +525,31 @@ download_video() {
     fi
 }
 
+# Convenient aliases for download_video
+alias dl='download_video'
+alias dlvid='download_video'
+alias dlaudio='download_video --audio-only'
+alias dl720='download_video --quality 720p'
+alias dl1080='download_video --quality 1080p'
+
+# Quick download for Instagram/TikTok/etc
+igtok() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: igtok <instagram/tiktok/twitter url> [output_name]"
+        echo "Quick download for Instagram, TikTok, Twitter, etc."
+        return 1
+    fi
+
+    local url="$1"
+    local output="${2:-}"
+
+    if [[ -n "$output" ]]; then
+        download_video "$url" --output "$output"
+    else
+        download_video "$url"
+    fi
+}
+
 trim_vid() {
     local file=""
     local start=""
