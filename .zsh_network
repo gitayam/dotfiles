@@ -44,11 +44,95 @@ pings() {
     ping -c "${2:-5}" "$1" | tail -2
 }
 
-# MAC address management
+# MAC address management - Enhanced with Python integration
+
+# Check if Python MAC manager is available
+_has_python_mac_manager() {
+    if command -v python3 &>/dev/null; then
+        local script_dir="${0:A:h}"
+        local mac_manager="$script_dir/python_helpers/mac_manager.py"
+
+        # Also check in parent directory if not found
+        if [[ ! -f "$mac_manager" ]]; then
+            mac_manager="$(dirname "$script_dir")/macos/python_helpers/mac_manager.py"
+        fi
+
+        if [[ -f "$mac_manager" ]]; then
+            echo "$mac_manager"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# Generate MAC address with optional Python enhancement
 gen_mac_addr() {
-    local mac
-    mac=$(openssl rand -hex 6 | sed 's/\(..\)/\1:/g; s/.$//')
-    echo "$mac"
+    local mac_manager
+    mac_manager=$(_has_python_mac_manager)
+
+    if [[ -n "$mac_manager" ]]; then
+        # Use Python for better random MAC generation with proper bit settings
+        python3 "$mac_manager" generate --locally-administered
+    else
+        # Fallback to shell version
+        local mac
+        mac=$(openssl rand -hex 6 | sed 's/\(..\)/\1:/g; s/.$//')
+        echo "$mac"
+    fi
+}
+
+# Analyze MAC address (vendor, type, etc.) - Python only
+analyze_mac() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: analyze_mac <mac_address>"
+        return 1
+    fi
+
+    local mac_manager
+    mac_manager=$(_has_python_mac_manager)
+
+    if [[ -n "$mac_manager" ]]; then
+        python3 "$mac_manager" analyze --mac "$1"
+    else
+        echo "Python MAC manager not available for analysis"
+        echo "MAC address: $1"
+        return 1
+    fi
+}
+
+# List all interfaces with MAC addresses and vendor info
+list_interfaces_enhanced() {
+    local mac_manager
+    mac_manager=$(_has_python_mac_manager)
+
+    if [[ -n "$mac_manager" ]]; then
+        python3 "$mac_manager" list
+    else
+        # Fallback to basic listing
+        echo "Network Interfaces:"
+        networksetup -listallhardwareports | grep -E "Hardware Port:|Device:|Ethernet Address:" | sed 's/^/  /'
+    fi
+}
+
+# Validate MAC address format
+validate_mac() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: validate_mac <mac_address>"
+        return 1
+    fi
+
+    local mac_manager
+    mac_manager=$(_has_python_mac_manager)
+
+    if [[ -n "$mac_manager" ]]; then
+        python3 "$mac_manager" validate --mac "$1" >/dev/null 2>&1
+        return $?
+    else
+        # Fallback to shell validation
+        local clean_mac=$(echo "$1" | tr -d ':.-' | tr -d '[:space:]')
+        [[ "$clean_mac" =~ ^[0-9a-fA-F]{12}$ ]]
+        return $?
+    fi
 }
 
 show_current_mac() {

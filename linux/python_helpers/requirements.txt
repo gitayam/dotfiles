@@ -1,0 +1,8 @@
+# Python dependencies for helper scripts
+# Currently all scripts use only Python standard library
+# No external dependencies required
+
+# Future enhancements may include:
+# psutil>=5.9.0  # For advanced system/network monitoring
+# scapy>=2.5.0   # For advanced network packet inspection
+# rich>=13.0.0   # For beautiful terminal output
