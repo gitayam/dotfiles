@@ -1,6 +1,12 @@
 # ----------------------
 # General Shell Functions
 # ----------------------
+
+# Unalias any conflicting aliases that may have been defined in other config files
+# This prevents "defining function based on alias" errors
+unalias ccopy cpaste clipls clipcat clippwd clipip fhist sanitize_filename download_video \
+        igtok trim_vid mkd reset_file zipfile backup cdl show_func show_alias show_help helpmenu \
+        2>/dev/null
   # Normalize time to hh:mm:ss.
   # If only seconds are provided (e.g. "10"), prepend "00:00:".
   # If minutes and seconds are provided (e.g. "01:00"), prepend "00:".
