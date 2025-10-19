@@ -520,7 +520,11 @@ download_video() {
     [[ -n "$start_time" ]] && echo "Starting at: $start_time"
     [[ -n "$end_time" ]] && echo "Ending at: $end_time"
     
-    if $dl_cmd "${ytdl_args[@]}" "$url"; then
+    # Download with yt-dlp or youtube-dl - capture output for error detection
+    local download_output=$(mktemp)
+    local download_error=$(mktemp)
+
+    if $dl_cmd "${ytdl_args[@]}" "$url" > "$download_output" 2> "$download_error"; then
         echo "✅ Download complete!"
 
         # Get the downloaded filename
@@ -555,9 +559,32 @@ download_video() {
         fi
 
         echo "📁 Final file: $downloaded_file"
+        rm -f "$download_output" "$download_error"
         return 0
     else
-        echo "❌ Download failed!"
+        # Check error output for specific known errors
+        local error_msg=$(cat "$download_error")
+
+        if [[ "$error_msg" =~ "No video could be found" ]]; then
+            echo "📭 No video found in this URL"
+            echo "   This URL may contain:"
+            echo "   • Text-only content"
+            echo "   • Images only"
+            echo "   • External links without embedded video"
+        elif [[ "$error_msg" =~ "Unsupported URL" ]]; then
+            echo "❌ Unsupported URL or platform"
+            echo "   The downloader doesn't support this website"
+        elif [[ "$error_msg" =~ "Private video" || "$error_msg" =~ "This video is private" ]]; then
+            echo "🔒 This video is private or requires authentication"
+        elif [[ "$error_msg" =~ "Video unavailable" ]]; then
+            echo "📵 Video unavailable (may be deleted or restricted)"
+        else
+            echo "❌ Download failed!"
+            # Show first line of error for debugging
+            echo "   Error: $(echo "$error_msg" | head -1 | sed 's/ERROR: //')"
+        fi
+
+        rm -f "$download_output" "$download_error"
         return 1
     fi
 }
