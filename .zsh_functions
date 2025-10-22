@@ -6,7 +6,19 @@
 # This prevents "defining function based on alias" errors
 unalias ccopy cpaste clipls clipcat clippwd clipip fhist sanitize_filename download_video \
         igtok trim_vid mkd reset_file zipfile backup cdl show_func show_alias show_help helpmenu \
+        dl dlvid dlaudio dl720 dl1080 \
         2>/dev/null
+
+# Disable glob expansion for these aliases to allow URLs with special characters
+# This prevents "no matches found" errors when using URLs with ? or * characters
+# Now you can use: dl https://example.com/video?id=123 (without quotes!)
+alias dl='noglob download_video'
+alias dlvid='noglob download_video'
+alias dlaudio='noglob download_video --audio-only'
+alias dl720='noglob download_video --quality 720p'
+alias dl1080='noglob download_video --quality 1080p'
+
+# Note: igtok is a function and handles URLs correctly without noglob
   # Normalize time to hh:mm:ss.
   # If only seconds are provided (e.g. "10"), prepend "00:00:".
   # If minutes and seconds are provided (e.g. "01:00"), prepend "00:".
@@ -294,13 +306,6 @@ download_video() {
     return 1
   fi
 }
-
-# Convenient aliases for download_video
-alias dl='download_video'
-alias dlvid='download_video'
-alias dlaudio='download_video --audio-only'
-alias dl720='download_video --quality 720p'
-alias dl1080='download_video --quality 1080p'
 
 # Quick download for Instagram/TikTok/etc
 igtok() {
