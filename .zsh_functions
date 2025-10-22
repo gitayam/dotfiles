@@ -6,7 +6,7 @@
 # This prevents "defining function based on alias" errors
 unalias ccopy cpaste clipls clipcat clippwd clipip fhist sanitize_filename download_video \
         igtok trim_vid mkd reset_file zipfile backup cdl show_func show_alias show_help helpmenu \
-        dl dlvid dlaudio dl720 dl1080 \
+        dl dlvid dlaudio dl720 dl1080 dlfix vcheck vfix vinfo check_video_format \
         2>/dev/null
 
 # Disable glob expansion for these aliases to allow URLs with special characters
@@ -17,6 +17,14 @@ alias dlvid='noglob download_video'
 alias dlaudio='noglob download_video --audio-only'
 alias dl720='noglob download_video --quality 720p'
 alias dl1080='noglob download_video --quality 1080p'
+
+# Download with automatic format checking for QuickTime/macOS compatibility
+alias dlfix='noglob download_video --check-format'
+
+# Video format checking aliases
+alias vcheck='check_video_format'  # Check only (no fix)
+alias vfix='check_video_format'    # Check and fix
+alias vinfo='check_video_format'   # Alias for checking info
 
 # Note: igtok is a function and handles URLs correctly without noglob
   # Normalize time to hh:mm:ss.
@@ -62,6 +70,201 @@ sanitize_filename() {
   echo "$filename" | tr '[:upper:]' '[:lower:]' | tr ' ' '_' | tr -cd '[:alnum:]_.-'
 }
 
+# Check and fix video format compatibility issues
+# Converts incompatible videos to macOS-compatible format (H.264 + AAC in MP4)
+check_video_format() {
+  local video_file="$1"
+  local auto_fix="${2:-true}"  # Auto-fix by default
+
+  if [[ -z "$video_file" ]]; then
+    echo "Usage: check_video_format <video_file> [auto_fix:true|false]"
+    echo ""
+    echo "Checks video format compatibility with macOS/QuickTime and optionally fixes issues."
+    echo ""
+    echo "Examples:"
+    echo "  check_video_format video.mp4                 # Check and auto-fix"
+    echo "  check_video_format video.mp4 false           # Check only, don't fix"
+    echo "  check_video_format video.webm                # Convert WebM to MP4"
+    return 1
+  fi
+
+  if [[ ! -f "$video_file" ]]; then
+    echo "❌ Error: File not found: $video_file"
+    return 1
+  fi
+
+  # Check if ffprobe and ffmpeg are installed
+  if ! command -v ffprobe &>/dev/null; then
+    echo "❌ ffprobe not found. Install with: brew install ffmpeg"
+    return 1
+  fi
+
+  if ! command -v ffmpeg &>/dev/null; then
+    echo "❌ ffmpeg not found. Install with: brew install ffmpeg"
+    return 1
+  fi
+
+  echo "🔍 Analyzing video format: $video_file"
+  echo ""
+
+  # Get video information
+  local video_codec=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$video_file" 2>/dev/null)
+  local audio_codec=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$video_file" 2>/dev/null)
+  local container=$(ffprobe -v error -show_entries format=format_name -of default=noprint_wrappers=1:nokey=1 "$video_file" 2>/dev/null)
+  local duration=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$video_file" 2>/dev/null)
+  local width=$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of default=noprint_wrappers=1:nokey=1 "$video_file" 2>/dev/null)
+  local height=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of default=noprint_wrappers=1:nokey=1 "$video_file" 2>/dev/null)
+
+  # Display current format
+  echo "📊 Current Format:"
+  echo "   Container: $container"
+  echo "   Video Codec: ${video_codec:-none}"
+  echo "   Audio Codec: ${audio_codec:-none}"
+  [[ -n "$width" && -n "$height" ]] && echo "   Resolution: ${width}x${height}"
+  [[ -n "$duration" ]] && printf "   Duration: %.2f seconds\n" "$duration"
+  echo ""
+
+  # Check compatibility
+  local needs_fix=false
+  local issues=()
+
+  # macOS/QuickTime prefers: H.264 video, AAC audio, MP4 container
+  if [[ "$video_codec" != "h264" && -n "$video_codec" ]]; then
+    needs_fix=true
+    issues+=("Video codec '$video_codec' may not be compatible (prefer H.264)")
+  fi
+
+  if [[ "$audio_codec" != "aac" && -n "$audio_codec" ]]; then
+    needs_fix=true
+    issues+=("Audio codec '$audio_codec' may not be compatible (prefer AAC)")
+  fi
+
+  if [[ "$container" != *"mp4"* && "$container" != *"mov"* ]]; then
+    needs_fix=true
+    issues+=("Container format '$container' may not be compatible (prefer MP4/MOV)")
+  fi
+
+  # Special cases
+  if [[ "$container" == *"matroska"* || "$container" == *"webm"* ]]; then
+    needs_fix=true
+    issues+=("MKV/WebM containers often have QuickTime compatibility issues")
+  fi
+
+  if [[ "$video_codec" == "vp9" || "$video_codec" == "vp8" || "$video_codec" == "av1" ]]; then
+    needs_fix=true
+    issues+=("VP8/VP9/AV1 codecs are not natively supported by QuickTime")
+  fi
+
+  if [[ "$video_codec" == "hevc" ]]; then
+    echo "⚠️  HEVC/H.265 detected - may require newer macOS version"
+    # HEVC is supported on macOS, but older versions may have issues
+  fi
+
+  # Report issues
+  if [[ ${#issues[@]} -eq 0 ]]; then
+    echo "✅ Video format is compatible with macOS/QuickTime!"
+    echo "   No conversion needed."
+    return 0
+  fi
+
+  echo "⚠️  Compatibility Issues Found:"
+  for issue in "${issues[@]}"; do
+    echo "   • $issue"
+  done
+  echo ""
+
+  # Ask to fix if not auto-fixing
+  if [[ "$auto_fix" != "true" ]]; then
+    echo "Run with auto_fix=true to convert, or use:"
+    echo "  check_video_format \"$video_file\" true"
+    return 1
+  fi
+
+  # Create output filename
+  local input_dir=$(dirname "$video_file")
+  local input_name=$(basename "$video_file")
+  local input_base="${input_name%.*}"
+  local output_file="${input_dir}/${input_base}_fixed.mp4"
+
+  # Check if output already exists
+  if [[ -f "$output_file" ]]; then
+    echo "⚠️  Output file already exists: $output_file"
+    read -p "Overwrite? (y/n) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+      echo "Aborted."
+      return 1
+    fi
+  fi
+
+  echo "🔧 Converting to macOS-compatible format..."
+  echo "   Output: $output_file"
+  echo ""
+
+  # Convert with progress
+  # Use H.264 video codec, AAC audio codec, MP4 container
+  # -c:v libx264 = H.264 video codec
+  # -preset medium = encoding speed (ultrafast, fast, medium, slow, slower)
+  # -crf 23 = quality (0-51, lower = better quality, 23 is default)
+  # -c:a aac = AAC audio codec
+  # -b:a 192k = audio bitrate
+  # -movflags +faststart = optimize for streaming/quick preview
+
+  local start_time=$(date +%s)
+
+  if ffmpeg -i "$video_file" \
+    -c:v libx264 \
+    -preset medium \
+    -crf 23 \
+    -c:a aac \
+    -b:a 192k \
+    -movflags +faststart \
+    -y \
+    "$output_file" 2>&1 | grep -E 'time=|Duration:'; then
+
+    local end_time=$(date +%s)
+    local elapsed=$((end_time - start_time))
+
+    echo ""
+    echo "✅ Conversion complete! (took ${elapsed}s)"
+    echo ""
+    echo "📊 New Format:"
+
+    # Show new format info
+    local new_video_codec=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$output_file" 2>/dev/null)
+    local new_audio_codec=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$output_file" 2>/dev/null)
+
+    echo "   Container: MP4"
+    echo "   Video Codec: $new_video_codec"
+    echo "   Audio Codec: $new_audio_codec"
+    echo ""
+
+    # Compare file sizes
+    local original_size=$(stat -f%z "$video_file" 2>/dev/null || stat -c%s "$video_file" 2>/dev/null)
+    local new_size=$(stat -f%z "$output_file" 2>/dev/null || stat -c%s "$output_file" 2>/dev/null)
+
+    printf "   Original: %.2f MB\n" $((original_size / 1024.0 / 1024.0))
+    printf "   New:      %.2f MB\n" $((new_size / 1024.0 / 1024.0))
+
+    local size_diff=$((new_size - original_size))
+    if [[ $size_diff -gt 0 ]]; then
+      printf "   Increase: +%.2f MB\n" $((size_diff / 1024.0 / 1024.0))
+    else
+      printf "   Decrease: -%.2f MB\n" $((-size_diff / 1024.0 / 1024.0))
+    fi
+
+    echo ""
+    echo "🎬 Fixed video: $output_file"
+    echo "   You can now open it in QuickTime Player!"
+
+    return 0
+  else
+    echo ""
+    echo "❌ Conversion failed. Check the error messages above."
+    return 1
+  fi
+}
+
 download_video() {
   # Usage: download_video url [options]
   # Options:
@@ -88,9 +291,11 @@ download_video() {
     echo "  --language, -l LANGUAGE  Language (default: en)"
     echo "  --audio-only, -a         Download audio only"
     echo "  --no-sanitize            Keep original filename (don't remove spaces/special chars)"
+    echo "  --check-format           Check and fix video format after download (for QuickTime compatibility)"
     echo "  --help, -h               Show this help message"
     echo ""
     echo "Note: Filenames are sanitized by default (lowercase, underscores instead of spaces)"
+    echo "      Use --check-format to ensure QuickTime/macOS compatibility"
     return 0
   fi
 
@@ -127,6 +332,7 @@ download_video() {
   local language="en"
   local audio_only=false
   local sanitize=true
+  local check_format=false
   local ytdl_args=()
   
   shift # Skip the URL arg
@@ -173,6 +379,9 @@ download_video() {
         ;;
       --no-sanitize)
         sanitize=false
+        ;;
+      --check-format)
+        check_format=true
         ;;
       *)
         echo "❌ Unknown option: $1"
@@ -274,6 +483,19 @@ download_video() {
       echo "🔪 Trimming video..."
       # Call trim_vid to handle the trimming
       trim_vid "$downloaded_file" --start "$start_time" --end "$end_time"
+    fi
+
+    # Check and fix format if requested
+    if [[ "$check_format" == true && "$audio_only" == false ]]; then
+      echo ""
+      echo "🔍 Checking video format compatibility..."
+      check_video_format "$downloaded_file" true
+
+      # If a _fixed version was created, update the downloaded_file reference
+      local fixed_file="${downloaded_file%.*}_fixed.mp4"
+      if [[ -f "$fixed_file" ]]; then
+        downloaded_file="$fixed_file"
+      fi
     fi
 
     echo "📁 Final file: $downloaded_file"
