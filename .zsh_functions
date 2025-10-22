@@ -75,16 +75,19 @@ sanitize_filename() {
 check_video_format() {
   local video_file="$1"
   local auto_fix="${2:-true}"  # Auto-fix by default
+  local output_path="${3:-}"    # Optional output path
 
   if [[ -z "$video_file" ]]; then
-    echo "Usage: check_video_format <video_file> [auto_fix:true|false]"
+    echo "Usage: check_video_format <video_file> [auto_fix:true|false] [output_path]"
     echo ""
     echo "Checks video format compatibility with macOS/QuickTime and optionally fixes issues."
+    echo "Output defaults to /tmp/, falls back to ./ or ~/ if permission issues."
     echo ""
     echo "Examples:"
-    echo "  check_video_format video.mp4                 # Check and auto-fix"
-    echo "  check_video_format video.mp4 false           # Check only, don't fix"
-    echo "  check_video_format video.webm                # Convert WebM to MP4"
+    echo "  check_video_format video.mp4                      # Check and auto-fix to /tmp/"
+    echo "  check_video_format video.mp4 false                # Check only, don't fix"
+    echo "  check_video_format video.webm                     # Convert WebM to /tmp/"
+    echo "  check_video_format video.mp4 true ~/Downloads    # Fix to specific directory"
     return 1
   fi
 
@@ -180,11 +183,84 @@ check_video_format() {
     return 1
   fi
 
-  # Create output filename
-  local input_dir=$(dirname "$video_file")
+  # Determine output directory with fallback logic
   local input_name=$(basename "$video_file")
   local input_base="${input_name%.*}"
-  local output_file="${input_dir}/${input_base}_fixed.mp4"
+  local output_dir=""
+  local tried_locations=()
+
+  # Function to test if directory is writable
+  _test_write_permission() {
+    local test_dir="$1"
+    local test_file="${test_dir}/.write_test_$$"
+
+    if [[ ! -d "$test_dir" ]]; then
+      return 1
+    fi
+
+    if touch "$test_file" 2>/dev/null; then
+      rm -f "$test_file" 2>/dev/null
+      return 0
+    else
+      return 1
+    fi
+  }
+
+  # Try user-specified path first
+  if [[ -n "$output_path" ]]; then
+    # Expand ~ to home directory
+    output_path="${output_path/#\~/$HOME}"
+
+    if _test_write_permission "$output_path"; then
+      output_dir="$output_path"
+      echo "📁 Using specified output directory: $output_dir"
+    else
+      tried_locations+=("$output_path (no write permission)")
+    fi
+  fi
+
+  # Try /tmp/ if no output dir yet
+  if [[ -z "$output_dir" ]]; then
+    if _test_write_permission "/tmp"; then
+      output_dir="/tmp"
+      echo "📁 Using /tmp/ for output"
+    else
+      tried_locations+=("/tmp (no write permission)")
+    fi
+  fi
+
+  # Fall back to current directory
+  if [[ -z "$output_dir" ]]; then
+    if _test_write_permission "."; then
+      output_dir="."
+      echo "📁 Falling back to current directory"
+    else
+      tried_locations+=("./ (no write permission)")
+    fi
+  fi
+
+  # Fall back to home directory
+  if [[ -z "$output_dir" ]]; then
+    if _test_write_permission "$HOME"; then
+      output_dir="$HOME"
+      echo "📁 Falling back to home directory"
+    else
+      tried_locations+=("~/ (no write permission)")
+    fi
+  fi
+
+  # If still no writable location found, error out
+  if [[ -z "$output_dir" ]]; then
+    echo "❌ Error: Cannot find writable directory for output"
+    echo "Tried locations:"
+    for loc in "${tried_locations[@]}"; do
+      echo "  • $loc"
+    done
+    return 1
+  fi
+
+  # Create output filename
+  local output_file="${output_dir}/${input_base}_fixed.mp4"
 
   # Check if output already exists
   if [[ -f "$output_file" ]]; then
@@ -292,9 +368,11 @@ download_video() {
     echo "  --audio-only, -a         Download audio only"
     echo "  --no-sanitize            Keep original filename (don't remove spaces/special chars)"
     echo "  --check-format           Check and fix video format after download (for QuickTime compatibility)"
+    echo "  --output-dir, -d DIR     Output directory (default: /tmp/, falls back to ./ or ~/)"
     echo "  --help, -h               Show this help message"
     echo ""
     echo "Note: Filenames are sanitized by default (lowercase, underscores instead of spaces)"
+    echo "      Downloads save to /tmp/ by default (with fallback to ./ or ~/)"
     echo "      Use --check-format to ensure QuickTime/macOS compatibility"
     return 0
   fi
@@ -333,6 +411,7 @@ download_video() {
   local audio_only=false
   local sanitize=true
   local check_format=false
+  local output_dir_override=""
   local ytdl_args=()
   
   shift # Skip the URL arg
@@ -383,6 +462,10 @@ download_video() {
       --check-format)
         check_format=true
         ;;
+      --output-dir|-d)
+        shift
+        output_dir_override="$1"
+        ;;
       *)
         echo "❌ Unknown option: $1"
         echo "Use 'download_video --help' to see available options"
@@ -432,15 +515,50 @@ download_video() {
     ytdl_args+=(--write-sub --convert-subs srt --sub-lang "$language")
   fi
 
+  # Determine output directory (prefer /tmp/, fall back to ./ or ~/)
+  local download_dir=""
+
+  # Use user-specified directory if provided
+  if [[ -n "$output_dir_override" ]]; then
+    # Expand ~ to home directory
+    output_dir_override="${output_dir_override/#\~/$HOME}"
+
+    if [[ ! -d "$output_dir_override" ]]; then
+      echo "❌ Error: Directory does not exist: $output_dir_override"
+      return 1
+    fi
+
+    if [[ -w "$output_dir_override" ]]; then
+      download_dir="$output_dir_override"
+    else
+      echo "❌ Error: No write permission for: $output_dir_override"
+      return 1
+    fi
+  # Try /tmp/ first
+  elif [[ -w "/tmp" ]]; then
+    download_dir="/tmp"
+  # Fall back to current directory
+  elif [[ -w "." ]]; then
+    download_dir="."
+  # Fall back to home directory
+  elif [[ -w "$HOME" ]]; then
+    download_dir="$HOME"
+  else
+    echo "❌ Error: Cannot find writable directory for download"
+    return 1
+  fi
+
   # Handle output filename
   if [[ -n "$output_filename" ]]; then
     # Sanitize filename: replace spaces with underscores, remove special characters
     output_filename=$(echo "$output_filename" | tr ' ' '_' | tr -cd '[:alnum:]._-')
-    ytdl_args+=(-o "$output_filename.%(ext)s")
+    ytdl_args+=(-o "${download_dir}/${output_filename}.%(ext)s")
   else
     # Auto-generate filename from title
-    ytdl_args+=(-o "%(title)s.%(ext)s")
+    ytdl_args+=(-o "${download_dir}/%(title)s.%(ext)s")
   fi
+
+  echo "📁 Download directory: $download_dir"
 
   # Download the video
   echo "🎬 Downloading from: $url"
@@ -455,8 +573,8 @@ download_video() {
   if $downloader "${ytdl_args[@]}" "$url" > "$download_output" 2> "$download_error"; then
     echo "✅ Download complete!"
 
-    # Get the downloaded filename
-    local downloaded_file=$($downloader --get-filename -o "%(title)s.%(ext)s" "$url" 2>/dev/null)
+    # Get the downloaded filename (with full path)
+    local downloaded_file="${download_dir}/$($downloader --get-filename -o "%(title)s.%(ext)s" "$url" 2>/dev/null)"
 
     # Sanitize filename if enabled
     if [[ "$sanitize" == true && -f "$downloaded_file" ]]; then
