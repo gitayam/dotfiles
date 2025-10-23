@@ -227,8 +227,10 @@ if [[ -f "$SYSTEM_DIR/.zshrc" ]]; then
         missing_files=()
         for file in "${ZSH_FILES[@]}"; do
             if [[ "$file" != ".zshrc" ]]; then
-                file_base="${file#.}"  # Remove the leading dot
-                if ! echo "$brace_line" | grep -q "$file_base"; then
+                # Extract just the config name without .zsh_ prefix
+                # e.g., .zsh_aliases -> aliases
+                file_suffix="${file#.zsh_}"
+                if ! echo "$brace_line" | grep -q "$file_suffix"; then
                     missing_files+=("$file")
                 fi
             fi
