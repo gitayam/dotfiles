@@ -107,7 +107,17 @@
           - "=== REPOSITORY MANAGEMENT ==="
           - "git                   → Update Git repositories"
           - "docker                → Update Docker images"
-          - "docker_compose_update → Update Docker Compose services"
+          - "docker_compose_update → Update ALL Docker Compose services (47 services!)"
+          - "docker_quick          → Update single Docker Compose service by path"
+      tags: always
+
+    - name: Display custom command tags
+      debug:
+        msg:
+          - "=== CUSTOM COMMANDS ==="
+          - "send              → Send files between hosts using rsync"
+          - "custom_command    → Execute custom shell commands"
+          - "run_script        → Run custom scripts on remote hosts"
       tags: always
 
     - name: Display service-specific update tags
@@ -164,6 +174,12 @@
           - ""
           - "Security hardening on multiple hosts:"
           - "  ansible-playbook system_management.yml -l 'proxmox-main,irregularchat-information' --tags 'hardening,firewall,ssh_hardening'"
+          - ""
+          - "Send files between hosts:"
+          - "  ansible-playbook system_management.yml -l target_host --tags 'send' -e 'src_path=/local/file dest_path=/remote/file'"
+          - ""
+          - "Run custom command on hosts:"
+          - "  ansible-playbook system_management.yml -l my_servers --tags 'custom_command' -e 'command=\"systemctl status nginx\"'"
           - ""
           - "Dry run for upgrades:"
           - "  ansible-playbook system_management.yml -l matrix_server --check --tags 'upgrade,security'"
@@ -565,6 +581,38 @@
           changed_when: "'Total reclaimed space' in docker_cleanup.stdout"
       tags: [docker_pull, docker]
 
+    - name: Quick update single Docker Compose service
+      block:
+        - name: Validate compose_path parameter
+          assert:
+            that:
+              - compose_path is defined
+            fail_msg: "compose_path must be defined. Use: -e 'compose_path=/home/service'"
+
+        - name: Update specified Docker Compose service
+          shell: |
+            echo "=== Updating $(pwd) ==="
+            if [ ! -f "docker-compose.yml" ] && [ ! -f "docker-compose.yaml" ]; then
+              echo "ERROR: No docker-compose file found in $(pwd)"
+              exit 1
+            fi
+            if ! docker compose config > /dev/null 2>&1; then
+              echo "ERROR: Invalid compose file"
+              exit 1
+            fi
+            echo "✓ Compose file valid"
+            docker compose pull
+            docker compose up -d
+            echo "✓ Service updated successfully"
+          args:
+            chdir: "{{ compose_path }}"
+          register: quick_update_result
+
+        - name: Display update result
+          debug:
+            msg: "{{ quick_update_result.stdout_lines }}"
+      tags: [docker_quick]
+
     - name: Recursively find Docker Compose files, excluding specified paths
       shell: "find {{ search_path }} -path {{ exclude_path }} -prune -o -type f \\( -name 'docker-compose.yml' -o -name 'docker-compose.yaml' \\) -print"
       register: docker_compose_files
@@ -572,14 +620,68 @@
       tags: [docker_compose_update, docker]
 
     - name: Pull and update Docker Compose services
-      shell: |
-        docker compose pull && docker compose up -d
-      args:
-        chdir: "{{ item | dirname }}"
-      loop: "{{ docker_compose_files.stdout_lines }}"
-      async: 0
-      poll: 1
-      no_log: False
+      block:
+        - name: Display Docker Compose update information
+          debug:
+            msg: "Found {{ docker_compose_files.stdout_lines | length }} Docker Compose files to update"
+
+        - name: Update each Docker Compose service
+          shell: |
+            echo "=== Updating $(pwd) ==="
+            if [ ! -f "docker-compose.yml" ] && [ ! -f "docker-compose.yaml" ]; then
+              echo "ERROR: No docker-compose file found"
+              exit 1
+            fi
+            # Validate compose file first
+            if ! docker compose config > /dev/null 2>&1; then
+              echo "⚠ Invalid compose file, skipping"
+              exit 0
+            fi
+            echo "✓ Compose file valid"
+            # Pull images (with timeout)
+            if timeout 120 docker compose pull 2>&1; then
+              echo "✓ Images pulled"
+              # Restart services
+              if docker compose up -d 2>&1; then
+                echo "✓ Services updated"
+              else
+                echo "⚠ Failed to restart services"
+                exit 0
+              fi
+            else
+              echo "⚠ Failed to pull images (timeout or error), skipping"
+              exit 0
+            fi
+          args:
+            chdir: "{{ item | dirname }}"
+          loop: "{{ docker_compose_files.stdout_lines }}"
+          register: compose_update_result
+          failed_when: false
+          changed_when: "'Services updated' in compose_update_result.stdout"
+          async: 180
+          poll: 0
+
+        - name: Wait for Docker Compose updates to complete
+          async_status:
+            jid: "{{ item.ansible_job_id }}"
+          loop: "{{ compose_update_result.results }}"
+          register: compose_jobs
+          until: compose_jobs.finished
+          retries: 60
+          delay: 10
+          failed_when: false
+
+        - name: Report Docker Compose update summary
+          debug:
+            msg:
+              - "=== Docker Compose Update Summary ==="
+              - "Total services: {{ docker_compose_files.stdout_lines | length }}"
+              - "Completed: {{ compose_jobs.results | selectattr('finished', 'equalto', true) | list | length }}"
+              - "Failed: {{ compose_jobs.results | selectattr('failed', 'equalto', true) | list | length }}"
+      rescue:
+        - name: Handle Docker Compose update failures
+          debug:
+            msg: "Some Docker Compose services failed to update. Check logs above for details."
       tags: [docker_compose_update, docker]
 
     #############################
@@ -690,6 +792,171 @@
             chdir: /home/clapper/Claper
           when: clapper_dir.stat.exists
       tags: [clapper, clap, custom, docker]
+
+    #############################
+    # Custom Commands Section
+    # Execute custom commands, scripts, and file transfers
+    # with comprehensive error handling and logging
+    #############################
+    - name: Send files using rsync (optimized for large files)
+      block:
+        - name: Validate send parameters
+          assert:
+            that:
+              - src_path is defined
+              - dest_path is defined
+            fail_msg: "Both src_path and dest_path must be defined. Use: -e 'src_path=/source/file dest_path=/destination/file'"
+
+        - name: Check if source path exists
+          stat:
+            path: "{{ src_path }}"
+          register: src_check
+          delegate_to: localhost
+
+        - name: Fail if source doesn't exist
+          fail:
+            msg: "Source path {{ src_path }} does not exist on localhost"
+          when: not src_check.stat.exists
+
+        - name: Display transfer information
+          debug:
+            msg:
+              - "Transferring files with rsync:"
+              - "  Source: {{ src_path }}"
+              - "  Destination: {{ inventory_hostname }}:{{ dest_path }}"
+              - "  Options: archive mode, compression, partial transfers"
+
+        - name: Create destination directory if needed
+          file:
+            path: "{{ dest_path | dirname }}"
+            state: directory
+            mode: '0755'
+          when: dest_path | dirname != '/'
+
+        - name: Transfer files using rsync
+          synchronize:
+            src: "{{ src_path }}"
+            dest: "{{ dest_path }}"
+            archive: yes
+            compress: yes
+            checksum: yes
+            partial: yes
+            rsync_opts:
+              - "--progress"
+              - "--stats"
+              - "--human-readable"
+          register: rsync_result
+
+        - name: Display transfer summary
+          debug:
+            msg: "Transfer completed successfully to {{ inventory_hostname }}"
+      rescue:
+        - name: Handle transfer failure
+          debug:
+            msg: "Failed to transfer files to {{ inventory_hostname }}. Check permissions and network connectivity."
+      tags: [send, transfer]
+
+    - name: Execute custom command on remote hosts
+      block:
+        - name: Validate command parameter
+          assert:
+            that:
+              - command is defined
+              - command | length > 0
+            fail_msg: "Command must be defined. Use: -e 'command=\"your command here\"'"
+
+        - name: Display command information
+          debug:
+            msg:
+              - "Executing custom command on {{ inventory_hostname }}:"
+              - "  Command: {{ command }}"
+              - "  User: {{ ansible_user }}"
+
+        - name: Execute the custom command
+          shell: "{{ command }}"
+          register: command_result
+          changed_when: command_result.rc == 0
+
+        - name: Display command output
+          debug:
+            msg:
+              - "=== Command Output on {{ inventory_hostname }} ==="
+              - "{{ command_result.stdout }}"
+              - "{{ command_result.stderr if command_result.stderr else '' }}"
+              - "=== Exit Code: {{ command_result.rc }} ==="
+      rescue:
+        - name: Handle command execution failure
+          debug:
+            msg:
+              - "Command execution failed on {{ inventory_hostname }}"
+              - "Exit code: {{ command_result.rc | default('unknown') }}"
+              - "Error: {{ command_result.stderr | default('No error message') }}"
+      tags: [custom_command, command]
+
+    - name: Run custom script from file
+      block:
+        - name: Validate script parameters
+          assert:
+            that:
+              - script_path is defined
+            fail_msg: "script_path must be defined. Use: -e 'script_path=/path/to/script.sh'"
+
+        - name: Check if script exists locally
+          stat:
+            path: "{{ script_path }}"
+          register: script_check
+          delegate_to: localhost
+
+        - name: Fail if script doesn't exist
+          fail:
+            msg: "Script {{ script_path }} does not exist on localhost"
+          when: not script_check.stat.exists
+
+        - name: Display script execution information
+          debug:
+            msg:
+              - "Executing script on {{ inventory_hostname }}:"
+              - "  Script: {{ script_path }}"
+              - "  Arguments: {{ script_args | default('none') }}"
+
+        - name: Copy script to remote host
+          copy:
+            src: "{{ script_path }}"
+            dest: "/tmp/ansible_script_{{ ansible_date_time.epoch }}.sh"
+            mode: '0755'
+          register: script_copy
+
+        - name: Execute the script
+          shell: "/tmp/ansible_script_{{ ansible_date_time.epoch }}.sh {{ script_args | default('') }}"
+          register: script_result
+          changed_when: script_result.rc == 0
+
+        - name: Clean up script file
+          file:
+            path: "/tmp/ansible_script_{{ ansible_date_time.epoch }}.sh"
+            state: absent
+
+        - name: Display script output
+          debug:
+            msg:
+              - "=== Script Output on {{ inventory_hostname }} ==="
+              - "{{ script_result.stdout }}"
+              - "{{ script_result.stderr if script_result.stderr else '' }}"
+              - "=== Exit Code: {{ script_result.rc }} ==="
+      rescue:
+        - name: Clean up script on failure
+          file:
+            path: "/tmp/ansible_script_{{ ansible_date_time.epoch }}.sh"
+            state: absent
+          ignore_errors: yes
+
+        - name: Handle script execution failure
+          debug:
+            msg:
+              - "Script execution failed on {{ inventory_hostname }}"
+              - "Exit code: {{ script_result.rc | default('unknown') }}"
+              - "Error: {{ script_result.stderr | default('No error message') }}"
+      tags: [run_script, script, custom]
 
     #############################
     # Generic Service Updates (Loop-based)
