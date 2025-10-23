@@ -21,7 +21,28 @@ This document provides a comprehensive list of all functions and aliases defined
 
 ## .bash_functions
 
-### Functions:
+### Video Processing Functions (NEW - Signal Compatible):
+- **check_video_format()**: Analyze and fix video format compatibility for Signal/iOS/Android
+  - Detects codec compatibility (H.264, VP9, HEVC, etc.)
+  - Validates pixel format (yuv420p required for iOS/Android)
+  - Checks H.264 profile and level for mobile compatibility
+  - Warns about file size limits (95 MB for Signal)
+  - Converts to H.264 Main profile + AAC audio + yuv420p + MP4
+  - Smart output directory (defaults to /tmp/, falls back to ./ or ~/)
+
+- **download_video()**: Download videos from YouTube, Instagram, TikTok with yt-dlp/youtube-dl
+  - Quality selection (best, 1080p, 720p, 480p, 360p)
+  - Audio-only mode
+  - Subtitle downloads with language selection
+  - Video trimming (start/end times)
+  - Output directory specification (defaults to /tmp/)
+  - Automatic format checking for Signal/iOS compatibility (--check-format)
+  - Filename sanitization
+  - Intelligent error detection and user feedback
+
+- **trim_vid()**: Trim video using ffmpeg with start/end times
+
+### General Utility Functions:
 - **cdl()**: Change directory and list contents with ll
 - **mkd()**: Make directory and cd to it (single arg) or make multiple directories and list them
 - **backup()**: Create timestamped backup of files/directories using rsync or cp
@@ -38,10 +59,23 @@ This document provides a comprehensive list of all functions and aliases defined
 - **show_help()**: Show help for specific function or alias
 - **helpmenu()**: Display help menu with available categories
 - **normalize_time()**: Normalize time to hh:mm:ss format
-- **download_video()**: Download videos with yt-dlp/youtube-dl with quality/format options
-- **trim_vid()**: Trim video using ffmpeg with start/end times
+- **sanitize_filename()**: Remove spaces and special characters from filenames
 
-### Aliases:
+### Video Download Aliases (with glob expansion protection):
+- **dl()**: Download video (wrapper prevents URL glob expansion - no quotes needed!)
+- **dlvid()**: Same as dl
+- **dlaudio()**: Download audio only
+- **dl720()**: Download 720p quality
+- **dl1080()**: Download 1080p quality
+- **dlfix()**: Download with automatic format checking for Signal
+
+### Video Format Checking Aliases:
+- **vcheck**: Check video format compatibility
+- **vfix**: Check and fix video format
+- **vinfo**: Display video format info
+- **signalfix**: Signal-optimized video fixing
+
+### Other Aliases:
 - **wh**="wormhole"
 - **wht**="wh-transfer"
 - **show_function**="show_func"

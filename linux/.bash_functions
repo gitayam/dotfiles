@@ -365,22 +365,338 @@ sanitize_filename() {
     echo "$filename" | tr '[:upper:]' '[:lower:]' | tr ' ' '_' | tr -cd '[:alnum:]_.-'
 }
 
+# Check and fix video format compatibility issues for Signal/iOS/Android
+# Converts incompatible videos to Signal-compatible format (H.264 Main + AAC + yuv420p in MP4)
+check_video_format() {
+    local video_file="$1"
+    local auto_fix="${2:-true}"  # Auto-fix by default
+    local output_path="${3:-}"    # Optional output path
+
+    if [[ -z "$video_file" ]]; then
+        echo "Usage: check_video_format <video_file> [auto_fix:true|false] [output_path]"
+        echo ""
+        echo "Checks video format compatibility with Signal/iOS/Android and fixes issues."
+        echo "Ensures H.264 video, AAC audio, yuv420p pixel format, and MP4 container."
+        echo "Output defaults to /tmp/, falls back to ./ or ~/ if permission issues."
+        echo ""
+        echo "Examples:"
+        echo "  check_video_format video.mp4                      # Check and auto-fix to /tmp/"
+        echo "  check_video_format video.mp4 false                # Check only, don't fix"
+        echo "  check_video_format video.webm                     # Convert WebM to /tmp/"
+        echo "  check_video_format video.mp4 true ~/Downloads    # Fix to specific directory"
+        echo ""
+        echo "Aliases:"
+        echo "  vcheck, vfix, vinfo = check_video_format"
+        echo "  signalfix = check_video_format (Signal-optimized)"
+        return 1
+    fi
+
+    if [[ ! -f "$video_file" ]]; then
+        echo "❌ Error: File not found: $video_file"
+        return 1
+    fi
+
+    # Check if ffprobe and ffmpeg are installed
+    if ! command -v ffprobe &>/dev/null; then
+        echo "❌ ffprobe not found. Install ffmpeg:"
+        echo "   Ubuntu/Debian: sudo apt install ffmpeg"
+        echo "   Fedora: sudo dnf install ffmpeg"
+        echo "   Arch: sudo pacman -S ffmpeg"
+        return 1
+    fi
+
+    if ! command -v ffmpeg &>/dev/null; then
+        echo "❌ ffmpeg not found. Install ffmpeg:"
+        echo "   Ubuntu/Debian: sudo apt install ffmpeg"
+        echo "   Fedora: sudo dnf install ffmpeg"
+        echo "   Arch: sudo pacman -S ffmpeg"
+        return 1
+    fi
+
+    echo "🔍 Analyzing video format: $video_file"
+    echo ""
+
+    # Get video information
+    local video_codec=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$video_file" 2>/dev/null)
+    local audio_codec=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$video_file" 2>/dev/null)
+    local container=$(ffprobe -v error -show_entries format=format_name -of default=noprint_wrappers=1:nokey=1 "$video_file" 2>/dev/null)
+    local duration=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$video_file" 2>/dev/null)
+    local width=$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of default=noprint_wrappers=1:nokey=1 "$video_file" 2>/dev/null)
+    local height=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of default=noprint_wrappers=1:nokey=1 "$video_file" 2>/dev/null)
+    local pix_fmt=$(ffprobe -v error -select_streams v:0 -show_entries stream=pix_fmt -of default=noprint_wrappers=1:nokey=1 "$video_file" 2>/dev/null)
+    local profile=$(ffprobe -v error -select_streams v:0 -show_entries stream=profile -of default=noprint_wrappers=1:nokey=1 "$video_file" 2>/dev/null)
+    local level=$(ffprobe -v error -select_streams v:0 -show_entries stream=level -of default=noprint_wrappers=1:nokey=1 "$video_file" 2>/dev/null)
+    local file_size=$(stat -c%s "$video_file" 2>/dev/null)  # Linux uses -c instead of -f
+    local file_size_mb=$(echo "scale=2; $file_size / 1048576" | bc 2>/dev/null)
+
+    # Display current format
+    echo "📊 Current Format:"
+    echo "   Container: $container"
+    echo "   Video Codec: ${video_codec:-none}"
+    [[ -n "$profile" ]] && echo "   H.264 Profile: $profile"
+    [[ -n "$level" ]] && echo "   H.264 Level: $level"
+    [[ -n "$pix_fmt" ]] && echo "   Pixel Format: $pix_fmt"
+    echo "   Audio Codec: ${audio_codec:-none}"
+    [[ -n "$width" && -n "$height" ]] && echo "   Resolution: ${width}x${height}"
+    [[ -n "$duration" ]] && printf "   Duration: %.2f seconds\n" "$duration"
+    [[ -n "$file_size_mb" ]] && printf "   File Size: %.2f MB\n" "$file_size_mb"
+    echo ""
+
+    # Check compatibility
+    local needs_fix=false
+    local issues=()
+
+    # Signal/iOS/Android compatibility requirements: H.264 video, AAC audio, MP4 container, yuv420p pixel format
+    if [[ "$video_codec" != "h264" && -n "$video_codec" ]]; then
+        needs_fix=true
+        issues+=("Video codec '$video_codec' not compatible with Signal/iOS (requires H.264)")
+    fi
+
+    # Check pixel format - CRITICAL for iOS/Android/Signal compatibility
+    if [[ "$pix_fmt" != "yuv420p" && -n "$pix_fmt" && -n "$video_codec" ]]; then
+        needs_fix=true
+        issues+=("Pixel format '$pix_fmt' incompatible with Signal/iOS (requires yuv420p)")
+    fi
+
+    # Check H.264 profile - Main or Baseline recommended for mobile
+    if [[ "$video_codec" == "h264" && -n "$profile" ]]; then
+        if [[ "$profile" == *"High 4:4:4"* || "$profile" == *"High 10"* ]]; then
+            needs_fix=true
+            issues+=("H.264 profile '$profile' not supported on mobile devices (use Main or Baseline)")
+        fi
+    fi
+
+    if [[ "$audio_codec" != "aac" && -n "$audio_codec" ]]; then
+        needs_fix=true
+        issues+=("Audio codec '$audio_codec' may not be compatible (prefer AAC)")
+    fi
+
+    # Signal requires MP4 container (MOV has cross-platform issues)
+    if [[ "$container" != *"mp4"* ]]; then
+        needs_fix=true
+        if [[ "$container" == *"mov"* ]]; then
+            issues+=("MOV container may not work on Signal Android (prefer MP4)")
+        else
+            issues+=("Container format '$container' not compatible with Signal (requires MP4)")
+        fi
+    fi
+
+    # Special cases
+    if [[ "$container" == *"matroska"* || "$container" == *"webm"* ]]; then
+        needs_fix=true
+        issues+=("MKV/WebM containers not supported by Signal/QuickTime")
+    fi
+
+    if [[ "$video_codec" == "vp9" || "$video_codec" == "vp8" || "$video_codec" == "av1" ]]; then
+        needs_fix=true
+        issues+=("VP8/VP9/AV1 codecs not supported by Signal/QuickTime (requires H.264)")
+    fi
+
+    if [[ "$video_codec" == "hevc" ]]; then
+        needs_fix=true
+        issues+=("HEVC/H.265 not supported by Signal for inline playback (requires H.264)")
+    fi
+
+    # Check file size for Signal compatibility (95 MB cross-platform limit)
+    if [[ -n "$file_size_mb" ]] && (( $(echo "$file_size_mb > 95" | bc -l) )); then
+        echo "⚠️  WARNING: File size (${file_size_mb} MB) exceeds Signal's cross-platform limit (95 MB)"
+        echo "   Signal may compress or reject this video. Consider reducing quality."
+        echo ""
+    fi
+
+    # Report issues
+    if [[ ${#issues[@]} -eq 0 ]]; then
+        echo "✅ Video format is compatible with Signal/iOS/Android/QuickTime!"
+        echo "   No conversion needed."
+        return 0
+    fi
+
+    echo "⚠️  Compatibility Issues Found:"
+    for issue in "${issues[@]}"; do
+        echo "   • $issue"
+    done
+    echo ""
+
+    # Ask to fix if not auto-fixing
+    if [[ "$auto_fix" != "true" ]]; then
+        echo "Run with auto_fix=true to convert, or use:"
+        echo "  check_video_format \"$video_file\" true"
+        return 1
+    fi
+
+    # Determine output directory with fallback logic
+    local input_name=$(basename "$video_file")
+    local input_base="${input_name%.*}"
+    local output_dir=""
+    local tried_locations=()
+
+    # Function to test if directory is writable
+    _test_write_permission() {
+        local test_dir="$1"
+        local test_file="${test_dir}/.write_test_$$"
+
+        if [[ ! -d "$test_dir" ]]; then
+            return 1
+        fi
+
+        if touch "$test_file" 2>/dev/null; then
+            rm -f "$test_file" 2>/dev/null
+            return 0
+        else
+            return 1
+        fi
+    }
+
+    # Try user-specified path first
+    if [[ -n "$output_path" ]]; then
+        # Expand ~ to home directory
+        output_path="${output_path/#\~/$HOME}"
+
+        if _test_write_permission "$output_path"; then
+            output_dir="$output_path"
+            echo "📁 Using specified output directory: $output_dir"
+        else
+            tried_locations+=("$output_path (no write permission)")
+        fi
+    fi
+
+    # Try /tmp/ if no output dir yet
+    if [[ -z "$output_dir" ]]; then
+        if _test_write_permission "/tmp"; then
+            output_dir="/tmp"
+            echo "📁 Using /tmp/ for output"
+        else
+            tried_locations+=("/tmp (no write permission)")
+        fi
+    fi
+
+    # Fall back to current directory
+    if [[ -z "$output_dir" ]]; then
+        if _test_write_permission "."; then
+            output_dir="."
+            echo "📁 Falling back to current directory"
+        else
+            tried_locations+=("./ (no write permission)")
+        fi
+    fi
+
+    # Fall back to home directory
+    if [[ -z "$output_dir" ]]; then
+        if _test_write_permission "$HOME"; then
+            output_dir="$HOME"
+            echo "📁 Falling back to home directory"
+        else
+            tried_locations+=("~/ (no write permission)")
+        fi
+    fi
+
+    # If still no writable location found, error out
+    if [[ -z "$output_dir" ]]; then
+        echo "❌ Error: Cannot find writable directory for output"
+        echo "Tried locations:"
+        for loc in "${tried_locations[@]}"; do
+            echo "  • $loc"
+        done
+        return 1
+    fi
+
+    # Create output filename
+    local output_file="${output_dir}/${input_base}_fixed.mp4"
+
+    # Check if output already exists
+    if [[ -f "$output_file" ]]; then
+        echo "⚠️  Output file already exists: $output_file"
+        read -p "Overwrite? (y/n) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Aborted."
+            return 1
+        fi
+    fi
+
+    echo "🔧 Converting to Signal/iOS/Android-compatible format..."
+    echo "   Output: $output_file"
+    echo ""
+
+    # Convert with Signal-optimized settings
+    local start_time=$(date +%s)
+
+    if ffmpeg -i "$video_file" \
+        -c:v libx264 \
+        -profile:v main \
+        -level 3.1 \
+        -pix_fmt yuv420p \
+        -preset medium \
+        -crf 23 \
+        -c:a aac \
+        -b:a 128k \
+        -ac 2 \
+        -movflags +faststart \
+        -y \
+        "$output_file"; then
+
+        local end_time=$(date +%s)
+        local elapsed=$((end_time - start_time))
+
+        echo ""
+        echo "✅ Conversion complete! (took ${elapsed}s)"
+        echo ""
+        echo "📊 New Format:"
+
+        # Show new format info
+        local new_video_codec=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$output_file" 2>/dev/null)
+        local new_audio_codec=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$output_file" 2>/dev/null)
+        local new_container=$(ffprobe -v error -show_entries format=format_name -of default=noprint_wrappers=1:nokey=1 "$output_file" 2>/dev/null | awk -F, '{print toupper($1)}')
+
+        echo "   Container: $new_container"
+        echo "   Video Codec: $new_video_codec"
+        echo "   Audio Codec: $new_audio_codec"
+        echo ""
+
+        # File size comparison
+        local new_size=$(stat -c%s "$output_file" 2>/dev/null)
+        local new_size_mb=$(echo "scale=2; $new_size / 1048576" | bc)
+        local size_diff=$((new_size - file_size))
+        local size_diff_mb=$(echo "scale=2; $size_diff / 1048576" | bc)
+
+        echo "   Original: ${file_size_mb} MB"
+        echo "   New:      ${new_size_mb} MB"
+        if (( $(echo "$size_diff > 0" | bc -l) )); then
+            echo "   Increase: +${size_diff_mb} MB"
+        else
+            echo "   Decrease: ${size_diff_mb} MB"
+        fi
+        echo ""
+        echo "🎬 Fixed video: $output_file"
+        echo "   Ready for Signal/iOS/Android!"
+
+        return 0
+    else
+        echo ""
+        echo "❌ Conversion failed. Check the error messages above."
+        return 1
+    fi
+}
+
 download_video() {
     if [[ "$1" == "--help" || "$1" == "-h" || -z "$1" ]]; then
         echo "Usage: download_video url [options]"
         echo "Options:"
-        echo "  --output, -o FILENAME    Output filename (default: auto-generated from title)"
-        echo "  --start, -s TIME         Start time (format: HH:MM:SS or seconds)"
-        echo "  --end, -e TIME           End time (format: HH:MM:SS or seconds)"
-        echo "  --quality, -q QUALITY    Video quality (best, 1080p, 720p, 480p, 360p, worst)"
-        echo "  --format, -f FORMAT      Format (mp4, webm, mp3, etc.)"
-        echo "  --subtitles, -sub        Download subtitles if available (default: false, default language: en)"
-        echo "  --language, -l LANGUAGE  Language (default: en)"
-        echo "  --audio-only, -a         Download audio only"
-        echo "  --no-sanitize            Keep original filename (don't remove spaces/special chars)"
-        echo "  --help, -h               Show this help message"
+        echo "  --output, -o FILENAME     Output filename (default: auto-generated from title)"
+        echo "  --output-dir, -d DIR      Output directory (default: /tmp/, falls back to ./ or ~/)"
+        echo "  --start, -s TIME          Start time (format: HH:MM:SS or seconds)"
+        echo "  --end, -e TIME            End time (format: HH:MM:SS or seconds)"
+        echo "  --quality, -q QUALITY     Video quality (best, 1080p, 720p, 480p, 360p, worst)"
+        echo "  --format, -f FORMAT       Format (mp4, webm, mp3, etc.)"
+        echo "  --subtitles, -sub         Download subtitles if available (default: false, default language: en)"
+        echo "  --language, -l LANGUAGE   Language (default: en)"
+        echo "  --audio-only, -a          Download audio only"
+        echo "  --check-format            Check and fix video format for Signal/iOS/Android compatibility"
+        echo "  --no-sanitize             Keep original filename (don't remove spaces/special chars)"
+        echo "  --help, -h                Show this help message"
         echo ""
         echo "Note: Filenames are sanitized by default (lowercase, underscores instead of spaces)"
+        echo "Note: Files save to /tmp/ by default for easy cleanup (override with --output-dir)"
         return 0
     fi
 
@@ -403,6 +719,7 @@ download_video() {
     # Parse arguments (same logic as macOS version)
     local url="$1"
     local output_filename=""
+    local output_dir_override=""
     local start_time=""
     local end_time=""
     local quality="best"
@@ -410,9 +727,10 @@ download_video() {
     local subtitles=false
     local language="en"
     local audio_only=false
+    local check_format=false
     local sanitize=true
     local ytdl_args=()
-    
+
     shift # Skip the URL arg
 
     # Validate the URL
@@ -428,6 +746,10 @@ download_video() {
             --output|-o)
                 shift
                 output_filename="$1"
+                ;;
+            --output-dir|-d)
+                shift
+                output_dir_override="$1"
                 ;;
             --start|-s)
                 shift
@@ -454,6 +776,9 @@ download_video() {
                 ;;
             --audio-only|-a)
                 audio_only=true
+                ;;
+            --check-format)
+                check_format=true
                 ;;
             --no-sanitize)
                 sanitize=false
@@ -590,11 +915,48 @@ download_video() {
 }
 
 # Convenient aliases for download_video
-alias dl='download_video'
-alias dlvid='download_video'
-alias dlaudio='download_video --audio-only'
-alias dl720='download_video --quality 720p'
-alias dl1080='download_video --quality 1080p'
+# Use wrapper functions to prevent glob expansion in URLs (bash doesn't have noglob like zsh)
+dl() {
+    set -f  # Disable glob expansion
+    download_video "$@"
+    set +f  # Re-enable glob expansion
+}
+
+dlvid() {
+    set -f
+    download_video "$@"
+    set +f
+}
+
+dlaudio() {
+    set -f
+    download_video --audio-only "$@"
+    set +f
+}
+
+dl720() {
+    set -f
+    download_video --quality 720p "$@"
+    set +f
+}
+
+dl1080() {
+    set -f
+    download_video --quality 1080p "$@"
+    set +f
+}
+
+dlfix() {
+    set -f
+    download_video --check-format "$@"
+    set +f
+}
+
+# Video format checking aliases (Signal/iOS/Android compatible)
+alias vcheck='check_video_format'
+alias vfix='check_video_format'
+alias vinfo='check_video_format'
+alias signalfix='check_video_format'
 
 # Quick download for Instagram/TikTok/etc
 igtok() {
