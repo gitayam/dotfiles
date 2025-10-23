@@ -344,7 +344,7 @@ check_video_format() {
     -ac 2 \
     -movflags +faststart \
     -y \
-    "$output_file" 2>&1 | grep -E 'time=|Duration:'; then
+    "$output_file"; then
 
     local end_time=$(date +%s)
     local elapsed=$((end_time - start_time))
