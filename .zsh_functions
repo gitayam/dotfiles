@@ -21,10 +21,11 @@ alias dl1080='noglob download_video --quality 1080p'
 # Download with automatic format checking for QuickTime/macOS compatibility
 alias dlfix='noglob download_video --check-format'
 
-# Video format checking aliases
+# Video format checking aliases (Signal/iOS/Android compatible)
 alias vcheck='check_video_format'  # Check only (no fix)
 alias vfix='check_video_format'    # Check and fix
 alias vinfo='check_video_format'   # Alias for checking info
+alias signalfix='check_video_format'  # Signal-optimized video fixing
 
 # Note: igtok is a function and handles URLs correctly without noglob
   # Normalize time to hh:mm:ss.
@@ -70,8 +71,8 @@ sanitize_filename() {
   echo "$filename" | tr '[:upper:]' '[:lower:]' | tr ' ' '_' | tr -cd '[:alnum:]_.-'
 }
 
-# Check and fix video format compatibility issues
-# Converts incompatible videos to macOS-compatible format (H.264 + AAC in MP4)
+# Check and fix video format compatibility issues for Signal/iOS/Android
+# Converts incompatible videos to Signal-compatible format (H.264 Main + AAC + yuv420p in MP4)
 check_video_format() {
   local video_file="$1"
   local auto_fix="${2:-true}"  # Auto-fix by default
@@ -80,7 +81,8 @@ check_video_format() {
   if [[ -z "$video_file" ]]; then
     echo "Usage: check_video_format <video_file> [auto_fix:true|false] [output_path]"
     echo ""
-    echo "Checks video format compatibility with macOS/QuickTime and optionally fixes issues."
+    echo "Checks video format compatibility with Signal/iOS/Android/QuickTime and fixes issues."
+    echo "Ensures H.264 video, AAC audio, yuv420p pixel format, and MP4 container."
     echo "Output defaults to /tmp/, falls back to ./ or ~/ if permission issues."
     echo ""
     echo "Examples:"
@@ -88,6 +90,10 @@ check_video_format() {
     echo "  check_video_format video.mp4 false                # Check only, don't fix"
     echo "  check_video_format video.webm                     # Convert WebM to /tmp/"
     echo "  check_video_format video.mp4 true ~/Downloads    # Fix to specific directory"
+    echo ""
+    echo "Aliases:"
+    echo "  vcheck / vfix / vinfo = check_video_format"
+    echo "  signalfix = check_video_format (Signal-optimized)"
     return 1
   fi
 
@@ -117,24 +123,47 @@ check_video_format() {
   local duration=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$video_file" 2>/dev/null)
   local width=$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of default=noprint_wrappers=1:nokey=1 "$video_file" 2>/dev/null)
   local height=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of default=noprint_wrappers=1:nokey=1 "$video_file" 2>/dev/null)
+  local pix_fmt=$(ffprobe -v error -select_streams v:0 -show_entries stream=pix_fmt -of default=noprint_wrappers=1:nokey=1 "$video_file" 2>/dev/null)
+  local profile=$(ffprobe -v error -select_streams v:0 -show_entries stream=profile -of default=noprint_wrappers=1:nokey=1 "$video_file" 2>/dev/null)
+  local level=$(ffprobe -v error -select_streams v:0 -show_entries stream=level -of default=noprint_wrappers=1:nokey=1 "$video_file" 2>/dev/null)
+  local file_size=$(stat -f%z "$video_file" 2>/dev/null)
+  local file_size_mb=$(echo "scale=2; $file_size / 1048576" | bc 2>/dev/null)
 
   # Display current format
   echo "📊 Current Format:"
   echo "   Container: $container"
   echo "   Video Codec: ${video_codec:-none}"
+  [[ -n "$profile" ]] && echo "   H.264 Profile: $profile"
+  [[ -n "$level" ]] && echo "   H.264 Level: $level"
+  [[ -n "$pix_fmt" ]] && echo "   Pixel Format: $pix_fmt"
   echo "   Audio Codec: ${audio_codec:-none}"
   [[ -n "$width" && -n "$height" ]] && echo "   Resolution: ${width}x${height}"
   [[ -n "$duration" ]] && printf "   Duration: %.2f seconds\n" "$duration"
+  [[ -n "$file_size_mb" ]] && printf "   File Size: %.2f MB\n" "$file_size_mb"
   echo ""
 
   # Check compatibility
   local needs_fix=false
   local issues=()
 
-  # macOS/QuickTime prefers: H.264 video, AAC audio, MP4 container
+  # Signal/iOS/Android compatibility requirements: H.264 video, AAC audio, MP4 container, yuv420p pixel format
   if [[ "$video_codec" != "h264" && -n "$video_codec" ]]; then
     needs_fix=true
-    issues+=("Video codec '$video_codec' may not be compatible (prefer H.264)")
+    issues+=("Video codec '$video_codec' not compatible with Signal/iOS (requires H.264)")
+  fi
+
+  # Check pixel format - CRITICAL for iOS/Android/Signal compatibility
+  if [[ "$pix_fmt" != "yuv420p" && -n "$pix_fmt" && -n "$video_codec" ]]; then
+    needs_fix=true
+    issues+=("Pixel format '$pix_fmt' incompatible with Signal/iOS (requires yuv420p)")
+  fi
+
+  # Check H.264 profile - Main or Baseline recommended for mobile
+  if [[ "$video_codec" == "h264" && -n "$profile" ]]; then
+    if [[ "$profile" == *"High 4:4:4"* || "$profile" == *"High 10"* ]]; then
+      needs_fix=true
+      issues+=("H.264 profile '$profile' not supported on mobile devices (use Main or Baseline)")
+    fi
   fi
 
   if [[ "$audio_codec" != "aac" && -n "$audio_codec" ]]; then
@@ -142,30 +171,42 @@ check_video_format() {
     issues+=("Audio codec '$audio_codec' may not be compatible (prefer AAC)")
   fi
 
-  if [[ "$container" != *"mp4"* && "$container" != *"mov"* ]]; then
+  # Signal requires MP4 container (MOV has cross-platform issues)
+  if [[ "$container" != *"mp4"* ]]; then
     needs_fix=true
-    issues+=("Container format '$container' may not be compatible (prefer MP4/MOV)")
+    if [[ "$container" == *"mov"* ]]; then
+      issues+=("MOV container may not work on Signal Android (prefer MP4)")
+    else
+      issues+=("Container format '$container' not compatible with Signal (requires MP4)")
+    fi
   fi
 
   # Special cases
   if [[ "$container" == *"matroska"* || "$container" == *"webm"* ]]; then
     needs_fix=true
-    issues+=("MKV/WebM containers often have QuickTime compatibility issues")
+    issues+=("MKV/WebM containers not supported by Signal/QuickTime")
   fi
 
   if [[ "$video_codec" == "vp9" || "$video_codec" == "vp8" || "$video_codec" == "av1" ]]; then
     needs_fix=true
-    issues+=("VP8/VP9/AV1 codecs are not natively supported by QuickTime")
+    issues+=("VP8/VP9/AV1 codecs not supported by Signal/QuickTime (requires H.264)")
   fi
 
   if [[ "$video_codec" == "hevc" ]]; then
-    echo "⚠️  HEVC/H.265 detected - may require newer macOS version"
-    # HEVC is supported on macOS, but older versions may have issues
+    needs_fix=true
+    issues+=("HEVC/H.265 not supported by Signal for inline playback (requires H.264)")
+  fi
+
+  # Check file size for Signal compatibility (95 MB cross-platform limit)
+  if [[ -n "$file_size_mb" ]] && (( $(echo "$file_size_mb > 95" | bc -l) )); then
+    echo "⚠️  WARNING: File size (${file_size_mb} MB) exceeds Signal's cross-platform limit (95 MB)"
+    echo "   Signal may compress or reject this video. Consider reducing quality."
+    echo ""
   fi
 
   # Report issues
   if [[ ${#issues[@]} -eq 0 ]]; then
-    echo "✅ Video format is compatible with macOS/QuickTime!"
+    echo "✅ Video format is compatible with Signal/iOS/Android/QuickTime!"
     echo "   No conversion needed."
     return 0
   fi
@@ -273,27 +314,34 @@ check_video_format() {
     fi
   fi
 
-  echo "🔧 Converting to macOS-compatible format..."
+  echo "🔧 Converting to Signal/iOS/Android-compatible format..."
   echo "   Output: $output_file"
   echo ""
 
-  # Convert with progress
-  # Use H.264 video codec, AAC audio codec, MP4 container
-  # -c:v libx264 = H.264 video codec
+  # Convert with Signal-optimized settings
+  # -c:v libx264 = H.264 video codec (required by Signal)
+  # -profile:v main = Main profile for mobile compatibility
+  # -level 3.1 = Supports up to 720p (auto-detects higher for 1080p)
+  # -pix_fmt yuv420p = Pixel format required by iOS/Android
   # -preset medium = encoding speed (ultrafast, fast, medium, slow, slower)
   # -crf 23 = quality (0-51, lower = better quality, 23 is default)
-  # -c:a aac = AAC audio codec
-  # -b:a 192k = audio bitrate
-  # -movflags +faststart = optimize for streaming/quick preview
+  # -c:a aac = AAC audio codec (required by Signal)
+  # -b:a 128k = audio bitrate (recommended for mobile)
+  # -ac 2 = stereo audio
+  # -movflags +faststart = optimize for streaming/quick preview (moov atom at start)
 
   local start_time=$(date +%s)
 
   if ffmpeg -i "$video_file" \
     -c:v libx264 \
+    -profile:v main \
+    -level 3.1 \
+    -pix_fmt yuv420p \
     -preset medium \
     -crf 23 \
     -c:a aac \
-    -b:a 192k \
+    -b:a 128k \
+    -ac 2 \
     -movflags +faststart \
     -y \
     "$output_file" 2>&1 | grep -E 'time=|Duration:'; then
