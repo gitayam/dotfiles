@@ -2,11 +2,6 @@
 # Network Functions and Aliases
 # ----------------------
 
-# Unalias any existing Cloudflare aliases to prevent conflicts when re-sourcing
-for cmd in cftemp cfclean cfhelp cfinfo cfshot cfdev cfsync cfget cfdeploy cfupload cfdownload cffiles cfdelete cfbackup cftunnel funnel; do
-  unalias $cmd 2>/dev/null || true
-done
-
 # Network diagnostics
 alias ports='netstat -tulanp'  # List open ports
 alias myip='curl ifconfig.me'  # Check external IP address
@@ -49,11 +44,95 @@ pings() {
     ping -c "${2:-5}" "$1" | tail -2
 }
 
-# MAC address management
+# MAC address management - Enhanced with Python integration
+
+# Check if Python MAC manager is available
+_has_python_mac_manager() {
+    if command -v python3 &>/dev/null; then
+        local script_dir="${0:A:h}"
+        local mac_manager="$script_dir/python_helpers/mac_manager.py"
+
+        # Also check in parent directory if not found
+        if [[ ! -f "$mac_manager" ]]; then
+            mac_manager="$(dirname "$script_dir")/macos/python_helpers/mac_manager.py"
+        fi
+
+        if [[ -f "$mac_manager" ]]; then
+            echo "$mac_manager"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# Generate MAC address with optional Python enhancement
 gen_mac_addr() {
-    local mac
-    mac=$(openssl rand -hex 6 | sed 's/\(..\)/\1:/g; s/.$//')
-    echo "$mac"
+    local mac_manager
+    mac_manager=$(_has_python_mac_manager)
+
+    if [[ -n "$mac_manager" ]]; then
+        # Use Python for better random MAC generation with proper bit settings
+        python3 "$mac_manager" generate --locally-administered
+    else
+        # Fallback to shell version
+        local mac
+        mac=$(openssl rand -hex 6 | sed 's/\(..\)/\1:/g; s/.$//')
+        echo "$mac"
+    fi
+}
+
+# Analyze MAC address (vendor, type, etc.) - Python only
+analyze_mac() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: analyze_mac <mac_address>"
+        return 1
+    fi
+
+    local mac_manager
+    mac_manager=$(_has_python_mac_manager)
+
+    if [[ -n "$mac_manager" ]]; then
+        python3 "$mac_manager" analyze --mac "$1"
+    else
+        echo "Python MAC manager not available for analysis"
+        echo "MAC address: $1"
+        return 1
+    fi
+}
+
+# List all interfaces with MAC addresses and vendor info
+list_interfaces_enhanced() {
+    local mac_manager
+    mac_manager=$(_has_python_mac_manager)
+
+    if [[ -n "$mac_manager" ]]; then
+        python3 "$mac_manager" list
+    else
+        # Fallback to basic listing
+        echo "Network Interfaces:"
+        networksetup -listallhardwareports | grep -E "Hardware Port:|Device:|Ethernet Address:" | sed 's/^/  /'
+    fi
+}
+
+# Validate MAC address format
+validate_mac() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: validate_mac <mac_address>"
+        return 1
+    fi
+
+    local mac_manager
+    mac_manager=$(_has_python_mac_manager)
+
+    if [[ -n "$mac_manager" ]]; then
+        python3 "$mac_manager" validate --mac "$1" >/dev/null 2>&1
+        return $?
+    else
+        # Fallback to shell validation
+        local clean_mac=$(echo "$1" | tr -d ':.-' | tr -d '[:space:]')
+        [[ "$clean_mac" =~ ^[0-9a-fA-F]{12}$ ]]
+        return $?
+    fi
 }
 
 show_current_mac() {
@@ -94,21 +173,67 @@ change_mac_address() {
     local mac_address="$1"
     local interface_input="$2"
     local interface_name
-    
-    # Generate random MAC if none provided
+    local max_retries=3
+    local retry_delay=2
+
+    # If no MAC address provided, prompt the user
     if [[ -z "$mac_address" ]]; then
-        mac_address=$(gen_mac_addr)
-        echo "No MAC address provided. Using generated MAC: $mac_address"
+        echo "MAC Address options:"
+        echo "  1. Enter a specific MAC address"
+        echo "  2. Generate a random MAC address"
+        echo -n "Choose option (1/2): "
+        read -r choice
+
+        case $choice in
+            1)
+                echo -n "Enter MAC address (with or without colons): "
+                read -r mac_address
+                ;;
+            2)
+                mac_address=$(gen_mac_addr)
+                echo "Generated random MAC: $mac_address"
+                ;;
+            *)
+                echo "Invalid choice. Exiting."
+                return 1
+                ;;
+        esac
     fi
-    
-    # Check if interface name is provided
-    if [[ -z "$interface_input" ]]; then
-        echo "No interface name provided. Available interfaces:"
-        networksetup -listallhardwareports | grep -E "Hardware Port:|Device:|Ethernet Address:" | sed 's/^/  /'
-        echo "Usage: change_mac_address <mac_address> <interface_name>"
+
+    # Normalize MAC address format - handle various input formats
+    # Remove all non-hex characters (colons, dots, dashes, spaces)
+    local clean_mac=$(echo "$mac_address" | tr -d ':.-' | tr -d '[:space:]')
+
+    # Validate that we have exactly 12 hex characters
+    if ! [[ "$clean_mac" =~ ^[0-9a-fA-F]{12}$ ]]; then
+        echo "Error: Invalid MAC address. Must contain exactly 12 hexadecimal characters."
+        echo "Accepted formats:"
+        echo "  - XX:XX:XX:XX:XX:XX"
+        echo "  - XX-XX-XX-XX-XX-XX"
+        echo "  - XXXXXXXXXXXX"
+        echo "  - XXXX.XXXX.XXXX"
         return 1
     fi
-    
+
+    # Convert to standard colon-separated format
+    mac_address=$(echo "$clean_mac" | sed 's/../&:/g' | sed 's/:$//')
+    echo "Normalized MAC address: $mac_address"
+
+    # Check if interface name is provided
+    if [[ -z "$interface_input" ]]; then
+        echo ""
+        echo "Available network interfaces:"
+        networksetup -listallhardwareports | grep -E "Hardware Port:|Device:|Ethernet Address:" | sed 's/^/  /'
+        echo ""
+        echo -n "Enter interface name (e.g., en0 or Wi-Fi): "
+        read -r interface_input
+
+        if [[ -z "$interface_input" ]]; then
+            echo "Error: No interface specified."
+            return 1
+        fi
+    fi
+
     # Convert friendly name to device name if needed
     if [[ "$interface_input" == "Wi-Fi" || "$interface_input" == "wifi" || "$interface_input" == "WIFI" ]]; then
         # Look up the device name for Wi-Fi
@@ -128,51 +253,126 @@ change_mac_address() {
         fi
         echo "Converting '$interface_input' to device name: $interface_name"
     fi
-    
-    # Get current MAC for this interface
-    local current_info
-    current_info=$(networksetup -getmacaddress "$interface_name" 2>/dev/null)
-    
-    # Check if the interface exists
-    if [[ $? -ne 0 || "$current_info" == *"does not exist"* ]]; then
+
+    # Verify interface exists
+    if ! ifconfig "$interface_name" &>/dev/null; then
         echo "Error: Interface $interface_name not found."
         return 1
     fi
-    
+
+    # Get current MAC for this interface
+    local current_info
+    current_info=$(networksetup -getmacaddress "$interface_name" 2>/dev/null)
+
+    # Check if the interface exists in networksetup
+    if [[ $? -ne 0 || "$current_info" == *"does not exist"* ]]; then
+        echo "Error: Interface $interface_name not found in networksetup."
+        return 1
+    fi
+
     # Extract current MAC address
     local current_mac
     current_mac=$(echo "$current_info" | awk '{print $3}')
-    
+
+    # Check if MAC is already set to the target
+    if [[ "$current_mac" == "$mac_address" ]]; then
+        echo "MAC address is already set to $mac_address"
+        return 0
+    fi
+
     # Save original MAC if not already saved
     local mac_file="$HOME/.mac_$interface_name"
     if [[ ! -f "$mac_file" ]]; then
         echo "$current_mac" > "$mac_file"
         echo "Original MAC address saved: $current_mac"
     fi
-    
-    # Change MAC address
-    echo "Changing MAC address for $interface_name to $mac_address..."
-    
-    # Turn off the interface
-    echo "Disabling interface..."
-    sudo ifconfig "$interface_name" down
-    
-    # Set the new MAC address
-    sudo ifconfig "$interface_name" ether "$mac_address"
-    
-    # Turn the interface back on
-    echo "Re-enabling interface..."
-    sudo ifconfig "$interface_name" up
-    
-    # Verify the change
-    local new_mac
-    new_mac=$(ifconfig "$interface_name" | grep ether | awk '{print $2}')
-    
-    if [[ "$new_mac" == "$mac_address" ]]; then
-        echo "MAC address successfully changed to $mac_address"
+
+    # Change MAC address with retry logic
+    echo "Changing MAC address for $interface_name from $current_mac to $mac_address..."
+
+    local attempt=0
+    local success=false
+
+    while [[ $attempt -lt $max_retries ]]; do
+        ((attempt++))
+
+        if [[ $attempt -gt 1 ]]; then
+            echo "Retry attempt $attempt/$max_retries..."
+        fi
+
+        # Turn off the interface
+        echo "Disabling interface..."
+        if ! sudo ifconfig "$interface_name" down 2>/dev/null; then
+            echo "Warning: Failed to bring interface down"
+        fi
+
+        # Wait for interface to be fully down
+        sleep 1
+
+        # Set the new MAC address
+        echo "Setting new MAC address..."
+        if ! sudo ifconfig "$interface_name" ether "$mac_address" 2>/dev/null; then
+            echo "Warning: ifconfig ether command failed"
+        fi
+
+        # Wait before bringing interface back up
+        sleep 1
+
+        # Turn the interface back on
+        echo "Re-enabling interface..."
+        if ! sudo ifconfig "$interface_name" up 2>/dev/null; then
+            echo "Warning: Failed to bring interface up"
+        fi
+
+        # Wait for interface to be fully up and stable
+        echo "Waiting for interface to stabilize..."
+        sleep "$retry_delay"
+
+        # Verify the change - use multiple methods for robustness
+        local new_mac=""
+
+        # Method 1: Try ifconfig with proper quoting
+        if [[ -z "$new_mac" ]]; then
+            new_mac=$(ifconfig "$interface_name" 2>/dev/null | grep -E "^\s*ether\s+" | awk '{print $2}')
+        fi
+
+        # Method 2: Try networksetup as fallback
+        if [[ -z "$new_mac" ]]; then
+            new_mac=$(networksetup -getmacaddress "$interface_name" 2>/dev/null | awk '{print $3}')
+        fi
+
+        # Check if MAC change was successful
+        if [[ -n "$new_mac" && "$new_mac" == "$mac_address" ]]; then
+            echo "✓ MAC address successfully changed to $mac_address"
+            success=true
+            break
+        else
+            echo "✗ Attempt $attempt failed. Current MAC is: ${new_mac:-unable to determine}"
+            if [[ $attempt -lt $max_retries ]]; then
+                echo "Waiting before retry..."
+                sleep 2
+            fi
+        fi
+    done
+
+    if $success; then
+        # Try to restart network services to ensure connectivity
+        echo "Restarting network services..."
+        sudo networksetup -setairportpower "$interface_name" off 2>/dev/null
+        sleep 1
+        sudo networksetup -setairportpower "$interface_name" on 2>/dev/null
+        sleep 2
+
+        echo "MAC address change completed. You may need to reconnect to your network."
         return 0
     else
-        echo "Failed to change MAC address. Current MAC is $new_mac"
+        echo "Failed to change MAC address after $max_retries attempts."
+        echo "This may be due to:"
+        echo "  1. System Integrity Protection (SIP) blocking the change"
+        echo "  2. Hardware/driver restrictions"
+        echo "  3. Insufficient permissions"
+        echo ""
+        echo "To check SIP status, run: csrutil status"
         return 1
     fi
 }
@@ -481,7 +681,7 @@ pyserver() {
 }
 
 # Tailscale funnel for sharing files or services over the internet
-funnel_function() {
+funnel() {
     local port=${FUNNEL_PORT:-8080}
     local use_python=true
     local direct_service=false
@@ -703,1709 +903,6 @@ EOF
 alias tsf=funnel
 alias postfile=funnel
 alias openport="funnel -d -p"
-
-# Cloudflare tunnel for sharing local services
-cftunnel_function() {
-    local port=""
-    local password=""
-    local description=""
-    local use_worker=true
-    local legacy_mode=false
-    
-    # Parse arguments
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -p|--password)
-                password="$2"
-                shift 2
-                ;;
-            -d|--description)
-                description="$2"
-                shift 2
-                ;;
-            --legacy)
-                legacy_mode=true
-                use_worker=false
-                shift
-                ;;
-            -h|--help)
-                cat << 'EOF'
-Usage: cftunnel [OPTIONS] PORT
-
-Create secure, password-protected tunnels using Cloudflare Workers.
-
-Arguments:
-  PORT                        Port number to expose (required)
-
-Options:
-  -p, --password PASS        Password protect the tunnel (required)
-  -d, --description DESC     Description for the tunnel (optional)
-  --legacy                   Use legacy cloudflared tunnel instead of Worker
-  -h, --help                Show this help message
-
-Examples:
-  cftunnel -p secret123 8080              # Secure tunnel to port 8080
-  cftunnel -p mypass -d "My App" 3000     # Tunnel with custom description
-  cftunnel --legacy 8080                  # Use old tunnel method (not recommended)
-
-Features:
-  🔐 Password authentication required
-  🌐 Persistent URLs (no temporary links)
-  ⚡ Powered by Cloudflare's global network
-  🛡️ End-to-end encryption
-  📊 Status monitoring and management
-
-Note: Password protection is now mandatory for security.
-EOF
-                return 0
-                ;;
-            *)
-                if [[ -z "$port" ]]; then
-                    port="$1"
-                fi
-                shift
-                ;;
-        esac
-    done
-    
-    # Validate required arguments
-    if [[ -z "$port" ]]; then
-        echo "❌ Error: Port number is required"
-        echo "Usage: cftunnel -p PASSWORD PORT"
-        echo "Use 'cftunnel -h' for help"
-        return 1
-    fi
-    
-    if [[ "$use_worker" == true && -z "$password" ]]; then
-        echo "❌ Error: Password is required for secure tunnels"
-        echo "Usage: cftunnel -p PASSWORD PORT"
-        echo "Use '--legacy' for unprotected tunnels (not recommended)"
-        return 1
-    fi
-    
-    # Validate port number
-    if ! [[ "$port" =~ ^[0-9]+$ ]] || [[ "$port" -lt 1 ]] || [[ "$port" -gt 65535 ]]; then
-        echo "❌ Error: Invalid port number '$port'"
-        echo "Port must be a number between 1 and 65535"
-        return 1
-    fi
-    
-    if [[ "$use_worker" == true ]]; then
-        echo "🚀 Creating secure Worker-based tunnel..."
-        echo "🎯 Target: localhost:$port"
-        echo "🔑 Password: $password"
-        if [[ -n "$description" ]]; then
-            echo "📝 Description: $description"
-        fi
-        echo ""
-        
-        # Check if Node.js is available
-        if ! command -v node &> /dev/null; then
-            echo "❌ Error: Node.js is required for Worker tunnels"
-            echo "Install Node.js or use '--legacy' for basic tunnels"
-            return 1
-        fi
-        
-        # Check for multi-user client
-        if [[ -f "src/multi-user-client.js" ]]; then
-            # Use multi-user client for enhanced functionality
-            echo "🌟 Multi-user tunnel mode available"
-            echo "💡 To create a multi-user tunnel, use:"
-            echo "   node src/multi-user-client.js create $port admin123 \"user1:pass1;user2:pass2\" \"$description\""
-            echo ""
-            echo "🔄 Using single-user mode for now..."
-        fi
-        
-        # Use the tunnel client to register with Worker
-        node src/tunnel-client.js "$port" "$password" "$description"
-        
-    else
-        # Legacy mode
-        echo "⚠️  Using legacy tunnel mode (not recommended)"
-        echo "🌍 Starting public Cloudflare tunnel for localhost:$port..."
-        
-        # Check if cloudflared is installed
-        if ! command -v cloudflared &> /dev/null; then
-            echo "❌ Error: cloudflared is not installed"
-            echo "You can install it with:"
-            echo "  brew install cloudflared"
-            return 1
-        fi
-        
-        cloudflared tunnel --url "http://localhost:$port"
-    fi
-}
-
-# Multi-user tunnel function
-cfmulti_function() {
-    local port=""
-    local admin_password=""
-    local users=""
-    local description=""
-    local max_users="10"
-    local command="create"
-    
-    # Parse arguments
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            create|adduser|users)
-                command="$1"
-                shift
-                ;;
-            -a|--admin)
-                admin_password="$2"
-                shift 2
-                ;;
-            -u|--users)
-                users="$2"
-                shift 2
-                ;;
-            -d|--description)
-                description="$2"
-                shift 2
-                ;;
-            -m|--max-users)
-                max_users="$2"
-                shift 2
-                ;;
-            -h|--help)
-                cat << 'EOF'
-Usage: cfmulti [COMMAND] [OPTIONS] PORT
-
-Create and manage multi-user secure tunnels with individual credentials.
-
-Commands:
-  create              Create a new multi-user tunnel (default)
-  adduser TUNNEL_ID   Add user to existing tunnel
-  users TUNNEL_ID     List users in tunnel
-
-Options:
-  -a, --admin PWD     Admin password for tunnel management
-  -u, --users USERS   User credentials (user1:pass1;user2:pass2)
-  -d, --description   Description for the tunnel
-  -m, --max-users N   Maximum number of users (default: 10)
-
-Examples:
-  cfmulti create 8080 -a admin123 -u "alice:secret;bob:pass123" -d "Team App"
-  cfmulti adduser swift-eagle-123 -a admin123
-  cfmulti users swift-eagle-123 -a admin123
-
-User Format:
-  Simple: username:password
-  With permissions: username:password:read,write
-  Multiple: user1:pass1;user2:pass2:admin
-EOF
-                return 0
-                ;;
-            *)
-                if [[ -z "$port" ]] && [[ "$1" =~ ^[0-9]+$ ]]; then
-                    port="$1"
-                else
-                    echo "❌ Unknown option: $1"
-                    return 1
-                fi
-                shift
-                ;;
-        esac
-    done
-    
-    # Check if Node.js is available
-    if ! command -v node &> /dev/null; then
-        echo "❌ Error: Node.js is required for multi-user tunnels"
-        return 1
-    fi
-    
-    # Check if multi-user client exists
-    if [[ ! -f "src/multi-user-client.js" ]]; then
-        echo "❌ Error: Multi-user client not found"
-        echo "Please ensure src/multi-user-client.js is available"
-        return 1
-    fi
-    
-    # Handle different commands
-    case "$command" in
-        create)
-            if [[ -z "$port" ]] || [[ -z "$admin_password" ]] || [[ -z "$users" ]]; then
-                echo "❌ Missing required arguments for create command"
-                echo "Usage: cfmulti create PORT -a admin_password -u \"user1:pass1;user2:pass2\""
-                return 1
-            fi
-            
-            echo "🚀 Creating multi-user tunnel for port $port..."
-            node src/multi-user-client.js create "$port" "$admin_password" "$users" "$description" "$max_users"
-            ;;
-        adduser)
-            echo "➕ Adding user to tunnel..."
-            node src/multi-user-client.js adduser "$@"
-            ;;
-        users)
-            echo "👥 Listing tunnel users..."
-            node src/multi-user-client.js users "$@"
-            ;;
-    esac
-}
-
-# Old cffile_function - DEPRECATED - Use cffile instead
-# This function is kept for reference but should not be used
-# It doesn't actually proxy files through the Worker
-cffile_function_old_deprecated() {
-    local port=8004
-    local password=""
-    local description=""
-    local use_multi=false
-    local admin_password=""
-    local users=""
-    local original_dir
-    local server_pid
-    local tunnel_pid
-    
-    # Parse arguments
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -p|--password)
-                password="$2"
-                shift 2
-                ;;
-            -m|--multi)
-                use_multi=true
-                shift
-                ;;
-            -a|--admin)
-                admin_password="$2"
-                shift 2
-                ;;
-            -u|--users)
-                users="$2"
-                shift 2
-                ;;
-            --port)
-                port="$2"
-                shift 2
-                ;;
-            -d|--description)
-                description="$2"
-                shift 2
-                ;;
-            -h|--help)
-                echo "Usage: cffile [OPTIONS] [files/directories...]"
-                echo ""
-                echo "Share files via secure Cloudflare tunnel with Python server."
-                echo ""
-                echo "Options:"
-                echo "  -p, --password PWD    Single-user mode: Set tunnel password"
-                echo "  -m, --multi          Enable multi-user mode"
-                echo "  -a, --admin PWD      Multi-user mode: Admin password"
-                echo "  -u, --users USERS    Multi-user mode: User credentials"
-                echo "  --port PORT          Local server port (default: 8004)"
-                echo "  -d, --description    Description for the tunnel"
-                echo "  -h, --help           Show this help"
-                echo ""
-                echo "Examples:"
-                echo "  cffile document.pdf                    # Share single file"
-                echo "  cffile -p secret123 document.pdf      # Share with password"
-                echo "  cffile -m -a admin123 -u \"user1:pass1;user2:pass2\" files/"
-                return 0
-                ;;
-            *)
-                break
-                ;;
-        esac
-    done
-    
-    # Check Python 3
-    if ! command -v python3 &> /dev/null; then
-        echo "❌ Error: Python 3 is required"
-        echo "Install it with: brew install python"
-        return 1
-    fi
-    
-    # Store original directory
-    original_dir=$(pwd)
-    
-    # Handle file arguments
-    if [ $# -gt 0 ]; then
-        echo "📁 Preparing files for sharing..."
-        mkdir -p "/tmp/cffile-$$"
-        
-        for item in "$@"; do
-            if [[ -e "$item" ]]; then
-                if [[ -d "$item" ]]; then
-                    # For directories, copy contents instead of symlinking the directory itself
-                    if [[ "$item" == "." || "$item" == "./" ]]; then
-                        echo "   ✓ Adding current directory contents..."
-                        cp -r ./* "/tmp/cffile-$$/" 2>/dev/null || true
-                        cp -r ./.[^.]* "/tmp/cffile-$$/" 2>/dev/null || true
-                    else
-                        echo "   ✓ Adding directory: $(basename "$item")"
-                        cp -r "$item" "/tmp/cffile-$$/"
-                    fi
-                else
-                    # For files, create symlinks
-                    ln -sf "$(realpath "$item")" "/tmp/cffile-$$/"
-                    echo "   ✓ Added file: $(basename "$item")"
-                fi
-            else
-                echo "   ⚠️  Warning: $item not found"
-            fi
-        done
-        
-        cd "/tmp/cffile-$$" || { echo "❌ Failed to access temp directory"; return 1; }
-    else
-        echo "📂 Serving current directory: $(pwd)"
-    fi
-    
-    # Set description
-    if [[ -z "$description" ]]; then
-        description="cffile sharing ($(ls | wc -l | tr -d ' ') items)"
-    fi
-    
-    # Find available port if default is in use
-    local attempts=0
-    while [[ $attempts -lt 10 ]]; do
-        if ! lsof -ti:$port >/dev/null 2>&1; then
-            break
-        fi
-        echo "⚠️  Port $port is in use, trying $((port + 1))..."
-        port=$((port + 1))
-        attempts=$((attempts + 1))
-    done
-    
-    if [[ $attempts -eq 10 ]]; then
-        echo "❌ Could not find available port after 10 attempts"
-        cd "$original_dir"
-        [[ -d "/tmp/cffile-$$" ]] && rm -rf "/tmp/cffile-$$"
-        return 1
-    fi
-    
-    # Start Python server
-    echo "🚀 Starting Python HTTP server on port $port..."
-    python3 -m http.server "$port" &
-    server_pid=$!
-    sleep 2
-    
-    if ! kill -0 "$server_pid" 2>/dev/null; then
-        echo "❌ Failed to start Python server on port $port"
-        cd "$original_dir"
-        [[ -d "/tmp/cffile-$$" ]] && rm -rf "/tmp/cffile-$$"
-        return 1
-    fi
-    
-    echo "✅ Server running at http://localhost:$port"
-    
-    # Cleanup function
-    cleanup_cffile() {
-        echo ""
-        echo "🛑 Shutting down cffile..."
-        [[ -n "$server_pid" ]] && kill "$server_pid" 2>/dev/null && echo "   ✓ Python server stopped"
-        [[ -n "$tunnel_pid" ]] && kill "$tunnel_pid" 2>/dev/null && echo "   ✓ Tunnel stopped"
-        cd "$original_dir"
-        [[ -d "/tmp/cffile-$$" ]] && rm -rf "/tmp/cffile-$$" && echo "   ✓ Temporary files cleaned"
-        echo "✅ cffile stopped"
-    }
-    
-    trap cleanup_cffile SIGINT SIGTERM
-    
-    # Start tunnel
-    if $use_multi; then
-        if [[ -z "$admin_password" ]] || [[ -z "$users" ]]; then
-            echo "❌ Multi-user mode requires -a admin_password and -u users"
-            cleanup_cffile
-            return 1
-        fi
-        echo "🌐 Creating multi-user tunnel..."
-        node "$original_dir/src/multi-user-client.js" create "$port" "$admin_password" "$users" "$description" &
-        tunnel_pid=$!
-    else
-        if [[ -z "$password" ]]; then
-            password="cffile-$(date +%s | tail -c 4)"
-            echo "🔑 Generated password: $password"
-        fi
-        echo "🌐 Creating single-user tunnel..."
-        node "$original_dir/src/tunnel-client.js" "$port" "$password" "$description" &
-        tunnel_pid=$!
-    fi
-    
-    echo ""
-    echo "🎯 File sharing is active!"
-    echo "🛑 Press Ctrl+C to stop"
-    
-    wait "$tunnel_pid"
-    cleanup_cffile
-}
-
-# Unalias cffile if it exists to avoid conflicts
-unalias cffile 2>/dev/null || true
-unalias cffile_function 2>/dev/null || true
-
-# Main cffile implementation - uses hybrid approach (Worker auth + cloudflared proxy)
-cffile() {
-    /Users/sac/Git/dotfiles/macos/cffile-hybrid.sh "$@"
-}
-
-# Alias cffile_function to use the same hybrid implementation
-cffile_function() {
-    /Users/sac/Git/dotfiles/macos/cffile-hybrid.sh "$@"
-}
-
-# Short aliases for cffile
-alias cff=cffile                  # Quick file sharing
-alias cfshare=cffile              # Alternative name for file sharing
-
-# Secure file sharing (true end-to-end encryption)
-alias cfsecure="/Users/sac/Git/dotfiles/macos/cfsecure-integrated.sh"  # True secure sharing
-alias cfs="/Users/sac/Git/dotfiles/macos/cfsecure-integrated.sh"       # Short secure sharing
-
-# Quick secure sharing functions
-cfsecure_quick() {
-    cfsecure -m openssl "$@"
-}
-
-cfsecure_age() {
-    cfsecure -m age "$@"
-}
-
-cfsecure_gpg() {
-    cfsecure -m gpg "$@"
-}
-
-# Aliases for cloudflare tunnel
-alias cftunnel_share=cftunnel  # Tunnel sharing (renamed to avoid conflict)
-alias cloudshare=cftunnel
-alias cft=cftunnel
-alias cfmulti=cfmulti_function  # Multi-user tunnels
-# cffile is now a function that calls the hybrid script
-
-# ----------------------
-# Cloudflare Wrangler Functions
-# ----------------------
-
-# Auto-setup helper function
-_cf_ensure_setup() {
-    # Find dotfiles directory if not in it
-    local dotfiles_dir="$HOME/Git/dotfiles/macos"
-    if [[ ! -f package.json ]] || ! grep -q "wrangler" package.json 2>/dev/null; then
-        if [[ -f "$dotfiles_dir/package.json" ]]; then
-            echo "🔄 Switching to dotfiles directory..."
-            cd "$dotfiles_dir"
-        else
-            echo "❌ Cannot find dotfiles directory with wrangler config"
-            echo "Please navigate to your dotfiles directory first"
-            return 1
-        fi
-    fi
-    
-    # Install dependencies if needed
-    if [[ ! -d node_modules ]]; then
-        echo "📦 Installing dependencies..."
-        npm install --silent
-    fi
-    
-    # Check authentication
-    if ! wrangler whoami &>/dev/null 2>&1; then
-        echo "🔐 Wrangler not authenticated. Please login..."
-        wrangler login
-        if ! wrangler whoami &>/dev/null 2>&1; then
-            echo "❌ Authentication failed"
-            return 1
-        fi
-    fi
-    
-    # Check if R2 buckets exist (indicator of setup completion)
-    local bucket_check=$(wrangler r2 bucket list 2>/dev/null | grep -E "(files|screenshots|backups)")
-    if [[ -z "$bucket_check" ]]; then
-        echo "🔧 First-time setup detected. Creating R2 buckets with public access..."
-        local buckets=("files" "screenshots" "backups" "images")
-        for bucket in "${buckets[@]}"; do
-            echo "📦 Creating public bucket: $bucket"
-            if wrangler r2 bucket create "$bucket" 2>/dev/null; then
-                echo "🌍 Enabling public access for: $bucket"
-                # Enable R2 dev URL for public access
-                wrangler r2 bucket dev-url enable "$bucket" 2>/dev/null || echo "  ⚠️  Public access needs manual configuration in dashboard"
-            else
-                echo "  ⚠️  Bucket $bucket may already exist"
-            fi
-        done
-    fi
-    
-    return 0
-}
-
-# Manual setup command (optional)
-cfsetup() {
-    echo "🔧 Running Cloudflare setup..."
-    _cf_ensure_setup && npm run setup:cloudflare
-}
-
-# Sync local secrets to Cloudflare
-cfsync_function() {
-    _cf_ensure_setup || return 1
-    echo "🔄 Syncing local secrets to Cloudflare..."
-    
-    # Check if worker exists first
-    if ! wrangler deployments list --name="macos-dotfiles-secrets" &>/dev/null; then
-        echo "⚠️  Worker not deployed yet. Deploying first..."
-        if cfdeploy; then
-            echo "✅ Worker deployed, now syncing secrets..."
-            npm run secrets:sync
-        else
-            echo "❌ Worker deployment failed"
-            return 1
-        fi
-    else
-        npm run secrets:sync
-    fi
-}
-
-# Get secrets from Cloudflare 
-cfget_function() {
-    _cf_ensure_setup || return 1
-    echo "📥 Getting secrets from Cloudflare..."
-    
-    # Check if worker exists first
-    if ! wrangler deployments list --name="macos-dotfiles-secrets" &>/dev/null; then
-        echo "⚠️  Worker not deployed yet. Deploying first..."
-        if cfdeploy; then
-            echo "✅ Worker deployed, now getting secrets..."
-            npm run secrets:get
-        else
-            echo "❌ Worker deployment failed"
-            return 1
-        fi
-    else
-        npm run secrets:get
-    fi
-}
-
-# List available secrets
-_cflist_function() {
-    _cf_ensure_setup || return 1
-    echo "📋 Listing Cloudflare secrets..."
-    
-    # Check if worker exists first
-    if ! wrangler deployments list --name="macos-dotfiles-secrets" &>/dev/null; then
-        echo "⚠️  Worker 'macos-dotfiles-secrets' doesn't exist yet"
-        echo "🚀 Deploying worker first..."
-        if cfdeploy; then
-            echo "✅ Worker deployed, now listing secrets..."
-            npm run secrets:list
-        else
-            echo "❌ Worker deployment failed"
-            return 1
-        fi
-    else
-        npm run secrets:list
-    fi
-}
-
-# Deploy worker to Cloudflare
-cfdeploy_function() {
-    _cf_ensure_setup || return 1
-    echo "🚀 Deploying worker to Cloudflare..."
-    
-    # Check if source files exist
-    if [[ ! -f "src/index.js" ]]; then
-        echo "❌ Worker source file not found: src/index.js"
-        echo "💡 Make sure you're in the dotfiles directory with the worker code"
-        return 1
-    fi
-    
-    if [[ ! -f "wrangler.toml" ]]; then
-        echo "❌ Wrangler configuration not found: wrangler.toml"
-        return 1
-    fi
-    
-    echo "📋 Deploying worker 'macos-dotfiles-secrets'..."
-    if wrangler deploy; then
-        echo "✅ Worker deployed successfully!"
-        echo "🔗 Worker URL will be shown above"
-        
-        # Test the deployment
-        echo "🧪 Testing worker deployment..."
-        if wrangler deployments list --name="macos-dotfiles-secrets" &>/dev/null; then
-            echo "✅ Worker deployment verified"
-        else
-            echo "⚠️  Worker deployment verification failed"
-        fi
-    else
-        echo "❌ Worker deployment failed"
-        echo "💡 Check the error messages above for details"
-        return 1
-    fi
-}
-
-# Test worker locally
-cfdev_function() {
-    _cf_ensure_setup || return 1
-    echo "💻 Starting local development server..."
-    
-    # Check if source files exist
-    if [[ ! -f "src/index.js" ]]; then
-        echo "❌ Worker source file not found: src/index.js"
-        return 1
-    fi
-    
-    if [[ ! -f "wrangler.toml" ]]; then
-        echo "❌ Wrangler configuration not found: wrangler.toml"
-        return 1
-    fi
-    
-    echo "🚀 Starting local worker at http://localhost:8787"
-    echo "🔄 Press Ctrl+C to stop"
-    wrangler dev
-}
-alias cfdev=cfdev_function
-
-# Upload file to R2 bucket and get shareable link
-cfupload_function() {
-    _cf_ensure_setup || return 1
-    
-    local file_path="$1"
-    local bucket_name="${2:-files}"
-    local custom_name="$3"
-    
-    if [[ -z "$file_path" ]]; then
-        echo "Usage: cfupload FILE_PATH [BUCKET_NAME] [CUSTOM_NAME]"
-        echo ""
-        echo "Examples:"
-        echo "  cfupload ~/screenshot.png"
-        echo "  cfupload ~/document.pdf files my-doc.pdf"
-        echo "  cfupload ~/image.jpg images"
-        return 1
-    fi
-    
-    if [[ ! -f "$file_path" ]]; then
-        echo "Error: File not found: $file_path"
-        return 1
-    fi
-    
-    # Generate filename if not provided
-    if [[ -z "$custom_name" ]]; then
-        local timestamp=$(date +"%Y%m%d_%H%M%S")
-        local extension="${file_path##*.}"
-        local basename=$(basename "$file_path" ".$extension")
-        custom_name="${basename}_${timestamp}.${extension}"
-    fi
-    
-    echo "📤 Uploading $(basename "$file_path") to R2 bucket: $bucket_name"
-    echo "🏷️  Remote name: $custom_name"
-    
-    # Try to upload - if bucket doesn't exist, create it
-    if ! wrangler r2 object put "$bucket_name/$custom_name" --file="$file_path" 2>/dev/null; then
-        echo "📦 Bucket might not exist. Attempting to create..."
-        
-        # Try to create the bucket
-        if wrangler r2 bucket create "$bucket_name" 2>/dev/null; then
-            echo "✅ Bucket '$bucket_name' created"
-            
-            # Check if this should be a public bucket
-            if [[ "$bucket_name" == *"-public" ]] || [[ "$bucket_name" == "screenshots" ]] || [[ "$bucket_name" == "files" ]] || [[ "$bucket_name" == "images" ]]; then
-                echo "🌍 Enabling public access..."
-                wrangler r2 bucket dev-url enable "$bucket_name" 2>/dev/null
-            fi
-            
-            # Retry the upload
-            if wrangler r2 object put "$bucket_name/$custom_name" --file="$file_path"; then
-                echo "✅ Upload successful after creating bucket!"
-            else
-                echo "❌ Upload failed even after creating bucket"
-                return 1
-            fi
-        else
-            # Bucket exists, retry upload
-            if wrangler r2 object put "$bucket_name/$custom_name" --file="$file_path"; then
-                echo "✅ Upload successful!"
-            else
-                echo "❌ Upload failed"
-                return 1
-            fi
-        fi
-    else
-        echo "✅ Upload successful!"
-        
-        # Generate R2 public URL
-        # Map buckets to their public domains (update as you enable more buckets)
-        local r2_domain=""
-        case "$bucket_name" in
-            "files")
-                r2_domain="pub-ef8813e86b494d8e8ff24a6182785ea4.r2.dev"
-                ;;
-            "screenshots"|"images"|*"-public")
-                # These need public access enabled first
-                r2_domain=""
-                ;;
-        esac
-        
-        # Check if bucket has public access configured
-        if [[ -n "$r2_domain" ]]; then
-            local public_url="https://${r2_domain}/$custom_name"
-            
-            echo "🔗 Public URL: $public_url"
-            echo "📋 Copying URL to clipboard..."
-            echo "$public_url" | pbcopy
-            
-            # Test if URL is accessible
-            local http_status=$(curl -s -o /dev/null -w "%{http_code}" "$public_url" 2>/dev/null)
-            if [[ "$http_status" == "200" ]]; then
-                echo "✅ URL is publicly accessible!"
-            elif [[ "$http_status" == "404" ]]; then
-                echo "⚠️  File may not be fully propagated yet"
-                echo "💡 Try the URL in a few seconds"
-            else
-                echo "⚠️  Public access may need configuration (HTTP $http_status)"
-                echo "💡 Enable with: wrangler r2 bucket dev-url enable $bucket_name"
-            fi
-        else
-            echo "🔗 File uploaded to: $bucket_name/$custom_name"
-            echo "💡 Configure R2 public access:"
-            echo "   cfpublic $bucket_name"
-            echo "📋 Copying object path to clipboard..."
-            echo "$bucket_name/$custom_name" | pbcopy
-        fi
-    fi
-}
-
-# Download file from R2 bucket
-cfdownload_function() {
-    _cf_ensure_setup || return 1
-    
-    local remote_path="$1"
-    local local_path="$2"
-    local bucket_name="${3:-files}"
-    
-    if [[ -z "$remote_path" ]]; then
-        echo "Usage: cfdownload REMOTE_PATH [LOCAL_PATH] [BUCKET_NAME]"
-        echo ""
-        echo "Examples:"
-        echo "  cfdownload image.jpg"
-        echo "  cfdownload folder/file.pdf ~/Downloads/"
-        echo "  cfdownload doc.txt ~/Documents/doc.txt"
-        return 1
-    fi
-    
-    # Set local path if not provided
-    if [[ -z "$local_path" ]]; then
-        local_path="./$(basename "$remote_path")"
-    fi
-    
-    echo "📥 Downloading $remote_path from R2 bucket: $bucket_name"
-    
-    if wrangler r2 object get "$bucket_name/$remote_path" --file="$local_path"; then
-        echo "✅ Download successful: $local_path"
-    else
-        echo "❌ Download failed"
-        return 1
-    fi
-}
-
-# List files in R2 bucket
-cffiles_function() {
-    _cf_ensure_setup || return 1
-    
-    local bucket_name="${1:-files}"
-    local prefix="$2"
-    
-    echo "📁 Listing available R2 buckets:"
-    wrangler r2 bucket list
-    
-    echo ""
-    echo "💡 To list objects in a bucket, Wrangler v4 requires individual object operations."
-    echo "   Available buckets shown above."
-    echo ""
-    echo "🔍 To see bucket contents, try:"
-    echo "   - cfbackup (to backup and see files)"
-    echo "   - Check Cloudflare Dashboard → R2 → Buckets"
-    echo ""
-    if [[ -n "$bucket_name" && "$bucket_name" != "files" ]]; then
-        echo "📊 Getting info for bucket: $bucket_name"
-        wrangler r2 bucket info "$bucket_name" 2>/dev/null || echo "❌ Bucket '$bucket_name' not found or inaccessible"
-    fi
-}
-
-# Delete file from R2 bucket
-cfdelete_function() {
-    _cf_ensure_setup || return 1
-    
-    local remote_path="$1"
-    local bucket_name="${2:-files}"
-    
-    if [[ -z "$remote_path" ]]; then
-        echo "Usage: cfdelete REMOTE_PATH [BUCKET_NAME]"
-        echo ""
-        echo "Examples:"
-        echo "  cfdelete image.jpg"
-        echo "  cfdelete folder/file.pdf"
-        return 1
-    fi
-    
-    echo "🗑️  Deleting $remote_path from R2 bucket: $bucket_name"
-    echo "⚠️  This action cannot be undone!"
-    echo -n "Continue? (y/N): "
-    read -r confirm
-    
-    if [[ "$confirm" =~ ^[Yy]$ ]]; then
-        if wrangler r2 object delete "$bucket_name/$remote_path"; then
-            echo "✅ File deleted successfully"
-        else
-            echo "❌ Delete failed"
-            return 1
-        fi
-    else
-        echo "❌ Delete cancelled"
-    fi
-}
-
-# ============================================
-# Cloudflare Pages Functions
-# ============================================
-
-# Initialize Cloudflare Pages project for public files
-cfpage-init() {
-    echo "🚀 Initializing Cloudflare Pages for public file sharing..."
-    
-    local public_dir="$HOME/public-files"
-    
-    # Create public files directory if it doesn't exist
-    if [[ ! -d "$public_dir" ]]; then
-        mkdir -p "$public_dir"
-        echo "📁 Created directory: $public_dir"
-    fi
-    
-    cd "$public_dir" || return 1
-    
-    # Check if Pages project exists
-    if ! npx wrangler pages project list 2>/dev/null | grep -q "public-files"; then
-        echo "📦 Creating Pages project..."
-        npx wrangler pages project create public-files --production-branch main
-    else
-        echo "✅ Pages project already exists"
-    fi
-    
-    # Deploy current files
-    echo "🌐 Deploying to Pages..."
-    npx wrangler pages deploy . --project-name public-files
-    
-    echo ""
-    echo "✨ Pages setup complete!"
-    echo "📍 Your public URL will be shown after deployment"
-    cd - > /dev/null
-}
-
-# Upload file to Cloudflare Pages
-cfpage-upload() {
-    local file="$1"
-    
-    if [[ -z "$file" ]]; then
-        echo "Usage: cfpage-upload FILE"
-        echo ""
-        echo "Examples:"
-        echo "  cfpage-upload document.pdf"
-        echo "  cfpage-upload ~/Downloads/image.png"
-        return 1
-    fi
-    
-    if [[ ! -f "$file" ]]; then
-        echo "❌ File not found: $file"
-        return 1
-    fi
-    
-    local public_dir="$HOME/public-files"
-    local filename=$(basename "$file")
-    
-    # Copy file to public directory
-    cp "$file" "$public_dir/$filename"
-    
-    # Update files.json
-    cd "$public_dir" || return 1
-    
-    # Create or update files.json
-    if [[ -f "files.json" ]]; then
-        # Add new file to existing list
-        local temp_json=$(mktemp)
-        jq --arg name "$filename" --arg size "$(ls -lh "$filename" | awk '{print $5}')" \
-           '. + [{"name": $name, "size": $size}] | unique_by(.name) | reverse' \
-           files.json > "$temp_json" && mv "$temp_json" files.json
-    else
-        # Create new files.json
-        jq -n --arg name "$filename" --arg size "$(ls -lh "$filename" | awk '{print $5}')" \
-           '[{"name": $name, "size": $size}]' > files.json
-    fi
-    
-    # Deploy to Pages
-    echo "🚀 Deploying to Cloudflare Pages..."
-    local deploy_output=$(npx wrangler pages deploy . --project-name public-files 2>&1)
-    local url=$(echo "$deploy_output" | grep -o 'https://[^[:space:]]*pages\.dev' 2>/dev/null | head -1)
-    
-    if [[ -z "$url" ]]; then
-        url="https://public-files-5kg.pages.dev"
-    fi
-    
-    echo ""
-    echo "✅ File uploaded successfully!"
-    echo "🔗 Public URL: $url/$filename"
-    echo ""
-    echo "📋 URL copied to clipboard"
-    echo "$url/$filename" | pbcopy
-    
-    cd - > /dev/null
-}
-
-# Take screenshot and upload to Pages (or with password protection)
-cfpage-shot() {
-    local timestamp=$(date +%Y%m%d_%H%M%S)
-    local filename="screenshot_${timestamp}.png"
-    local temp_file="/tmp/$filename"
-    local password=""
-    
-    # Parse arguments for password
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            -p|--password)
-                password="$2"
-                shift 2
-                ;;
-            *)
-                shift
-                ;;
-        esac
-    done
-    
-    echo "📸 Taking screenshot..."
-    echo "Press Cmd+Shift+4 and select area to capture"
-    
-    # Take screenshot
-    screencapture -i "$temp_file"
-    
-    if [[ ! -f "$temp_file" ]]; then
-        echo "❌ Screenshot cancelled"
-        return 1
-    fi
-    
-    if [[ -n "$password" ]]; then
-        # Use cffile for password-protected sharing
-        echo "🔐 Creating password-protected share..."
-        cffile -p "$password" "$temp_file"
-    else
-        # Upload publicly using cfpage-upload
-        cfpage-upload "$temp_file"
-    fi
-    
-    # Keep temp file if using cffile (it handles cleanup)
-    if [[ -z "$password" ]]; then
-        rm "$temp_file"
-    fi
-}
-
-# List files on Pages
-cfpage-list() {
-    local public_dir="$HOME/public-files"
-    
-    if [[ -f "$public_dir/files.json" ]]; then
-        echo "📁 Files on Cloudflare Pages:"
-        echo ""
-        jq -r '.[] | "  📄 \(.name) (\(.size))"' "$public_dir/files.json"
-        echo ""
-        echo "🔗 Public URL: https://public-files-5kg.pages.dev"
-    else
-        echo "📭 No files uploaded yet"
-        echo "Use 'cfpage-upload FILE' to upload files"
-    fi
-}
-
-# Password-protected file upload
-cfprotect_function() {
-    local file_path="$1"
-    local password="$2"
-    
-    if [[ -z "$file_path" ]] || [[ -z "$password" ]]; then
-        echo "Usage: cfprotect FILE PASSWORD"
-        echo "   or: cfpu FILE -p PASSWORD"
-        echo ""
-        echo "Examples:"
-        echo "  cfprotect secret.pdf mypassword123"
-        echo "  cfpu confidential.doc -p 'complex pass phrase'"
-        return 1
-    fi
-    
-    if [[ ! -f "$file_path" ]]; then
-        echo "❌ File not found: $file_path"
-        return 1
-    fi
-    
-    echo "🔐 Uploading password-protected file..."
-    
-    # Ensure protected-files bucket exists  
-    if ! wrangler r2 bucket list 2>/dev/null | \grep -q "protected-files"; then
-        echo "📦 Creating protected-files bucket..."
-        wrangler r2 bucket create protected-files 2>/dev/null || echo "Bucket may already exist"
-    fi
-    
-    # Generate password hash
-    local password_hash=$(echo -n "$password" | shasum -a 256 | awk '{print $1}')
-    local filename=$(basename "$file_path")
-    local timestamp=$(date +%s)
-    local protected_name="${timestamp}_${filename}"
-    
-    # Upload file with password hash in metadata
-    echo "📤 Uploading to protected storage..."
-    if wrangler r2 object put "protected-files/${protected_name}" \
-        --file "$file_path" \
-        --content-type "application/octet-stream" \
-        --remote 2>/dev/null; then
-        
-        # Store password hash in KV
-        echo "🔑 Storing password hash..."
-        wrangler kv key put "hash_${protected_name}" "$password_hash" --namespace-id "33eebef30dd54140a0485f4ae6dd9e9d" --remote
-        
-        # Deploy the worker if not already deployed
-        echo "🚀 Deploying password protection worker..."
-        wrangler deploy --config wrangler-protected.toml
-        
-        # Get the worker URL
-        local worker_url="https://protected-files.wemea-5ahhf.workers.dev"
-        local protected_url="${worker_url}/${protected_name}"
-        
-        echo ""
-        echo "✅ Password-protected file uploaded!"
-        echo "🔗 Protected URL: $protected_url"
-        echo "🔑 Password: $password"
-        echo ""
-        echo "📋 URL copied to clipboard"
-        echo "$protected_url" | pbcopy
-        
-        # Save to a local log for reference
-        echo "$(date): $protected_name | Password: [hidden] | URL: $protected_url" >> ~/.cf-protected-files.log
-        
-        echo ""
-        echo "💡 Share the URL and password separately for security"
-        echo "📝 Upload logged to ~/.cf-protected-files.log"
-    else
-        echo "❌ Upload failed"
-        return 1
-    fi
-}
-
-# Enhanced cfpage-upload with password protection option
-cfpu_enhanced() {
-    local file_path=""
-    local password=""
-    local public=true
-    
-    # Parse arguments
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -p|--password)
-                password="$2"
-                public=false
-                shift 2
-                ;;
-            *)
-                file_path="$1"
-                shift
-                ;;
-        esac
-    done
-    
-    if [[ -z "$file_path" ]]; then
-        echo "Usage: cfpu FILE [OPTIONS]"
-        echo ""
-        echo "Options:"
-        echo "  -p, --password PASSWORD    Password-protect the file"
-        echo ""
-        echo "Examples:"
-        echo "  cfpu document.pdf                    # Public upload"
-        echo "  cfpu secret.pdf -p mypassword       # Password-protected"
-        return 1
-    fi
-    
-    if [[ "$public" == true ]]; then
-        # Regular public upload
-        cfpage-upload "$file_path"
-    else
-        # Password-protected upload
-        cfprotect_function "$file_path" "$password"
-    fi
-}
-
-# Quick screenshot upload to Cloudflare
-cfshot_function() {
-    _cf_ensure_setup || return 1
-    
-    local filename=""
-    local password=""
-    local is_private=false
-    local public=true
-    
-    # Parse arguments
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -p|--password)
-                password="$2"
-                public=false
-                is_private=true
-                shift 2
-                ;;
-            --private)
-                is_private=true
-                public=false
-                shift
-                ;;
-            *)
-                filename="$1"
-                shift
-                ;;
-        esac
-    done
-    
-    # Set default filename if not provided
-    if [[ -z "$filename" ]]; then
-        filename="screenshot_$(date +%Y%m%d_%H%M%S).png"
-    fi
-    
-    local temp_file="/tmp/$filename"
-    
-    echo "📸 Taking screenshot..."
-    
-    # Take screenshot and save to temp file
-    screencapture -i "$temp_file"
-    
-    if [[ -f "$temp_file" ]]; then
-        echo "✅ Screenshot captured"
-        
-        # Choose upload method based on protection level
-        if [[ "$public" == false && -n "$password" ]]; then
-            echo "🔐 Uploading with password protection..."
-            cfprotect_function "$temp_file" "$password"
-        elif [[ "$is_private" == true ]]; then
-            echo "🔒 Uploading as PRIVATE (no public URL)"
-            cfupload "$temp_file" "screenshots" "$filename"
-        else
-            echo "🌍 Uploading as PUBLIC (shareable URL)"
-            cfpage-upload "$temp_file" "$filename"
-        fi
-        
-        # Clean up temp file
-        rm -f "$temp_file"
-    else
-        echo "❌ Screenshot cancelled or failed"
-        return 1
-    fi
-}
-
-# Public screenshot (default)
-cfshot-public() {
-    cfshot_function "$1" "public"
-}
-
-# Private screenshot
-cfshot-private() {
-    cfshot_function "$1" "private"
-}
-
-# Backup current dotfiles to R2
-cfbackup_function() {
-    _cf_ensure_setup || return 1
-    
-    local backup_name="${1:-dotfiles_$(date +%Y%m%d_%H%M%S).tar.gz}"
-    local temp_file="/tmp/$backup_name"
-    
-    echo "💾 Creating dotfiles backup..."
-    
-    # Create compressed archive of dotfiles
-    if tar -czf "$temp_file" -C "$HOME" \
-        .zshrc .zsh_* .env .gitconfig .ssh/config \
-        2>/dev/null; then
-        
-        echo "✅ Backup archive created"
-        cfupload "$temp_file" "backups" "$backup_name"
-        
-        # Clean up temp file
-        rm "$temp_file"
-    else
-        echo "❌ Backup creation failed"
-        return 1
-    fi
-}
-
-# Setup public/private bucket structure
-cfsetup-buckets() {
-    echo "🔧 Setting up public/private bucket structure..."
-    echo ""
-    
-    # Public buckets (with dev URL enabled)
-    local public_buckets=("files-public" "screenshots-public" "images-public")
-    
-    # Private buckets (no public access)
-    local private_buckets=("files-private" "screenshots-private" "backups-private" "secrets")
-    
-    echo "📦 Creating PUBLIC buckets..."
-    for bucket in "${public_buckets[@]}"; do
-        if wrangler r2 bucket create "$bucket" 2>/dev/null; then
-            echo "  ✅ Created: $bucket"
-            echo "  🌍 Enabling public access..."
-            wrangler r2 bucket dev-url enable "$bucket" 2>/dev/null
-        else
-            echo "  ⚠️  Bucket $bucket already exists"
-        fi
-    done
-    
-    echo ""
-    echo "🔒 Creating PRIVATE buckets..."
-    for bucket in "${private_buckets[@]}"; do
-        if wrangler r2 bucket create "$bucket" 2>/dev/null; then
-            echo "  ✅ Created: $bucket (private)"
-        else
-            echo "  ⚠️  Bucket $bucket already exists"
-        fi
-    done
-    
-    echo ""
-    echo "✅ Bucket setup complete!"
-    echo ""
-    echo "📋 Usage:"
-    echo "  Public uploads:  cfu file.pdf files-public"
-    echo "  Private uploads: cfu file.pdf files-private"
-    echo "  Public shots:    cfshot or cfsp"
-    echo "  Private shots:   cfshot-private or cfspriv"
-}
-
-# Comprehensive Cloudflare status and info
-cfinfo_function() {
-    _cf_ensure_setup || return 1
-    
-    echo "📊 Cloudflare Integration Status"
-    echo "=================================="
-    echo ""
-    
-    # Authentication status
-    echo "🔐 Authentication:"
-    local whoami_output=$(wrangler whoami 2>/dev/null)
-    if [[ -n "$whoami_output" ]]; then
-        echo "  ✅ Authenticated"
-        echo "$whoami_output" | sed 's/^/  /'
-        
-        local account_id=$(echo "$whoami_output" | grep -o "Account ID: [a-f0-9]*" | cut -d' ' -f3)
-        if [[ -n "$account_id" ]]; then
-            echo ""
-            echo "🌐 R2 Public URL Format:"
-            echo "  • https://pub-${account_id}.r2.dev/filename"
-        fi
-    else
-        echo "  ❌ Not authenticated"
-        echo "  💡 Run: wrangler login"
-    fi
-    
-    echo ""
-    echo "🚀 Worker Status:"
-    if wrangler deployments list --name="macos-dotfiles-secrets" &>/dev/null; then
-        echo "  ✅ Worker 'macos-dotfiles-secrets' deployed"
-        echo "  🔗 Secrets management: Available"
-    else
-        echo "  ❌ Worker not deployed"
-        echo "  💡 Deploy with: cfdeploy"
-    fi
-    
-    echo ""
-    echo "📦 R2 Buckets:"
-    local buckets=$(wrangler r2 bucket list 2>/dev/null)
-    if [[ -n "$buckets" ]]; then
-        echo "$buckets" | sed 's/^/  ✅ /'
-    else
-        echo "  ❌ No buckets found"
-        echo "  💡 Buckets will be created automatically when needed"
-    fi
-    
-    echo ""
-    echo "⚡ Quick Commands:"
-    echo "  cfshot    - Screenshot → upload → share"
-    echo "  cfu FILE  - Upload any file"
-    echo "  cfbak     - Backup dotfiles"
-    echo "  cflist    - List secrets (deploys worker if needed)"
-    echo "  cfpublic BUCKET - Enable public access"
-}
-
-# Configure R2 bucket for public access
-cfpublic_bucket() {
-    _cf_ensure_setup || return 1
-    
-    local bucket_name="${1}"
-    
-    if [[ -z "$bucket_name" ]]; then
-        echo "Usage: cfpublic BUCKET_NAME"
-        echo ""
-        echo "Available buckets:"
-        wrangler r2 bucket list 2>/dev/null | grep "name:" | awk '{print "  - " $2}'
-        echo ""
-        echo "Examples:"
-        echo "  cfpublic screenshots"
-        echo "  cfpublic files"
-        return 1
-    fi
-    
-    echo "🌍 Enabling public access for bucket: $bucket_name"
-    
-    # Enable R2 dev URL for public access
-    if wrangler r2 bucket dev-url enable "$bucket_name" 2>/dev/null; then
-        echo "✅ Public access enabled for: $bucket_name"
-        
-        # Get account ID and show the public URL format
-        local account_id=$(wrangler whoami 2>&1 | sed -n 's/.*│ \([a-f0-9]\{32\}\).*/\1/p')
-        if [[ -n "$account_id" ]]; then
-            echo "🔗 Public URL format: https://pub-${account_id}.r2.dev/<filename>"
-            echo ""
-            echo "📋 Example URL for files in this bucket:"
-            echo "   https://pub-${account_id}.r2.dev/example.png"
-        fi
-    else
-        echo "❌ Failed to enable public access"
-        echo "💡 You may need to configure it manually in the dashboard:"
-        echo "   https://dash.cloudflare.com → R2 → $bucket_name → Settings"
-    fi
-}
-
-# Troubleshoot and fix common issues
-cffix() {
-    echo "🔧 Cloudflare Integration Troubleshooter"
-    echo "========================================"
-    echo ""
-    
-    # Check directory
-    echo "📁 Checking directory..."
-    if [[ ! -f "package.json" ]] || ! grep -q "wrangler" package.json 2>/dev/null; then
-        echo "  ❌ Not in wrangler project directory"
-        local dotfiles_dir="$HOME/Git/dotfiles/macos"
-        if [[ -f "$dotfiles_dir/package.json" ]]; then
-            echo "  🔄 Switching to dotfiles directory..."
-            cd "$dotfiles_dir"
-            echo "  ✅ Now in: $(pwd)"
-        else
-            echo "  ❌ Cannot find dotfiles directory"
-            return 1
-        fi
-    else
-        echo "  ✅ In correct directory: $(pwd)"
-    fi
-    
-    # Check dependencies
-    echo ""
-    echo "📦 Checking dependencies..."
-    if [[ ! -d "node_modules" ]]; then
-        echo "  ❌ Dependencies not installed"
-        echo "  🔄 Installing..."
-        npm install --silent
-        echo "  ✅ Dependencies installed"
-    else
-        echo "  ✅ Dependencies installed"
-    fi
-    
-    # Check authentication
-    echo ""
-    echo "🔐 Checking authentication..."
-    if ! wrangler whoami &>/dev/null 2>&1; then
-        echo "  ❌ Not authenticated"
-        echo "  🔄 Starting authentication..."
-        wrangler login
-    else
-        echo "  ✅ Authenticated"
-    fi
-    
-    # Check worker deployment
-    echo ""
-    echo "🚀 Checking worker deployment..."
-    if ! wrangler deployments list --name="macos-dotfiles-secrets" &>/dev/null; then
-        echo "  ❌ Worker not deployed"
-        echo "  🔄 Deploying worker..."
-        if wrangler deploy; then
-            echo "  ✅ Worker deployed successfully"
-        else
-            echo "  ❌ Worker deployment failed"
-        fi
-    else
-        echo "  ✅ Worker deployed"
-    fi
-    
-    # Check R2 buckets
-    echo ""
-    echo "📦 Checking R2 buckets..."
-    local bucket_count=$(wrangler r2 bucket list 2>/dev/null | wc -l | tr -d ' ')
-    if [[ "$bucket_count" -eq 0 ]]; then
-        echo "  ⚠️  No R2 buckets found"
-        echo "  💡 Buckets will be created when needed"
-    else
-        echo "  ✅ Found $bucket_count R2 buckets"
-    fi
-    
-    echo ""
-    echo "🎉 Troubleshooting complete!"
-    echo "💡 Try: cfinfo to see current status"
-}
-
-# Generate temporary signed URL for private files (valid for 1 hour)
-cfsign() {
-    local file_path="$1"
-    local bucket_name="${2:-files-private}"
-    local duration="${3:-3600}"  # Default 1 hour
-    
-    if [[ -z "$file_path" ]]; then
-        echo "Usage: cfsign FILE_PATH [BUCKET_NAME] [DURATION_SECONDS]"
-        echo ""
-        echo "Examples:"
-        echo "  cfsign document.pdf                    # 1 hour access"
-        echo "  cfsign image.jpg screenshots-private   # From specific bucket"
-        echo "  cfsign file.zip files-private 86400    # 24 hour access"
-        return 1
-    fi
-    
-    echo "🔐 Generating signed URL for: $bucket_name/$file_path"
-    echo "⏱️  Valid for: $duration seconds"
-    
-    # Generate presigned URL using wrangler (requires Worker implementation)
-    local account_id=$(wrangler whoami 2>/dev/null | grep -A1 "Account ID" | tail -1 | awk -F'│' '{print $3}' | xargs)
-    
-    if [[ -n "$account_id" ]]; then
-        # For now, show the private object path
-        echo "🔗 Private object: $bucket_name/$file_path"
-        echo "💡 Signed URLs require Worker implementation"
-        echo "   Alternative: Use cftemp to create temporary public copy"
-    fi
-}
-
-# Share file temporarily using Cloudflare Pages
-cftemp_function() {
-    local file_path=""
-    local duration_hours="24"
-    local password=""
-    local protected=false
-    
-    # Parse arguments
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -e|--expire)
-                duration_hours="$2"
-                shift 2
-                ;;
-            -p|--password)
-                password="$2"
-                protected=true
-                shift 2
-                ;;
-            -h|--help)
-                echo "Usage: cftemp FILE [OPTIONS]"
-                echo ""
-                echo "Options:"
-                echo "  -e, --expire HOURS    Set expiration time in hours (default: 24)"
-                echo "  -p, --password PASS   Password protect the temporary share"
-                echo "  -h, --help           Show this help message"
-                echo ""
-                echo "Examples:"
-                echo "  cftemp document.pdf                    # Share for 24 hours, public"
-                echo "  cftemp image.jpg -e 2                  # Share for 2 hours, public"
-                echo "  cftemp secret.txt -p mypassword        # Share for 24 hours, password-protected"
-                echo "  cftemp report.pdf -e 4 -p secret123    # Share for 4 hours, password-protected"
-                return 0
-                ;;
-            *)
-                file_path="$1"
-                shift
-                ;;
-        esac
-    done
-    
-    if [[ -z "$file_path" ]]; then
-        echo "❌ No file specified"
-        echo "Usage: cftemp FILE [OPTIONS]"
-        echo "Use 'cftemp -h' for help"
-        return 1
-    fi
-    
-    if [[ ! -f "$file_path" ]]; then
-        echo "❌ File not found: $file_path"
-        return 1
-    fi
-    
-    echo "📤 Creating temporary share..."
-    
-    # Generate temporary filename with expiry timestamp
-    local timestamp=$(date +%s)
-    local expiry=$((timestamp + (duration_hours * 3600)))
-    local filename=$(basename "$file_path")
-    local temp_name="temp_${expiry}_${filename}"
-    
-    if [[ "$protected" == true ]]; then
-        echo "🔐 Creating password-protected temporary share..."
-        # Use password protection via our cfprotect_function
-        # Create temp file with the temp name for protected upload
-        local temp_file="/tmp/$temp_name"
-        cp "$file_path" "$temp_file"
-        cfprotect_function "$temp_file" "$password"
-        rm -f "$temp_file"
-        
-        # Store expiry info in a temp log for cleanup
-        echo "$temp_name:$expiry:protected" >> ~/.cf-temp-shares.log
-        
-        echo "✅ Password-protected temporary share created!"
-        echo "⏰ Expires in: $duration_hours hours"
-        echo "🔑 Password required for access"
-    else
-        echo "🌍 Creating public temporary share..."
-        # Use public Pages upload
-        local temp_file="/tmp/$temp_name"
-        cp "$file_path" "$temp_file"
-        cfpage-upload "$temp_file" "$temp_name"
-        rm -f "$temp_file"
-        
-        # Store expiry info in a temp log for cleanup
-        echo "$temp_name:$expiry:public" >> ~/.cf-temp-shares.log
-        
-        echo "✅ Public temporary share created!"
-        echo "⏰ Expires in: $duration_hours hours"
-    fi
-    
-    echo ""
-    echo "💡 Remember to clean up expired shares with: cfclean"
-}
-
-# Clean up expired temporary shares from Pages
-cfclean_function() {
-    echo "🧹 Cleaning up expired temporary shares..."
-    
-    local public_dir="$HOME/public-files"
-    local current_time=$(date +%s)
-    local cleaned=0
-    
-    cd "$public_dir" || return 1
-    
-    # Check each temp file
-    for file in temp_*; do
-        if [[ -f "$file" ]]; then
-            # Extract expiry time from filename
-            if [[ "$file" =~ temp_([0-9]+)_ ]]; then
-                local expiry="${BASH_REMATCH[1]}"
-                if [[ "$current_time" -gt "$expiry" ]]; then
-                    echo "🗑️  Removing expired: $file"
-                    rm "$file"
-                    ((cleaned++))
-                fi
-            fi
-        fi
-    done
-    
-    # Update files.json to remove expired entries
-    if [[ -f "files.json" ]] && [[ $cleaned -gt 0 ]]; then
-        local temp_json=$(mktemp)
-        jq '[.[] | select(.name | test("^temp_") | not)]' files.json > "$temp_json" 2>/dev/null || echo "[]" > "$temp_json"
-        
-        # Add back non-expired temp files
-        for file in temp_*; do
-            if [[ -f "$file" ]]; then
-                jq --arg name "$file" --arg size "$(ls -lh "$file" | awk '{print $5}')" \
-                   '. + [{"name": $name, "size": $size}]' "$temp_json" > "${temp_json}.new" && \
-                   mv "${temp_json}.new" "$temp_json"
-            fi
-        done
-        
-        mv "$temp_json" files.json
-        
-        # Redeploy if we cleaned anything
-        echo "🚀 Redeploying to update Pages..."
-        npx wrangler pages deploy . --project-name public-files >/dev/null 2>&1
-    fi
-    
-    echo "✅ Cleanup complete. Removed $cleaned expired files."
-    cd - > /dev/null
-}
-
-# ============================================
-# Cloudflare Aliases - Short Commands
-# ============================================
-
-# Core Wrangler functions
-alias cfsync=cfsync_function      # Sync secrets from .env
-alias cfs=cfsync_function         # Short alias for sync
-alias cfget=cfget_function        # Get a secret value  
-alias cfg=cfget_function          # Short alias for get
-alias cflist=_cflist_function     # List all secrets
-alias cfdeploy=cfdeploy_function  # Deploy worker to production
-alias cfd=cfdeploy_function       # Short alias for deploy
-alias cfinfo=cfinfo_function      # Show Cloudflare setup info
-
-# R2 Storage functions
-alias cfupload=cfupload_function      # Upload file to R2 bucket
-alias cfu=cfupload_function           # Short: upload
-alias cfdownload=cfdownload_function  # Download file from R2 bucket
-alias cfdown=cfdownload_function      # Short: download
-alias cffiles=cffiles_function        # List files in R2 bucket
-alias cfls=cffiles_function           # Short: list files
-alias cff=cffiles_function            # Even shorter: files
-alias cfdelete=cfdelete_function      # Delete file from R2 bucket
-alias cfrm=cfdelete_function          # Short: remove
-alias cfbackup=cfbackup_function      # Backup local directory to R2
-alias cfbak=cfbackup_function         # Short: backup
-
-# Tunnel functions
-alias cftunnel=cftunnel_function      # Cloudflare tunnel
-alias funnel=funnel_function          # Tailscale funnel
-
-# Screenshot functions
-alias cfshot=cfshot_function      # Main screenshot function
-alias cfscreen=cfshot_function    # Alias for cfshot
-alias cfss=cfshot_function        # Short alias for screenshot
-
-# Public file sharing (Pages)
-alias cfpublic=cfpage-upload    # Upload file for public access
-alias cfpu=cfpu_enhanced        # Enhanced upload with password option
-alias cfshare=cfpage-upload      # Share file publicly
-alias cfprotect=cfprotect_function  # Password-protected upload
-alias cfps=cfpage-shot           # Screenshot to public Pages
-alias cfpscreen=cfpage-shot      # Public screenshot
-alias cfpl=cfpage-list           # List public files
-alias cfpls=cfpage-list          # List public files (alt)
-
-# Temporary sharing
-alias cftemp=cftemp_function     # Create temporary share link
-alias cftmp=cftemp_function      # Short alias for temp share
-alias cfclean=cfclean_function   # Clean expired temp shares
-
-# Database functions (when configured)
-alias cfdb=cfd1               # D1 database operations
-# cfkv would be defined when KV is configured
-
-# Help and setup
-cfhelp_function() {
-    echo "
-🚀 Cloudflare Quick Commands:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📤 UPLOAD & SHARE:
-  cfpublic FILE   - Share file publicly via Pages
-  cfu FILE        - Upload to private R2 bucket  
-  cftemp FILE     - Create temporary share link
-  
-📸 SCREENSHOTS:
-  cfshot          - Screenshot to private R2
-  cfps            - Screenshot to public Pages
-  
-📁 FILE MANAGEMENT:
-  cfls            - List files in R2 bucket
-  cfpl            - List public files on Pages
-  cfdown FILE     - Download from R2 bucket
-  cfrm FILE       - Delete from R2 bucket
-  
-🔐 SECRETS:
-  cfs             - Sync secrets from .env
-  cfg KEY         - Get secret value
-  cflist          - List all secrets
-  
-🛠️  DEVELOPMENT:
-  cfdev           - Start local dev server
-  cfd             - Deploy to production
-  cflog           - View worker logs
-  
-💡 Type cfhelp or cf for this help menu
-"
-}
-
-# Even shorter aliases for most common operations
-alias cfhelp=cfhelp_function     # Help function
-alias cf=cfhelp_function          # Show help
 
 restore_original_mac() {
     local interface_input="$1"

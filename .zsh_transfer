@@ -263,7 +263,9 @@ transfer_media() {
     fi
     
     # Process all video files in current directory
-    for f in ./*.{mkv,mp4,avi,mov,MKV,MP4,AVI,MOV}(N); do
+    # Enable null_glob to handle case where no files match
+    setopt local_options null_glob
+    for f in ./*.{mkv,mp4,avi,mov,MKV,MP4,AVI,MOV}; do
         [ -e "$f" ] || continue
         
         # Get basename and create safe directory name

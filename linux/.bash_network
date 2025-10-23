@@ -140,11 +140,99 @@ pings() {
     ping -c "${2:-5}" "$1" | tail -2
 }
 
-# Generate random MAC address
+# MAC address management - Enhanced with Python integration
+
+# Check if Python MAC manager is available
+_has_python_mac_manager() {
+    if command -v python3 &>/dev/null; then
+        local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        local mac_manager="$script_dir/python_helpers/mac_manager.py"
+
+        # Also check in parent directory if not found
+        if [[ ! -f "$mac_manager" ]]; then
+            mac_manager="$(dirname "$script_dir")/linux/python_helpers/mac_manager.py"
+        fi
+
+        if [[ -f "$mac_manager" ]]; then
+            echo "$mac_manager"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# Generate MAC address with optional Python enhancement
 gen_mac_addr() {
-    local mac
-    mac=$(openssl rand -hex 6 | sed 's/\(..\)/\1:/g; s/.$//')
-    echo "$mac"
+    local mac_manager
+    mac_manager=$(_has_python_mac_manager)
+
+    if [[ -n "$mac_manager" ]]; then
+        # Use Python for better random MAC generation with proper bit settings
+        python3 "$mac_manager" generate --locally-administered
+    else
+        # Fallback to shell version
+        local mac
+        mac=$(openssl rand -hex 6 | sed 's/\(..\)/\1:/g; s/.$//')
+        echo "$mac"
+    fi
+}
+
+# Analyze MAC address (vendor, type, etc.) - Python only
+analyze_mac() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: analyze_mac <mac_address>"
+        return 1
+    fi
+
+    local mac_manager
+    mac_manager=$(_has_python_mac_manager)
+
+    if [[ -n "$mac_manager" ]]; then
+        python3 "$mac_manager" analyze --mac "$1"
+    else
+        echo "Python MAC manager not available for analysis"
+        echo "MAC address: $1"
+        return 1
+    fi
+}
+
+# List all interfaces with MAC addresses and vendor info
+list_interfaces_enhanced() {
+    local mac_manager
+    mac_manager=$(_has_python_mac_manager)
+
+    if [[ -n "$mac_manager" ]]; then
+        python3 "$mac_manager" list
+    else
+        # Fallback to basic listing
+        echo "Network Interfaces:"
+        if command -v ip &> /dev/null; then
+            ip link show | grep -E '^[0-9]+:' | awk -F': ' '{print "  " $2}' | sed 's/@.*//'
+        else
+            ifconfig -a | grep -E '^[a-zA-Z0-9]+:' | awk '{print "  " $1}' | sed 's/://'
+        fi
+    fi
+}
+
+# Validate MAC address format
+validate_mac() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: validate_mac <mac_address>"
+        return 1
+    fi
+
+    local mac_manager
+    mac_manager=$(_has_python_mac_manager)
+
+    if [[ -n "$mac_manager" ]]; then
+        python3 "$mac_manager" validate --mac "$1" >/dev/null 2>&1
+        return $?
+    else
+        # Fallback to shell validation
+        local clean_mac=$(echo "$1" | tr -d ':.-' | tr -d '[:space:]')
+        [[ "$clean_mac" =~ ^[0-9a-fA-F]{12}$ ]]
+        return $?
+    fi
 }
 
 # Show current MAC address (Linux version)
@@ -186,57 +274,185 @@ show_current_mac() {
     fi
 }
 
-# Change MAC address (Linux version)
+# Change MAC address (Linux version - enhanced)
 change_mac_address() {
     local mac_address="$1"
     local interface="$2"
-    
-    # Generate random MAC if none provided
+    local max_retries=3
+    local retry_delay=2
+
+    # If no MAC address provided, prompt the user
     if [[ -z "$mac_address" ]]; then
-        mac_address=$(gen_mac_addr)
-        echo "No MAC address provided. Using generated MAC: $mac_address"
+        echo "MAC Address options:"
+        echo "  1. Enter a specific MAC address"
+        echo "  2. Generate a random MAC address"
+        echo -n "Choose option (1/2): "
+        read -r choice
+
+        case $choice in
+            1)
+                echo -n "Enter MAC address (with or without colons): "
+                read -r mac_address
+                ;;
+            2)
+                mac_address=$(gen_mac_addr)
+                echo "Generated random MAC: $mac_address"
+                ;;
+            *)
+                echo "Invalid choice. Exiting."
+                return 1
+                ;;
+        esac
     fi
-    
+
+    # Normalize MAC address format - handle various input formats
+    # Remove all non-hex characters (colons, dots, dashes, spaces)
+    local clean_mac=$(echo "$mac_address" | tr -d ':.-' | tr -d '[:space:]')
+
+    # Validate that we have exactly 12 hex characters
+    if ! [[ "$clean_mac" =~ ^[0-9a-fA-F]{12}$ ]]; then
+        echo "Error: Invalid MAC address. Must contain exactly 12 hexadecimal characters."
+        echo "Accepted formats:"
+        echo "  - XX:XX:XX:XX:XX:XX"
+        echo "  - XX-XX-XX-XX-XX-XX"
+        echo "  - XXXXXXXXXXXX"
+        echo "  - XXXX.XXXX.XXXX"
+        return 1
+    fi
+
+    # Convert to standard colon-separated format
+    mac_address=$(echo "$clean_mac" | sed 's/../&:/g' | sed 's/:$//')
+    echo "Normalized MAC address: $mac_address"
+
     # Check if interface name is provided
     if [[ -z "$interface" ]]; then
-        echo "No interface name provided. Available interfaces:"
+        echo ""
+        echo "Available network interfaces:"
         if command -v ip &> /dev/null; then
             ip link show | grep -E '^[0-9]+:' | awk -F': ' '{print "  " $2}' | sed 's/@.*//'
         else
             ifconfig -a | grep -E '^[a-zA-Z0-9]+:' | awk '{print "  " $1}' | sed 's/://'
         fi
-        echo "Usage: change_mac_address <mac_address> <interface_name>"
-        return 1
+        echo ""
+        echo -n "Enter interface name (e.g., eth0, wlan0): "
+        read -r interface
+
+        if [[ -z "$interface" ]]; then
+            echo "Error: No interface specified."
+            return 1
+        fi
     fi
-    
+
     # Check if interface exists
     if ! ip link show "$interface" &>/dev/null; then
         echo "Error: Interface '$interface' not found"
+        echo "Available interfaces:"
+        ip link show | grep -E '^[0-9]+:' | awk -F': ' '{print "  " $2}' | sed 's/@.*//'
         return 1
     fi
-    
+
     # Get current MAC for backup
     local current_mac
-    current_mac=$(ip link show "$interface" | grep -o -E '([[:xdigit:]]{1,2}:){5}[[:xdigit:]]{1,2}')
-    
+    current_mac=$(ip link show "$interface" | grep -o -E '([[:xdigit:]]{1,2}:){5}[[:xdigit:]]{1,2}' | head -1)
+
+    # Check if MAC is already set to the target
+    if [[ "$current_mac" == "$mac_address" ]]; then
+        echo "MAC address is already set to $mac_address"
+        return 0
+    fi
+
     # Save original MAC if not already saved
     local mac_file="$HOME/.mac_$interface"
     if [[ ! -f "$mac_file" ]]; then
         echo "$current_mac" > "$mac_file"
         echo "Original MAC address saved: $current_mac"
     fi
-    
+
+    # Change MAC address with retry logic
     echo "Changing MAC address for $interface from $current_mac to $mac_address..."
     echo "This operation requires sudo privileges."
-    
-    # Bring interface down, change MAC, bring back up
-    if sudo ip link set dev "$interface" down && \
-       sudo ip link set dev "$interface" address "$mac_address" && \
-       sudo ip link set dev "$interface" up; then
-        echo "✅ MAC address changed successfully!"
-        echo "New MAC: $(show_current_mac "$interface" 2>/dev/null | cut -d: -f2- | xargs)"
+
+    local attempt=0
+    local success=false
+
+    while [[ $attempt -lt $max_retries ]]; do
+        ((attempt++))
+
+        if [[ $attempt -gt 1 ]]; then
+            echo "Retry attempt $attempt/$max_retries..."
+        fi
+
+        # Bring interface down
+        echo "Disabling interface..."
+        if ! sudo ip link set dev "$interface" down 2>/dev/null; then
+            echo "Warning: Failed to bring interface down"
+        fi
+
+        # Wait for interface to be fully down
+        sleep 1
+
+        # Change MAC address
+        echo "Setting new MAC address..."
+        if ! sudo ip link set dev "$interface" address "$mac_address" 2>/dev/null; then
+            echo "Warning: MAC address set command failed"
+        fi
+
+        # Wait before bringing interface back up
+        sleep 1
+
+        # Bring interface back up
+        echo "Re-enabling interface..."
+        if ! sudo ip link set dev "$interface" up 2>/dev/null; then
+            echo "Warning: Failed to bring interface up"
+        fi
+
+        # Wait for interface to be fully up and stable
+        echo "Waiting for interface to stabilize..."
+        sleep "$retry_delay"
+
+        # Verify the change
+        local new_mac
+        new_mac=$(ip link show "$interface" 2>/dev/null | grep -o -E '([[:xdigit:]]{1,2}:){5}[[:xdigit:]]{1,2}' | head -1)
+
+        # Check if MAC change was successful
+        if [[ -n "$new_mac" && "$new_mac" == "$mac_address" ]]; then
+            echo "✓ MAC address successfully changed to $mac_address"
+            success=true
+            break
+        else
+            echo "✗ Attempt $attempt failed. Current MAC is: ${new_mac:-unable to determine}"
+            if [[ $attempt -lt $max_retries ]]; then
+                echo "Waiting before retry..."
+                sleep 2
+            fi
+        fi
+    done
+
+    if $success; then
+        # For Wi-Fi interfaces, try to restart NetworkManager or wpa_supplicant
+        if [[ "$interface" =~ ^wl ]]; then
+            echo "Restarting network services..."
+            if systemctl is-active --quiet NetworkManager; then
+                sudo systemctl restart NetworkManager 2>/dev/null && echo "  ✓ NetworkManager restarted"
+            elif systemctl is-active --quiet wpa_supplicant; then
+                sudo systemctl restart wpa_supplicant 2>/dev/null && echo "  ✓ wpa_supplicant restarted"
+            fi
+            sleep 2
+        fi
+
+        echo "MAC address change completed. You may need to reconnect to your network."
+        return 0
     else
-        echo "❌ Failed to change MAC address"
+        echo "Failed to change MAC address after $max_retries attempts."
+        echo "This may be due to:"
+        echo "  1. Driver/hardware restrictions"
+        echo "  2. Insufficient permissions"
+        echo "  3. Interface in use by network manager"
+        echo ""
+        echo "Try stopping NetworkManager first:"
+        echo "  sudo systemctl stop NetworkManager"
+        echo "  # Then retry the MAC change"
+        echo "  sudo systemctl start NetworkManager"
         return 1
     fi
 }
