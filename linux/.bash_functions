@@ -358,6 +358,13 @@ normalize_time() {
     fi
 }
 
+# Sanitize filename - remove spaces and special characters
+sanitize_filename() {
+    local filename="$1"
+    # Convert to lowercase, replace spaces with underscores, keep only alphanumeric, underscores, dots, and dashes
+    echo "$filename" | tr '[:upper:]' '[:lower:]' | tr ' ' '_' | tr -cd '[:alnum:]_.-'
+}
+
 download_video() {
     if [[ "$1" == "--help" || "$1" == "-h" || -z "$1" ]]; then
         echo "Usage: download_video url [options]"
@@ -370,7 +377,10 @@ download_video() {
         echo "  --subtitles, -sub        Download subtitles if available (default: false, default language: en)"
         echo "  --language, -l LANGUAGE  Language (default: en)"
         echo "  --audio-only, -a         Download audio only"
+        echo "  --no-sanitize            Keep original filename (don't remove spaces/special chars)"
         echo "  --help, -h               Show this help message"
+        echo ""
+        echo "Note: Filenames are sanitized by default (lowercase, underscores instead of spaces)"
         return 0
     fi
 
@@ -400,6 +410,7 @@ download_video() {
     local subtitles=false
     local language="en"
     local audio_only=false
+    local sanitize=true
     local ytdl_args=()
     
     shift # Skip the URL arg
@@ -443,6 +454,9 @@ download_video() {
                 ;;
             --audio-only|-a)
                 audio_only=true
+                ;;
+            --no-sanitize)
+                sanitize=false
                 ;;
             *)
                 echo "❌ Unknown option: $1"
@@ -506,22 +520,97 @@ download_video() {
     [[ -n "$start_time" ]] && echo "Starting at: $start_time"
     [[ -n "$end_time" ]] && echo "Ending at: $end_time"
     
-    if $dl_cmd "${ytdl_args[@]}" "$url"; then
+    # Download with yt-dlp or youtube-dl - capture output for error detection
+    local download_output=$(mktemp)
+    local download_error=$(mktemp)
+
+    if $dl_cmd "${ytdl_args[@]}" "$url" > "$download_output" 2> "$download_error"; then
         echo "✅ Download complete!"
-        
+
+        # Get the downloaded filename
+        local downloaded_file=$($dl_cmd --get-filename -o "%(title)s.%(ext)s" "$url" 2>/dev/null)
+
+        # Sanitize filename if enabled
+        if [[ "$sanitize" == true && -f "$downloaded_file" ]]; then
+            local dir=$(dirname "$downloaded_file")
+            local basename=$(basename "$downloaded_file")
+            local extension="${basename##*.}"
+            local filename_no_ext="${basename%.*}"
+
+            # Sanitize the filename (without extension)
+            local sanitized_name=$(sanitize_filename "$filename_no_ext")
+            local new_file="${dir}/${sanitized_name}.${extension}"
+
+            if [[ "$downloaded_file" != "$new_file" ]]; then
+                echo "📝 Sanitizing filename..."
+                echo "   From: $basename"
+                echo "   To: $(basename "$new_file")"
+                mv "$downloaded_file" "$new_file"
+                downloaded_file="$new_file"
+            fi
+        fi
+
         # Post-processing: trim if start/end times were specified
         if [[ -n "$start_time" || -n "$end_time" ]]; then
-            local downloaded_file=$($dl_cmd --get-filename -o "%(title)s.%(ext)s" "$url" 2>/dev/null)
             if [[ -f "$downloaded_file" ]]; then
                 echo "🔪 Trimming video..."
                 trim_vid "$downloaded_file" --start "$start_time" --end "$end_time"
             fi
         fi
-        
+
+        echo "📁 Final file: $downloaded_file"
+        rm -f "$download_output" "$download_error"
         return 0
     else
-        echo "❌ Download failed!"
+        # Check error output for specific known errors
+        local error_msg=$(cat "$download_error")
+
+        if [[ "$error_msg" =~ "No video could be found" ]]; then
+            echo "📭 No video found in this URL"
+            echo "   This URL may contain:"
+            echo "   • Text-only content"
+            echo "   • Images only"
+            echo "   • External links without embedded video"
+        elif [[ "$error_msg" =~ "Unsupported URL" ]]; then
+            echo "❌ Unsupported URL or platform"
+            echo "   The downloader doesn't support this website"
+        elif [[ "$error_msg" =~ "Private video" || "$error_msg" =~ "This video is private" ]]; then
+            echo "🔒 This video is private or requires authentication"
+        elif [[ "$error_msg" =~ "Video unavailable" ]]; then
+            echo "📵 Video unavailable (may be deleted or restricted)"
+        else
+            echo "❌ Download failed!"
+            # Show first line of error for debugging
+            echo "   Error: $(echo "$error_msg" | head -1 | sed 's/ERROR: //')"
+        fi
+
+        rm -f "$download_output" "$download_error"
         return 1
+    fi
+}
+
+# Convenient aliases for download_video
+alias dl='download_video'
+alias dlvid='download_video'
+alias dlaudio='download_video --audio-only'
+alias dl720='download_video --quality 720p'
+alias dl1080='download_video --quality 1080p'
+
+# Quick download for Instagram/TikTok/etc
+igtok() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: igtok <instagram/tiktok/twitter url> [output_name]"
+        echo "Quick download for Instagram, TikTok, Twitter, etc."
+        return 1
+    fi
+
+    local url="$1"
+    local output="${2:-}"
+
+    if [[ -n "$output" ]]; then
+        download_video "$url" --output "$output"
+    else
+        download_video "$url"
     fi
 }
 
