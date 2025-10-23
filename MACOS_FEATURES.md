@@ -1,24 +1,47 @@
 # macOS ZSH Configuration Features
 
-Complete feature inventory for zsh configuration files in `/Users/sac/Git/dotfiles/macos/macos/`
+Complete feature inventory for zsh configuration files in `/Users/sac/Git/dotfiles/macos/`
 
-Generated: 2025-09-29
+**Last Updated:** 2025-10-22
 
 ---
 
 ## .zsh_functions
 
-### Functions:
-- `normalize_time()` - Normalize time to hh:mm:ss format
+### Video Processing Functions:
+- `download_video()` - Download videos from YouTube, Instagram, TikTok, etc. (yt-dlp wrapper)
+  - Supports quality selection (720p, 1080p, best)
+  - Audio-only mode
+  - Subtitle downloads with language selection
+  - Video trimming (start/end times)
+  - Output directory specification
+  - Automatic format checking for Signal/iOS compatibility
+  - Defaults to /tmp/ with smart fallback to ./ or ~/
+  - Intelligent error detection and user feedback
+
+- `check_video_format()` - Analyze and fix video format compatibility issues
+  - Detects codec compatibility (H.264, VP9, HEVC, etc.)
+  - Validates pixel format (yuv420p required for iOS/Android)
+  - Checks H.264 profile and level for mobile compatibility
+  - Warns about file size limits (95 MB for Signal)
+  - Converts videos to Signal/iOS/Android-compatible format
+  - H.264 Main profile + AAC audio + yuv420p + MP4 container
+  - Optimized with +faststart for inline playback
+  - Smart output directory with fallback logic
+
+- `trim_vid()` - Trim video using ffmpeg with start/end times
+
+### Clipboard Functions:
 - `ccopy()` - Copy file to clipboard
 - `cpaste()` - Paste from clipboard
 - `clipls()` - List directory and copy to clipboard
 - `clipcat()` - Copy file contents to clipboard
 - `clippwd()` - Copy current directory to clipboard
 - `clipip()` - Copy en0 IP address to clipboard
+
+### Utility Functions:
+- `normalize_time()` - Normalize time to hh:mm:ss format
 - `fhist()` - Fuzzy-search shell history and re-run command
-- `download_video()` - Download videos with youtube-dl (supports quality, format, subtitles, trimming)
-- `trim_vid()` - Trim video using ffmpeg with start/end times
 - `mkd()` - Make directory and cd to it (or make multiple dirs)
 - `reset_file()` - Reset file content with backup
 - `zipfile()` - Create zip archive (placeholder)
@@ -29,7 +52,21 @@ Generated: 2025-09-29
 - `show_help()` - Show help for function
 - `helpmenu()` - Display help menu
 
-### Aliases:
+### Video Download Aliases (with noglob for URL handling):
+- `dl='noglob download_video'` - Download video (no quotes needed for URLs!)
+- `dlvid='noglob download_video'` - Same as dl
+- `dlaudio='noglob download_video --audio-only'` - Download audio only
+- `dl720='noglob download_video --quality 720p'` - Download 720p
+- `dl1080='noglob download_video --quality 1080p'` - Download 1080p
+- `dlfix='noglob download_video --check-format'` - Download with auto-format checking
+
+### Video Format Checking Aliases:
+- `vcheck='check_video_format'` - Check video format compatibility
+- `vfix='check_video_format'` - Check and fix video format
+- `vinfo='check_video_format'` - Display video format info
+- `signalfix='check_video_format'` - Signal-optimized video fixing
+
+### Other Aliases:
 - `show_function="show_func"`
 
 ---
