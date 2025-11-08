@@ -3,8 +3,5 @@ all:
     my_servers:
       hosts:
         proxmox-main:
-          ansible_host: proxmox-main
-          ansible_user: root
-        irregularchat-information:
-          ansible_host: irregularchat-information
+          ansible_host: 100.107.228.108
           ansible_user: root
