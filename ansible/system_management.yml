@@ -657,7 +657,6 @@
           loop: "{{ docker_compose_files.stdout_lines }}"
           register: compose_update_result
           failed_when: false
-          changed_when: "'Services updated' in compose_update_result.stdout"
           async: 180
           poll: 0
 
