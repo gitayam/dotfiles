@@ -692,7 +692,12 @@
       shell: |
         # Navigate to the project directory
         cd /home/researchtoolspy
-        git pull
+        # Check if branch has tracking, if so pull, otherwise skip
+        if git rev-parse --abbrev-ref --symbolic-full-name @{u} > /dev/null 2>&1; then
+          git pull
+        else
+          echo "Branch has no tracking, skipping git pull"
+        fi
         docker compose pull
         docker compose up -d --build
       when: inventory_hostname == 'proxmox-main'
