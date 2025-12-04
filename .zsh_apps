@@ -4,6 +4,385 @@ alias kp="keepassxc"
 alias run-kp="kp --db $1"
 
 # ----------------------
+# AI CLI Tools (Qwen Code, Claude Code, etc.)
+# ----------------------
+
+# Unalias any conflicting aliases before defining functions
+unalias qc qwen-yolo qwen-plan qwen-local qwen-fast qwen-chat qwen-status 2>/dev/null
+
+# Qwen Code Configuration
+# Default model size for local Ollama (options: 0.6b, 1.7b, 8b, 14b, 30b)
+# Note: 30b is the largest that runs well locally
+QWEN_MODEL_SIZE="${QWEN_MODEL_SIZE:-30b}"
+# Default approval mode (options: plan, default, auto-edit, yolo)
+QWEN_APPROVAL_MODE="${QWEN_APPROVAL_MODE:-yolo}"
+
+# ----------------------
+# Qwen Code CLI - Agentic coding assistant (like Claude Code)
+# ----------------------
+# KNOWN ISSUE (Dec 2025): Tool calling doesn't work properly yet.
+# The model outputs tool calls as text instead of executing them.
+# See: https://github.com/QwenLM/qwen-code/issues/176
+#
+# For now, use:
+#   qwen-chat    - Simple chat with Qwen3-Coder (no tools, works great)
+#   claude       - Claude Code for agentic coding (works reliably)
+#
+# When qwen-code is fixed:
+#   qc                       - Interactive agentic mode
+#   qc "fix the bug"         - One-shot mode with prompt
+#   qc --yolo                - YOLO mode (auto-approve everything)
+#   qc --setup               - Install/check all dependencies
+#
+# Config file: QWEN.md in project root (like CLAUDE.md for Claude Code)
+
+# Check and install Qwen Code dependencies
+_qwen_check_deps() {
+    local install_missing="${1:-false}"
+    local all_ok=true
+
+    # Check Homebrew
+    if ! command -v brew &> /dev/null; then
+        echo "❌ Homebrew not installed"
+        if [[ "$install_missing" == "true" ]]; then
+            echo "   Installing Homebrew..."
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        fi
+        all_ok=false
+    else
+        echo "✅ Homebrew $(brew --version | head -1 | awk '{print $2}')"
+    fi
+
+    # Check Node.js
+    if ! command -v node &> /dev/null; then
+        echo "❌ Node.js not installed"
+        if [[ "$install_missing" == "true" ]]; then
+            echo "   Installing Node.js..."
+            brew install node
+        fi
+        all_ok=false
+    else
+        local node_version
+        node_version="$(node -v)"
+        local node_major
+        node_major="$(echo "$node_version" | sed 's/v//' | cut -d. -f1)"
+        if [[ "$node_major" -lt 20 ]]; then
+            echo "⚠️  Node.js $node_version (need v20+)"
+            if [[ "$install_missing" == "true" ]]; then
+                echo "   Upgrading Node.js..."
+                brew upgrade node
+            fi
+        else
+            echo "✅ Node.js $node_version"
+        fi
+    fi
+
+    # Check npm
+    if ! command -v npm &> /dev/null; then
+        echo "❌ npm not installed"
+        all_ok=false
+    else
+        echo "✅ npm $(npm -v)"
+    fi
+
+    # Check Qwen Code CLI (@qwen-code/qwen-code)
+    if command -v /opt/homebrew/bin/qwen &> /dev/null; then
+        local qwen_npm_list
+        qwen_npm_list="$(npm list -g @qwen-code/qwen-code 2>/dev/null)"
+        local qwen_version
+        qwen_version="$(echo "$qwen_npm_list" | awk -F@ '/qwen-code/ {print $NF; exit}')"
+        echo "✅ Qwen Code CLI v${qwen_version:-installed}"
+    else
+        echo "❌ Qwen Code CLI not installed"
+        if [[ "$install_missing" == "true" ]]; then
+            echo "   Installing @qwen-code/qwen-code..."
+            npm install -g @qwen-code/qwen-code
+        fi
+        all_ok=false
+    fi
+
+    # Check Ollama (for local model support)
+    if ! command -v ollama &> /dev/null; then
+        echo "⚠️  Ollama not installed (optional, for local models)"
+        if [[ "$install_missing" == "true" ]]; then
+            echo "   Installing Ollama..."
+            brew install ollama
+        fi
+    else
+        echo "✅ Ollama $(ollama --version 2>/dev/null | awk '{print $NF}' || echo 'installed')"
+
+        # Check Ollama service
+        if pgrep -x "ollama" > /dev/null 2>&1; then
+            echo "✅ Ollama service running"
+        else
+            echo "⚠️  Ollama service not running"
+            if [[ "$install_missing" == "true" ]]; then
+                echo "   Starting Ollama service..."
+                brew services start ollama
+                sleep 3
+            fi
+        fi
+
+        # Check Qwen model
+        local ollama_models
+        ollama_models="$(ollama list 2>/dev/null)"
+        if [[ "$ollama_models" == *"qwen3-coder"* ]]; then
+            local installed_model
+            installed_model="$(echo "$ollama_models" | awk '/qwen3-coder/ {print $1; exit}')"
+            echo "✅ Local Model: $installed_model"
+        else
+            echo "⚠️  No local qwen3-coder model (optional)"
+            if [[ "$install_missing" == "true" ]]; then
+                echo "   Pulling qwen3-coder:${QWEN_MODEL_SIZE} (this may take a while)..."
+                ollama pull "qwen3-coder:${QWEN_MODEL_SIZE}"
+            fi
+        fi
+    fi
+
+    # Check QWEN.md in current directory
+    if [[ -f "QWEN.md" ]]; then
+        echo "✅ QWEN.md found in current directory"
+    elif [[ -f "qwen.md" ]]; then
+        echo "✅ qwen.md found in current directory"
+    else
+        echo "ℹ️  No QWEN.md in current directory (optional)"
+    fi
+
+    if [[ "$all_ok" == "true" ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Ensure Ollama is running (for local mode)
+_qwen_ensure_ollama() {
+    if ! command -v ollama &> /dev/null; then
+        echo "❌ Ollama not installed. Run: qc --setup"
+        return 1
+    fi
+
+    if ! pgrep -x "ollama" > /dev/null 2>&1; then
+        echo "Starting Ollama service..."
+        brew services start ollama 2>/dev/null || ollama serve &
+        sleep 3
+    fi
+
+    # Verify it's responding
+    if ! curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
+        echo "⚠️  Ollama not responding, waiting..."
+        sleep 5
+        if ! curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
+            echo "❌ Ollama failed to start. Try: ollama serve"
+            return 1
+        fi
+    fi
+    return 0
+}
+
+# Ensure local model is available
+_qwen_ensure_model() {
+    local model_size="${1:-$QWEN_MODEL_SIZE}"
+    local model_name="qwen3-coder:${model_size}"
+    local ollama_models
+    ollama_models="$(ollama list 2>/dev/null)"
+
+    if [[ "$ollama_models" != *"qwen3-coder:${model_size}"* ]]; then
+        echo "Model $model_name not found. Pulling..."
+        ollama pull "$model_name"
+        if [[ $? -ne 0 ]]; then
+            echo "❌ Failed to pull model. Check your connection."
+            return 1
+        fi
+    fi
+    return 0
+}
+
+# Create QWEN.md template
+_qwen_init_config() {
+    if [[ -f "QWEN.md" ]] || [[ -f "qwen.md" ]]; then
+        echo "QWEN.md already exists in this directory."
+        return 1
+    fi
+
+    cat > QWEN.md << 'QWENMD'
+# Project Configuration for Qwen Code
+
+## Architecture
+<!-- Describe your project structure here -->
+- Language/Framework:
+- Key directories:
+- Entry points:
+
+## Coding Rules
+- Follow existing code style
+- Add tests for new functionality
+- Do not modify generated files
+
+## Commands
+<!-- Common commands Qwen should know -->
+- Build: `npm run build` or `make build`
+- Test: `npm test` or `make test`
+- Lint: `npm run lint` or `make lint`
+
+## Workflow Expectations
+- Always propose a plan before making changes
+- Make changes in small batches (≤3 files)
+- Run tests after each batch of changes
+- If tests fail, fix before continuing
+
+## Off-limits
+<!-- Files/directories Qwen should not modify -->
+- /dist/
+- /node_modules/
+- *.generated.*
+QWENMD
+
+    echo "✅ Created QWEN.md template. Edit it for your project."
+}
+
+# Main qc function - wrapper for Qwen Code CLI with local Ollama support
+# NOTE: Local Ollama has tool-calling issues (XML vs JSON format mismatch)
+# Cloud (Qwen OAuth) works properly and is free (2000 req/day)
+qc() {
+    local use_local=false  # Default to cloud (works properly)
+    local model_size="$QWEN_MODEL_SIZE"
+    local approval_mode="$QWEN_APPROVAL_MODE"
+    local cli_args=()
+
+    # Parse our custom arguments first
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --setup)
+                echo "=== Qwen Code Full Setup ==="
+                _qwen_check_deps true
+                echo ""
+                echo "Setup complete! Run 'qc' to start."
+                return 0
+                ;;
+            --status)
+                echo "=== Qwen Code Status ==="
+                _qwen_check_deps false
+                return 0
+                ;;
+            --init)
+                _qwen_init_config
+                return 0
+                ;;
+            --local)
+                use_local=true
+                shift
+                ;;
+            --cloud)
+                use_local=false
+                shift
+                ;;
+            --model)
+                shift
+                model_size="$1"
+                shift
+                ;;
+            --yolo|-y)
+                approval_mode="yolo"
+                shift
+                ;;
+            --plan)
+                approval_mode="plan"
+                shift
+                ;;
+            --auto-edit)
+                approval_mode="auto-edit"
+                shift
+                ;;
+            --help|-h)
+                echo "Qwen Code - Agentic coding assistant (like Claude Code)"
+                echo ""
+                echo "Usage: qc [options] [prompt]"
+                echo ""
+                echo "Options:"
+                echo "  --setup          Install/update all dependencies"
+                echo "  --status         Check status of dependencies"
+                echo "  --init           Create QWEN.md template in current dir"
+                echo "  --local          Use local Ollama (default)"
+                echo "  --cloud          Use Qwen OAuth cloud API"
+                echo "  --model SIZE     Model size (32b, 30b, 8b, etc.)"
+                echo "  --yolo, -y       YOLO mode: auto-approve everything (default)"
+                echo "  --plan           Plan mode: confirm everything"
+                echo "  --auto-edit      Auto-approve edits only"
+                echo ""
+                echo "Examples:"
+                echo "  qc                            # Interactive, local, yolo"
+                echo "  qc 'find pdfs in ~/Downloads' # One-shot command"
+                echo "  qc --plan 'refactor auth'     # Safe mode"
+                echo "  qc --cloud                    # Use Qwen cloud API"
+                echo "  qc --model 8b                 # Faster, smaller model"
+                echo ""
+                echo "Defaults: model=${QWEN_MODEL_SIZE}, mode=${QWEN_APPROVAL_MODE}, local=true"
+                return 0
+                ;;
+            *)
+                cli_args+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    # Check if Qwen Code CLI is installed
+    if ! command -v /opt/homebrew/bin/qwen &> /dev/null; then
+        echo "❌ Qwen Code CLI not installed."
+        echo "   Run: qc --setup"
+        echo "   Or:  npm install -g @qwen-code/qwen-code"
+        return 1
+    fi
+
+    # Check for QWEN.md
+    if [[ -f "QWEN.md" ]] || [[ -f "qwen.md" ]]; then
+        echo "📋 QWEN.md detected"
+    fi
+
+    if [[ "$use_local" == "true" ]]; then
+        # Use local Ollama backend
+        if ! _qwen_ensure_ollama; then
+            return 1
+        fi
+        if ! _qwen_ensure_model "$model_size"; then
+            return 1
+        fi
+
+        echo "🚀 Qwen Code (local: qwen3-coder:${model_size}, mode: ${approval_mode})"
+        /opt/homebrew/bin/qwen \
+            --openai-api-key "ollama" \
+            --openai-base-url "http://localhost:11434/v1" \
+            --approval-mode "$approval_mode" \
+            -m "qwen3-coder:${model_size}" \
+            "${cli_args[@]}"
+    else
+        # Use Qwen OAuth (cloud API with free tier: 2000 req/day, 60 req/min)
+        echo "🚀 Qwen Code (cloud, mode: ${approval_mode})"
+        /opt/homebrew/bin/qwen --approval-mode "$approval_mode" "${cli_args[@]}"
+    fi
+}
+
+# Aliases for common modes
+alias qwen-yolo="qc --yolo"
+alias qwen-plan="qc --approval-mode plan"
+alias qwen-local="qc --local"
+alias qwen-fast="qc --local --model 8b"
+
+# Direct Ollama chat with Qwen3-Coder (no agentic tools, just chat)
+qwen-chat() {
+    _qwen_ensure_ollama || return 1
+    _qwen_ensure_model "$QWEN_MODEL_SIZE" || return 1
+    echo "💬 Qwen3-Coder chat mode (no tools)"
+    ollama run "qwen3-coder:${QWEN_MODEL_SIZE}" "$@"
+}
+
+# Quick status check
+qwen-status() {
+    qc --status
+}
+
+# ----------------------
 # Applications Management
 # ----------------------
 
