@@ -639,7 +639,7 @@ if [[ "$OS_TYPE" != "macos" ]]; then
 fi
 
 # Universal aliases
-alias sysinfo='server_stats'
+
 alias svc='service_manage'
 alias logs='analyze_logs'
 alias secscan='security_scan'

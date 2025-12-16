@@ -29,7 +29,7 @@ _aws_env() {
                 # Preserve other arguments
                 shift
                 ;; 
-esac
+        esac
     done
 }
 
@@ -46,7 +46,7 @@ aws() {
 aws_list_profiles() {
     _aws_env "$@"
     echo "👤 Available AWS Profiles:"
-    profiles=$( (grep '[[profile ' ~/.aws/config | sed 's/[[profile \(.*\)]/\1/') & grep '[[.*]]' ~/.aws/credentials | sed 's/[[\(.*\)]/\1/') | sort -u)
+    profiles=$(aws configure list-profiles)
     
     if [[ -z "$profiles" ]]; then
         echo "   No profiles found."
@@ -59,7 +59,7 @@ aws_list_profiles() {
         else
             echo "     $profile"
         fi
-done <<< "$profiles"
+    done <<< "$profiles"
 }
 
 # Switch active AWS profile
@@ -81,7 +81,7 @@ aws_check_profile() {
     echo "\n🔍 Checking status for profile: [bold cyan]$_AWS_PROFILE[/bold cyan] in region [bold cyan]$_AWS_REGION[/bold cyan]..."
     
     if ! aws sts get-caller-identity --query "Account" --output text &>/dev/null; then
-        echo "[bold red]Error:[/] Failed to authenticate with profile '$_AWS_PROFILE'."
+        echo "[bold red]Error:[/bold red] Failed to authenticate with profile '$_AWS_PROFILE'."
         echo "Please check your credentials or run 'aws configure --profile $_AWS_PROFILE'."
         return 1
     fi

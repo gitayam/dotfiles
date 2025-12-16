@@ -200,7 +200,7 @@ if ! find_cffile_script; then
 fi
 
 # Use the cffile script to share the encrypted package
-CFFILE_OUTPUT=$("$CFFILE_PATH" --no-auth "$PACKAGE_NAME")
+CFFILE_OUTPUT=$("$CFFILE_PATH" --no-auth "$PACKAGE_NAME" &)
 UPLOAD_URL=$(echo "$CFFILE_OUTPUT" | grep -o 'https://.*\.trycloudflare\.com')
 
 log "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
