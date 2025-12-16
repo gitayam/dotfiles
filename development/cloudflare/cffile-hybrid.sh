@@ -1,320 +1,311 @@
 #!/bin/bash
 
 # cffile-hybrid - Share files with authentication via Worker + cloudflared proxy
-# Usage: ./cffile-hybrid.sh [options] [files...]
+# Enhanced by Gemini
+
+# ==============================================================================
+# Configuration
+# ==============================================================================
 
 PORT=8010
 PASSWORD=""
 DESCRIPTION=""
 FILES=()
-WORKER_URL="https://secure-tunnel.wemea-5ahhf.workers.dev"
+WORKER_URL=${CFFILE_WORKER_URL:-"https://secure-tunnel.wemea-5ahhf.workers.dev"}
 NO_AUTH=false
+QUIET=false
 
-# Parse arguments
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        -p|--password)
-            PASSWORD="$2"
-            shift 2
-            ;;
-        --no-auth|--public)
-            NO_AUTH=true
-            shift
-            ;;
-        --port)
-            PORT="$2"
-            shift 2
-            ;;
-        -d|--description)
-            DESCRIPTION="$2"
-            shift 2
-            ;;
-        -h|--help)
-            cat << 'EOF'
-Usage: cffile [OPTIONS] [files/directories...]
+# ==============================================================================
+# Helper Functions
+# ==============================================================================
 
-Hybrid file sharing: Cloudflare Worker authentication + cloudflared proxy
+# Print a message if not in quiet mode
+log() {
+    if [[ "$QUIET" == false ]]; then
+        echo "$@"
+    fi
+}
+
+# Print an error message
+error() {
+    echo "❌ Error: $@" >&2
+}
+
+# Check for required command-line tools
+check_dependencies() {
+    log "🔍 Checking dependencies..."
+    local missing=0
+    for cmd in python3 cloudflared lsof realpath;
+    do
+        if ! command -v "$cmd" &>/dev/null;
+        then
+            error "'$cmd' is not installed. Please install it to continue."
+            missing=1
+        fi
+    done
+    if [[ $missing -eq 1 ]]; then
+        exit 1
+    fi
+    log "✅ All dependencies are installed."
+}
+
+# Parse command-line arguments
+parse_arguments() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -p|--password)
+                PASSWORD="$2"
+                shift 2
+                ;; 
+            --no-auth|--public)
+                NO_AUTH=true
+                shift
+                ;; 
+            --port)
+                PORT="$2"
+                shift 2
+                ;; 
+            -d|--description)
+                DESCRIPTION="$2"
+                shift 2
+                ;; 
+            -q|--quiet)
+                QUIET=true
+                shift
+                ;; 
+            -h|--help)
+                print_help
+                exit 0
+                ;; 
+            *)
+                FILES+=("$1")
+                shift
+                ;; 
+        esac
+    done
+}
+
+# Print the help message
+print_help() {
+    cat << 'EOF'
+Usage: cffile-hybrid [OPTIONS] [files/directories...]
+
+Hybrid file sharing: Cloudflare Worker authentication + cloudflared proxy.
 
 Options:
-  -p, --password PWD    Set password for access (auto-generates if not provided)
-  --no-auth, --public   No authentication required (PUBLIC access)
-  --port PORT          Local server port (default: 8010)
-  -d, --description    Description for the tunnel
-  -h, --help           Show this help
+  -p, --password PWD    Set password for access (auto-generates if not provided).
+  --no-auth, --public   No authentication required (PUBLIC access).
+  --port PORT           Local server port to start searching from (default: 8010).
+  -d, --description     A description for the share.
+  -q, --quiet           Suppress informational output.
+  -h, --help            Show this help message.
 
-Examples:
-  cffile document.pdf                    # Auto-generates password
-  cffile -p secret123 document.pdf      # Custom password
-  cffile --no-auth ./                   # PUBLIC access (no password)
-  cffile --public document.pdf          # PUBLIC access (alternative)
-  cffile -p mypass -d "Project files" ~/Documents
+Environment Variables:
+  CFFILE_WORKER_URL     Set the URL for the authentication worker.
 EOF
-            exit 0
-            ;;
-        *)
-            FILES+=("$1")
-            shift
-            ;;
-    esac
-done
+}
 
-# Handle authentication mode
-if $NO_AUTH; then
-    echo "🌐 Running in PUBLIC mode (no authentication required)"
-else
-    # Generate password if not provided
-    if [[ -z "$PASSWORD" ]]; then
-        PASSWORD="cffile-$(date +%s | tail -c 5)"
-        echo "ℹ️  Setting up optional password protection (auto-generated): $PASSWORD"
-        echo "   Tip: Use --no-auth to share without any password"
+# Prepare files for sharing in a temporary directory
+prepare_files() {
+    if [ ${#FILES[@]} -eq 0 ]; then
+        log "📂 Serving current directory: $(pwd)"
+        return
     fi
-fi
 
-# Check dependencies
-if ! command -v python3 &> /dev/null; then
-    echo "❌ Error: Python 3 is required"
-    echo "Install it with: brew install python"
-    exit 1
-fi
-
-if ! command -v cloudflared &> /dev/null; then
-    echo "❌ Error: cloudflared is required"
-    echo "Install it with: brew install cloudflared"
-    exit 1
-fi
-
-# Prepare directory
-ORIGINAL_DIR=$(pwd)
-TEMP_DIR=""
-
-if [ ${#FILES[@]} -gt 0 ]; then
-    echo "📁 Preparing ${#FILES[@]} file(s) for sharing..."
-    TEMP_DIR="/tmp/cffile-hybrid-$$"
-    mkdir -p "$TEMP_DIR"
+    log "📁 Preparing ${#FILES[@]} file(s) for sharing..."
+    TEMP_DIR=$(mktemp -d /tmp/cffile-hybrid.XXXXXX)
     
     for file in "${FILES[@]}"; do
         if [[ -e "$file" ]]; then
-            if [[ -d "$file" ]]; then
-                if [[ "$file" == "." || "$file" == "./" ]]; then
-                    echo "   ✓ Adding current directory contents..."
-                    cp -r ./* "$TEMP_DIR/" 2>/dev/null || true
-                else
-                    echo "   ✓ Adding directory: $(basename "$file")"
-                    cp -r "$file" "$TEMP_DIR/"
-                fi
-            else
-                ln -sf "$(realpath "$file")" "$TEMP_DIR/"
-                echo "   ✓ Added file: $(basename "$file")"
-            fi
+            # Using rsync for more robust copying of directories
+            rsync -a --relative "$file" "$TEMP_DIR/"
+            log "   ✓ Added: $(basename "$file")"
         else
-            echo "   ⚠️  Warning: $file not found"
+            log "   ⚠️  Warning: '$file' not found, skipping."
         fi
     done
     
-    cd "$TEMP_DIR" || { echo "❌ Failed to access temp directory"; exit 1; }
-else
-    echo "📂 Serving current directory: $(pwd)"
-fi
+    cd "$TEMP_DIR" || { error "Failed to access temp directory"; exit 1; }
+}
 
-# Set description
-if [[ -z "$DESCRIPTION" ]]; then
-    DESCRIPTION="cffile hybrid sharing ($(ls | wc -l | tr -d ' ') items)"
-fi
+# Find an available port
+find_available_port() {
+    log "🔍 Finding an available port starting from $PORT..."
+    while lsof -ti:$PORT >/dev/null 2>&1; do
+        log "   Port $PORT is in use, trying next..."
+        PORT=$((PORT + 1))
+    done
+    log "✅ Port $PORT is available."
+}
 
-# Cleanup function
-cleanup() {
-    echo ""
-    echo "🛑 Shutting down cffile-hybrid..."
-    
-    # Kill background processes
-    if [[ -n "$PYTHON_PID" ]]; then
-        kill "$PYTHON_PID" 2>/dev/null && echo "   ✓ Python server stopped"
+# Start the local Python HTTP server
+start_local_server() {
+    log "🚀 Starting local HTTP server on port $PORT..."
+    python3 -m http.server "$PORT" > /dev/null 2>&1 &
+    PYTHON_PID=$!
+    sleep 1 # Give the server a moment to start
+
+    if ! kill -0 "$PYTHON_PID" 2>/dev/null;
+    then
+        error "Failed to start Python server."
+        exit 1
     fi
+    log "✅ Local server running at http://localhost:$PORT (PID: $PYTHON_PID)"
+}
+
+# Start the cloudflared tunnel
+start_cloudflared() {
+    log "🌐 Creating cloudflared tunnel..."
+    CLOUDFLARED_OUTPUT=$(mktemp)
+    cloudflared tunnel --url "http://localhost:$PORT" > "$CLOUDFLARED_OUTPUT" 2>&1 &
+    CLOUDFLARED_PID=$!
+
+    log "⏳ Waiting for tunnel URL..."
+    local attempts=0
+    while [[ -z "$TUNNEL_URL" && $attempts -lt 15 ]]; do
+        sleep 1
+        TUNNEL_URL=$(grep -o 'https://.*\.trycloudflare\.com' "$CLOUDFLARED_OUTPUT")
+        attempts=$((attempts + 1))
+    done
+
+    if [[ -z "$TUNNEL_URL" ]]; then
+        error "Failed to get cloudflared tunnel URL."
+        cat "$CLOUDFLARED_OUTPUT"
+        exit 1
+    fi
+    log "✅ Tunnel URL: $TUNNEL_URL (PID: $CLOUDFLARED_PID)"
+}
+
+# Register the tunnel with the authentication worker
+register_with_worker() {
+    if $NO_AUTH;
+    then
+        return
+    fi
+    
+    log "🔐 Registering with authentication worker..."
+    local tunnel_id="hybrid-$(date +%s | tail -c 6)-$$"
+    
+    local register_payload
+    register_payload=$(jq -n \
+      --arg id "$tunnel_id" \
+      --arg pass "$PASSWORD" \
+      --arg port "$PORT" \
+      --arg url "$TUNNEL_URL" \
+      --arg desc "$DESCRIPTION" \
+      '{tunnelId: $id, password: $pass, port: $port, cloudflaredUrl: $url, description: $desc}')
+
+    REGISTER_RESPONSE=$(curl -s -X POST "$WORKER_URL/api/register" \
+      -H "Content-Type: application/json" \
+      -d "$register_payload")
+
+    if ! echo "$REGISTER_RESPONSE" | jq -e .success &>/dev/null;
+    then
+        error "Failed to register with authentication worker."
+        echo "$REGISTER_RESPONSE" | jq .
+        exit 1
+    fi
+    
+    AUTH_URL=$(echo "$REGISTER_RESPONSE" | jq -r .authUrl)
+    log "✅ Authentication layer registered."
+}
+
+# Print the final summary
+print_summary() {
+    local border="━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    if $NO_AUTH;
+    then
+        log "\n$border\n🎉 [bold green]Public file sharing is now active![/bold green]\n$border"
+        log "🔗 [bold]Public URL:[/bold] $TUNNEL_URL"
+        log "[yellow]⚠️  Warning: This URL is PUBLIC - anyone can access.[/yellow]"
+    else
+        log "\n$border\n🎉 [bold green]Password-protected sharing is now active![/bold green]\n$border"
+        log "🔐 [bold]Gated URL:[/bold] $AUTH_URL"
+        log "   [bold]Password:[/bold] $PASSWORD"
+        log "\n[yellow]⚠️  Security Note: The password only gates access to the direct tunnel URL.[/yellow]"
+        log "[yellow]   For true end-to-end encryption, use a tool like 'cfsecure'.[/yellow]"
+    fi
+    
+    log "\n🖥️  [bold]Local Server:[/bold] http://localhost:$PORT"
+    log "🛑 Press Ctrl+C to stop sharing."
+    log "$border"
+
+    # Copy the appropriate URL to the clipboard
+    if command -v pbcopy &>/dev/null;
+    then
+        local url_to_copy=${AUTH_URL:-$TUNNEL_URL}
+        echo "$url_to_copy" | pbcopy
+        log "📋 Sharable URL copied to clipboard."
+    fi
+}
+
+# Main loop to keep the script alive
+main_loop() {
+    while true;
+    do
+        if ! kill -0 "$PYTHON_PID" 2>/dev/null;
+        then
+            error "Python server stopped unexpectedly."
+            break
+        fi
+        if ! kill -0 "$CLOUDFLARED_PID" 2>/dev/null;
+        then
+            error "cloudflared tunnel stopped unexpectedly."
+            break
+        fi
+        sleep 5
+    done
+}
+
+# Cleanup function on exit
+cleanup() {
+    echo "" # Newline for cleaner exit
+    log "🛑 Shutting down..."
     
     if [[ -n "$CLOUDFLARED_PID" ]]; then
-        kill "$CLOUDFLARED_PID" 2>/dev/null && echo "   ✓ cloudflared tunnel stopped"
+        kill "$CLOUDFLARED_PID" 2>/dev/null && log "   ✓ cloudflared tunnel stopped."
+    fi
+    if [[ -n "$PYTHON_PID" ]]; then
+        kill "$PYTHON_PID" 2>/dev/null && log "   ✓ Python server stopped."
     fi
     
-    # Cleanup temp directory
-    cd "$ORIGINAL_DIR"
-    if [[ -n "$TEMP_DIR" ]] && [[ -d "$TEMP_DIR" ]]; then
+    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
         rm -rf "$TEMP_DIR"
-        echo "   ✓ Cleaned up temporary files"
+        log "   ✓ Temporary files cleaned up."
     fi
     
-    echo "✅ cffile-hybrid stopped"
+    log "✅ Shutdown complete."
     exit 0
 }
 
+# ==============================================================================
+# Main Execution
+# ==============================================================================
+
 trap cleanup SIGINT SIGTERM EXIT
 
-# Find available port
-echo "🔍 Finding available port..."
-while lsof -ti:$PORT >/dev/null 2>&1; do
-    echo "   Port $PORT is in use, trying $((PORT + 1))..."
-    PORT=$((PORT + 1))
-done
+parse_arguments "$@"
+check_dependencies
 
-# Start Python server
-echo "🚀 Starting HTTP server on port $PORT..."
-
-# Check if we're serving a single file that should be displayed directly
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ ${#FILES[@]} -eq 1 ] && [ -f "${FILES[0]}" ]; then
-    # Single file - create index.html for better display
-    FILE_NAME="$(cd "$TEMP_DIR" && ls -1 | head -1)"
-    if [[ "$FILE_NAME" =~ \.(png|jpg|jpeg|gif|webp|svg|pdf|mp4|webm|mov)$ ]]; then
-        # Create index.html for better display
-        "$SCRIPT_DIR/create-index.sh" "$TEMP_DIR" "$FILE_NAME"
-    fi
+if ! $NO_AUTH && [[ -z "$PASSWORD" ]]; then
+    PASSWORD="cffile-$(date +%s | tail -c 5)"
+    log "🔑 No password provided, auto-generating one: [bold cyan]$PASSWORD[/bold cyan]"
 fi
 
-# Start standard Python HTTP server
-python3 -m http.server "$PORT" > /dev/null 2>&1 &
-PYTHON_PID=$!
-
-# Wait for server
-sleep 2
-
-if ! kill -0 "$PYTHON_PID" 2>/dev/null; then
-    echo "❌ Failed to start Python server"
-    exit 1
-fi
-
-echo "✅ Local server running at http://localhost:$PORT"
-
-# Start cloudflared tunnel
-echo "🌐 Creating cloudflared tunnel..."
-CLOUDFLARED_OUTPUT=$(mktemp)
-cloudflared tunnel --url "http://localhost:$PORT" > "$CLOUDFLARED_OUTPUT" 2>&1 &
-CLOUDFLARED_PID=$!
-
-# Wait for cloudflared to start and get URL
-echo "⏳ Waiting for tunnel to connect..."
-TUNNEL_URL=""
-ATTEMPTS=0
-while [[ -z "$TUNNEL_URL" ]] && [[ $ATTEMPTS -lt 30 ]]; do
-    sleep 1
-    TUNNEL_URL=$(grep -o 'https://.*\.trycloudflare\.com' "$CLOUDFLARED_OUTPUT" 2>/dev/null | head -1)
-    ATTEMPTS=$((ATTEMPTS + 1))
-done
-
-if [[ -z "$TUNNEL_URL" ]]; then
-    echo "❌ Failed to get cloudflared tunnel URL"
-    cat "$CLOUDFLARED_OUTPUT"
-    exit 1
-fi
-
-echo "✅ Cloudflared tunnel created: $TUNNEL_URL"
-
-if $NO_AUTH; then
-    # No authentication - just use cloudflared directly
-    echo ""
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "🎉 Public file sharing is now active!"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
-    echo "🔗 Public Access URL: $TUNNEL_URL"
-    echo "⚠️  Warning: This URL is PUBLIC - anyone with the link can access"
-    echo ""
-    echo "📁 Files being served: $(ls | wc -l | tr -d ' ') items"
-    echo "🖥️  Local server: http://localhost:$PORT"
-    echo ""
-    echo "🛑 Press Ctrl+C to stop sharing"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    
-    # Copy to clipboard if available
-    if command -v pbcopy &> /dev/null; then
-        echo "$TUNNEL_URL" | pbcopy
-        echo "📋 Public URL copied to clipboard"
-    fi
-    
-    # Keep running
-    while true; do
-        sleep 1
-        if ! kill -0 "$PYTHON_PID" 2>/dev/null; then
-            echo "⚠️  Python server stopped unexpectedly"
-            break
-        fi
-        if ! kill -0 "$CLOUDFLARED_PID" 2>/dev/null; then
-            echo "⚠️  cloudflared tunnel stopped unexpectedly"
-            break
-        fi
-    done
-else
-    # With authentication - register with Worker
-    echo "🔐 Registering authentication layer..."
-    
-    # Generate tunnel ID for Worker
-    TUNNEL_ID="hybrid-$(date +%s | tail -c 6)-$$"
-    
-    REGISTER_RESPONSE=$(curl -s -X POST "$WORKER_URL/api/register" \
-      -H "Content-Type: application/json" \
-      -d "{
-        \"tunnelId\": \"$TUNNEL_ID\",
-        \"password\": \"$PASSWORD\",
-        \"port\": $PORT,
-        \"cloudflaredUrl\": \"$TUNNEL_URL\",
-        \"description\": \"$DESCRIPTION\"
-      }")
-
-    # Check if registration was successful
-    if echo "$REGISTER_RESPONSE" | grep -q "success"; then
-        AUTH_URL=$(echo "$REGISTER_RESPONSE" | grep -o '"authUrl":"[^"]*' | cut -d'"' -f4)
-        
-        if [[ -z "$AUTH_URL" ]]; then
-            AUTH_URL="$WORKER_URL/tunnel/$TUNNEL_ID"
-        fi
-        
-        echo "✅ Authentication layer registered"
-        echo ""
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "🎉 File sharing is now active!"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo ""
-        echo "🌐 Direct URL (always public, no password):"
-        echo "   $TUNNEL_URL"
-        echo ""
-        echo "🔐 Gated URL (password reveals the direct URL):"
-        echo "   $AUTH_URL"
-        echo "   Password: $PASSWORD"
-        echo ""
-        echo "⚠️  Note: The password only hides the direct URL."
-        echo "   Once revealed, the direct URL can be shared freely."
-        echo ""
-        echo "📁 Files being served: $(ls | wc -l | tr -d ' ') items"
-        echo "🖥️  Local server: http://localhost:$PORT"
-        echo ""
-        echo "💡 Tip: Use --no-auth flag to skip password protection entirely"
-        echo ""
-        echo "🛑 Press Ctrl+C to stop sharing"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        
-        # Copy to clipboard if available (copy public URL by default)
-        if command -v pbcopy &> /dev/null; then
-            echo "$TUNNEL_URL" | pbcopy
-            echo "📋 Public URL copied to clipboard (no password needed)"
-        fi
-        
-        # Keep running
-        while true; do
-            sleep 1
-            
-            # Check if processes are still running
-            if ! kill -0 "$PYTHON_PID" 2>/dev/null; then
-                echo "⚠️  Python server stopped unexpectedly"
-                break
-            fi
-            
-            if ! kill -0 "$CLOUDFLARED_PID" 2>/dev/null; then
-                echo "⚠️  cloudflared tunnel stopped unexpectedly"
-                break
-            fi
-        done
-        
+if [[ -z "$DESCRIPTION" ]]; then
+    if [[ ${#FILES[@]} -gt 0 ]]; then
+        DESCRIPTION="${#FILES[@]} item(s)"
     else
-        echo "❌ Failed to register authentication layer"
-        echo "$REGISTER_RESPONSE"
-        exit 1
+        DESCRIPTION="Current directory"
     fi
 fi
+
+ORIGINAL_DIR=$(pwd)
+prepare_files
+find_available_port
+start_local_server
+start_cloudflared
+register_with_worker
+print_summary
+main_loop
