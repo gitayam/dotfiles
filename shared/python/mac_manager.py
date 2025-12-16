@@ -75,7 +75,6 @@ class MACAddressManager:
     
     def get_current_mac(self, interface: str) -> Optional[str]:
         """Get the current MAC address for a given interface."""
-        # This function can be improved with more robust platform-specific parsing
         try:
             if self.platform == 'Darwin':
                 cmd = ['ifconfig', interface]
@@ -121,7 +120,7 @@ class MACAddressManager:
                     except ValueError:
                         continue
         except (subprocess.CalledProcessError, FileNotFoundError):
-            pass # Silently fail if listing interfaces doesn't work
+            pass
             
         return interfaces
     
@@ -148,21 +147,22 @@ class MACAddressManager:
 
 def run_command(manager: MACAddressManager, args: argparse.Namespace):
     """Execute a command based on parsed arguments."""
-    if args.command == 'validate':
+    command = getattr(args, 'command', None)
+    if command == 'validate':
         is_valid, normalized = manager.validate_mac(args.mac)
         if is_valid:
             console.print(f"[green]✓[/] Valid MAC address: [cyan]{normalized}[/]")
         else:
             console.print(f"[red]✗[/] Invalid MAC address: [yellow]{args.mac}[/]")
             
-    elif args.command == 'generate':
-        mac = manager.generate_random_mac(args.locally_administered)
+    elif command == 'generate':
+        mac = manager.generate_random_mac(getattr(args, 'locally_administered', True))
         console.print(f"Generated MAC: [bold cyan]{mac}[/]")
         
-    elif args.command == 'analyze':
+    elif command == 'analyze':
         manager.analyze_mac(args.mac)
             
-    elif args.command == 'list':
+    elif command == 'list':
         interfaces = manager.list_interfaces()
         table = Table(title="Available Network Interfaces")
         table.add_column("Interface", style="cyan", no_wrap=True)
@@ -174,52 +174,70 @@ def run_command(manager: MACAddressManager, args: argparse.Namespace):
             table.add_row(iface, mac, vendor)
         console.print(table)
             
-    elif args.command == 'get':
+    elif command == 'get':
         mac = manager.get_current_mac(args.interface)
         if mac:
             console.print(f"MAC for {args.interface}: [bold cyan]{mac}[/]")
         else:
-            console.print(f"[red]Error:[/Could not get MAC for interface '{args.interface}'")
+            console.print(f"[red]Error:[/] Could not get MAC for interface '{args.interface}'")
+    elif command in ['help', 'h']:
+        print_interactive_help()
+    else:
+        console.print(f"[bold red]Unknown command:[/] '{command}'. Type 'help' for a list of commands.")
+
+def print_interactive_help():
+    """Prints the help message for interactive mode."""
+    panel = Panel(
+        Text.from_markup(
+            """
+[bold]Available Commands:[/bold]
+  [cyan]list[/cyan]                            - List all network interfaces.
+  [cyan]get[/cyan] [yellow]<interface>[/yellow]             - Get the MAC address for a specific interface.
+  [cyan]analyze[/cyan] [yellow]<mac_address>[/yellow]       - Analyze a MAC address.
+  [cyan]validate[/cyan] [yellow]<mac_address>[/yellow]      - Validate a MAC address format.
+  [cyan]generate[/cyan] [yellow](--universal)[/yellow]    - Generate a new random MAC address.
+  [cyan]help[/cyan]                            - Show this help message.
+  [cyan]exit[/cyan], [cyan]quit[/cyan], [cyan]/q[/cyan]                  - Exit the interactive shell.
+            """
+        ),
+        title="[bold green]Interactive Help[/]",
+        border_style="blue"
+    )
+    console.print(panel)
 
 def interactive_mode(manager: MACAddressManager):
     """Run the tool in interactive mode."""
-    console.print(Panel("Welcome to the [bold green]Interactive MAC Manager[/]!",
+    console.print(Panel("Welcome to the [bold green]Interactive MAC Manager[/]! Type 'help' for commands.",
                         expand=False, border_style="blue"))
     while True:
         try:
             cmd_input = console.input("[bold yellow]mac-manager>[/] ").strip()
             if not cmd_input:
                 continue
-            if cmd_input.lower() in ['exit', 'quit']:
+            if cmd_input.lower() in ['exit', 'quit', '/q']:
                 break
                 
-            # Basic split, not as robust as shell
             parts = cmd_input.split()
-            cmd = parts[0]
+            command = parts[0]
             
-            # This is a simplified parser for interactive mode
-            # A more robust solution might use a command parsing library
-            temp_args = {'command': cmd}
+            # Simple argument parsing for interactive mode
+            args_dict = {'command': command}
             if len(parts) > 1:
-                if cmd in ['validate', 'analyze']:
-                    temp_args['mac'] = parts[1]
-                elif cmd == 'get':
-                    temp_args['interface'] = parts[1]
-                elif cmd == 'generate' and '--universal' in parts:
-                    temp_args['locally_administered'] = False
-                else:
-                    temp_args['locally_administered'] = True
-
-
-            # Convert dict to Namespace for compatibility
-            run_command(manager, argparse.Namespace(**temp_args))
+                if command in ['validate', 'analyze']:
+                    args_dict['mac'] = parts[1]
+                elif command == 'get':
+                    args_dict['interface'] = parts[1]
+                elif command == 'generate' and '--universal' in parts:
+                    args_dict['locally_administered'] = False
+            
+            # Convert dict to Namespace to reuse the run_command function
+            run_command(manager, argparse.Namespace(**args_dict))
 
         except KeyboardInterrupt:
             console.print("\nExiting interactive mode.")
             break
         except Exception as e:
             console.print(f"[bold red]An unexpected error occurred:[/] {e}")
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -246,7 +264,6 @@ def main():
     if args.command == 'interactive':
         interactive_mode(manager)
     else:
-        # Validate required args for non-interactive commands
         if args.command in ['validate', 'analyze'] and not args.mac:
             parser.error(f"'--mac' is required for the '{args.command}' command.")
         if args.command == 'get' and not args.interface:
