@@ -180,6 +180,19 @@ def run_command(manager: MACAddressManager, args: argparse.Namespace):
             console.print(f"MAC for {args.interface}: [bold cyan]{mac}[/]")
         else:
             console.print(f"[red]Error:[/] Could not get MAC for interface '{args.interface}'")
+
+    elif command == 'set':
+        mac_to_set = manager.stored_macs.get(args.mac.lower(), args.mac)
+        manager.set_mac(args.interface, mac_to_set)
+
+    elif command == 'show':
+        table = Table(title="Stored MAC Addresses")
+        table.add_column("Name", style="cyan")
+        table.add_column("MAC Address", style="magenta")
+        for name, mac in manager.stored_macs.items():
+            table.add_row(name, mac)
+        console.print(table)
+
     elif command in ['help', 'h']:
         print_interactive_help()
     else:
@@ -193,6 +206,8 @@ def print_interactive_help():
 [bold]Available Commands:[/bold]
   [cyan]list[/cyan]                            - List all network interfaces.
   [cyan]get[/cyan] [yellow]<interface>[/yellow]             - Get the MAC address for a specific interface.
+  [cyan]set[/cyan] [yellow]<interface> <mac|name>[/yellow] - Set the MAC address for an interface (requires sudo).
+  [cyan]show[/cyan]                            - Show stored MAC addresses from your .env file.
   [cyan]analyze[/cyan] [yellow]<mac_address>[/yellow]       - Analyze a MAC address.
   [cyan]validate[/cyan] [yellow]<mac_address>[/yellow]      - Validate a MAC address format.
   [cyan]generate[/cyan] [yellow](--universal)[/yellow]    - Generate a new random MAC address.
@@ -223,7 +238,13 @@ def interactive_mode(manager: MACAddressManager):
             # Simple argument parsing for interactive mode
             args_dict = {'command': command}
             if len(parts) > 1:
-                if command in ['validate', 'analyze']:
+                if command == 'set':
+                    if len(parts) < 3:
+                        console.print("[red]Usage: set <interface> <mac|name>[/]")
+                        continue
+                    args_dict['interface'] = parts[1]
+                    args_dict['mac'] = parts[2]
+                elif command in ['validate', 'analyze']:
                     args_dict['mac'] = parts[1]
                 elif command == 'get':
                     args_dict['interface'] = parts[1]
@@ -244,7 +265,7 @@ def main():
         description='Advanced MAC Address Manager.',
         formatter_class=argparse.RawTextHelpFormatter
     )
-    parser.add_argument('command', nargs='?', choices=['validate', 'generate', 'analyze', 'list', 'get', 'interactive'],
+    parser.add_argument('command', nargs='?', choices=['validate', 'generate', 'analyze', 'list', 'get', 'set', 'show', 'interactive'],
                        default='interactive',
                        help='''Command to execute:
   validate      - Validate a MAC address format.
@@ -252,23 +273,33 @@ def main():
   analyze       - Analyze a MAC, providing vendor and type info.
   list          - List network interfaces and their MACs.
   get           - Get the MAC for a specific interface.
+  set           - Set the MAC for a specific interface (requires sudo).
+  show          - Show stored MAC addresses from .env file.
   interactive   - (Default) Enter interactive mode.''')
-    parser.add_argument('--mac', help='MAC address to use for validate/analyze')
-    parser.add_argument('--interface', help='Network interface for the "get" command')
+    parser.add_argument('params', nargs='*', help='Parameters for the command (e.g., interface, mac address)')
     parser.add_argument('--locally-administered', action='store_true',
                        help='Generate a locally administered MAC (for "generate")')
 
     args = parser.parse_args()
+    
+    # This block is a bit of a hack to make the CLI feel more natural
+    # by not using flags like --mac and --interface for the main params.
+    if args.command in ['validate', 'analyze']:
+        if not args.params: parser.error("A MAC address is required.")
+        args.mac = args.params[0]
+    if args.command == 'get':
+        if not args.params: parser.error("An interface is required.")
+        args.interface = args.params[0]
+    if args.command == 'set':
+        if len(args.params) < 2: parser.error("An interface and a MAC address (or name) are required.")
+        args.interface = args.params[0]
+        args.mac = args.params[1]
+
     manager = MACAddressManager()
 
     if args.command == 'interactive':
         interactive_mode(manager)
     else:
-        if args.command in ['validate', 'analyze'] and not args.mac:
-            parser.error(f"'--mac' is required for the '{args.command}' command.")
-        if args.command == 'get' and not args.interface:
-            parser.error(f"'--interface' is required for the '{args.command}' command.")
-        
         run_command(manager, args)
 
 
