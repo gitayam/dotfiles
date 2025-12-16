@@ -4,7 +4,7 @@
 
 # Network diagnostics
 alias ports='netstat -tulanp'  # List open ports
-alias myip='curl ifconfig.me'  # Check external IP address
+
 alias http="curl -I"           # Check HTTP headers
 
 # lookup your public IP via multiple services
