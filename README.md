@@ -94,6 +94,16 @@ The AWS functions now have a more robust and consistent way of handling profiles
 *   **`aws_cw_logs <group> [--follow]`**: Fetch and optionally follow logs from a CloudWatch log group.
 *   **`aws_help`**: Displays a help message with a list of all available AWS Power Functions.
 
+## ☁️ Cloudflare Scripts
+
+This repository includes powerful scripts for sharing files using Cloudflare Tunnels and Workers.
+
+*   **`cffile-hybrid.sh`**: Share files or directories through a secure tunnel with an optional password protection layer provided by a Cloudflare Worker. This is great for quickly sharing files with a layer of authentication.
+    *   **Usage:** `development/cloudflare/cffile-hybrid.sh [options] [file]`
+
+*   **`cfsecure-integrated.sh`**: Provides true end-to-end encrypted file sharing. It encrypts files locally before uploading them, ensuring that only someone with the password can decrypt them.
+    *   **Usage:** `development/cloudflare/cfsecure-integrated.sh [options] [file]`
+
 ## Useful Shell Functions and Aliases
 
 
