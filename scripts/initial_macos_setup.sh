@@ -48,7 +48,7 @@ gather_user_preferences() {
     raw_choices+=("$item")
   done
   
-  typeset -A seen_editors
+  declare -A seen_editors
   for raw in "${raw_choices[@]}"; do
     choice=$(echo "$raw" | xargs)
     if [[ -n "$choice" && -z "${seen_editors[$choice]}" ]]; then
@@ -77,7 +77,7 @@ gather_user_preferences() {
     raw_choices+=("$item")
   done
   
-  typeset -A seen_ais
+  declare -A seen_ais
   for raw in "${raw_choices[@]}"; do
     choice=$(echo "$raw" | xargs)
     if [[ -n "$choice" && -z "${seen_ais[$choice]}" ]]; then
@@ -111,7 +111,7 @@ gather_user_preferences() {
     raw_choices+=("$item")
   done
   
-  typeset -A seen_clouds
+  declare -A seen_clouds
   for raw in "${raw_choices[@]}"; do
     choice=$(echo "$raw" | xargs)
     if [[ -n "$choice" && -z "${seen_clouds[$choice]}" ]]; then
@@ -760,7 +760,7 @@ main() {
     configure_macos_settings
     # add bookmarks to all chromium based browsers
     echo "Syncing mac aliases and functions to ~/.zshrc"
-    ./sync_mac_dotfiles.sh
+    ../macos/install.sh
     echo "Initial install complete."
 }
 # Run the main function 
