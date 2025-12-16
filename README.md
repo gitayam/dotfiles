@@ -1,6 +1,21 @@
 # Dotfiles
 
-This repository contains my personal dotfiles for `zsh`, `git`, and other tools, organized by operating system.
+This repository contains my personal dotfiles for `zsh`, `git`, and other tools, organized by platform and technology.
+
+## 📁 Directory Structure
+
+The repository is organized into the following top-level directories:
+
+*   `macos/`: Contains installation scripts and configuration files specific to macOS.
+*   `linux/`: Contains installation scripts and configuration files specific to Linux.
+*   `ansible/`: Contains Ansible playbooks for system configuration.
+*   `python/`: Contains advanced, cross-platform Python scripts.
+*   `typescript/`: Contains TypeScript and JavaScript projects and scripts.
+*   `development/`: Contains configurations for development environments, such as Cloudflare workers.
+*   `scripts/`: A collection of useful shell scripts.
+*   `docs/`: Documentation, guides, and notes.
+*   `assets/`: Image assets.
+*   `shared/`: Contains configurations and scripts that are shared across multiple platforms, primarily the `zsh` configuration.
 
 ## 🎯 Quick Start
 
@@ -26,39 +41,9 @@ This repository contains my personal dotfiles for `zsh`, `git`, and other tools,
     source ~/.zshrc
     ```
 
-## 📁 Directory Structure
+## 🐍 Python & ☕ TypeScript/JavaScript
 
-The repository is organized into three main directories:
-
-*   `macos/`: Contains configuration files and scripts specific to macOS.
-*   `linux/`: Contains configuration files and scripts specific to Linux.
-*   `shared/`: Contains configuration files and scripts that are shared between all operating systems.
-
-```
-.
-├── macos/
-│   ├── install.sh
-│   └── ... (macOS-specific files)
-├── linux/
-│   ├── install.sh
-│   └── ... (Linux-specific files)
-└── shared/
-    ├── zsh/
-    │   ├── .zshrc
-    │   ├── .zsh_aliases
-    │   └── ... (zsh files)
-    ├── git/
-    │   └── .gitconfig
-    ├── python/
-    │   └── ... (advanced Python scripts)
-    ├── javascript/
-    │   └── ... (advanced JavaScript scripts)
-    └── ... (other shared files)
-```
-
-## 🐍 Python & ☕ JavaScript Scripts
-
-The `shared/python` and `shared/javascript` directories contain more advanced, cross-platform scripts. These scripts are intended to be run directly and are not part of the shell configuration.
+The `python` and `typescript` directories contain more advanced, cross-platform scripts. These scripts are intended to be run directly and are not part of the shell configuration.
 
 ### Dependencies
 
@@ -66,31 +51,10 @@ Before running the Python or JavaScript scripts, you will need to install their 
 
 *   **Python:** Each Python script that has dependencies should have a corresponding `requirements.txt` file in the same directory. You can install the dependencies using `pip`:
     ```bash
-    pip install -r requirements.txt
+    pip install -r python/requirements.txt
     ```
 
-*   **JavaScript:** The JavaScript scripts use Node.js. Make sure you have Node.js and `npm` installed. You can install the dependencies for all scripts from the `shared/javascript` directory:
-    ```bash
-    cd shared/javascript
-    npm install
-    ```
-
-## ✨ Key Features
-
-This setup is designed to be modular and easy to maintain. The `install.sh` script in each OS-specific directory creates symlinks to the appropriate files in your home directory.
-
-For a detailed list of features, please see the documentation for each platform:
-
-- **[macOS Features](docs/MACOS_FEATURES.md)**
-- **[Linux Features](docs/LINUX_FEATURES.md)**
-
-## 🔧 Installation
-
-The `install.sh` script in each OS-specific directory will guide you through the installation process. It will:
-
-1.  Create symlinks to the shared and OS-specific dotfiles in your home directory.
-2.  Install any necessary dependencies (e.g., `brew` packages for macOS).
-3.  Back up any existing dotfiles before overwriting them.
+*   **TypeScript/JavaScript:** The `typescript` directory may contain one or more Node.js projects. Each project will have its own `package.json` file. To install dependencies for a project, navigate to its directory and run `npm install`.
 
 ## 🤝 Contributing
 
