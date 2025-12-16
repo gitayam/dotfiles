@@ -69,6 +69,31 @@ Before running the Python or JavaScript scripts, you will need to install their 
 
 *   **TypeScript/JavaScript:** The `typescript` directory may contain one or more Node.js projects. Each project will have its own `package.json` file. To install dependencies for a project, navigate to its directory and run `npm install`.
 
+## ⚡ AWS Power Functions
+
+A collection of helper functions to make working with the AWS CLI easier and more intuitive.
+
+### Profile & Region Management
+
+The AWS functions now have a more robust and consistent way of handling profiles and regions.
+
+*   **Automatic Profile Detection:** The functions will automatically use the profile set in your `AWS_PROFILE` environment variable, or `default` if it's not set.
+*   **Per-Command Overrides:** You can override the profile and region for any command by using the `--profile` and `--region` flags.
+    ```bash
+    aws_ec2_instances --profile my-other-profile --region us-west-2
+    ```
+*   **`aws_use_profile <profile>`:** Easily switch your active AWS profile for the current shell session.
+
+### New & Improved Functions
+
+*   **`aws_list_profiles`**: List all your configured AWS profiles.
+*   **`aws_check_profile`**: Check the authentication status of the current or a specified profile.
+*   **`aws_ec2_instances`**: List EC2 instances in a clean, readable table format.
+*   **`aws_ssm_session <instance_id>`**: Start an interactive SSM session with an EC2 instance.
+*   **`aws_s3_ls [s3://path]`**: A more user-friendly `ls`-like interface for S3 buckets and objects.
+*   **`aws_cw_logs <group> [--follow]`**: Fetch and optionally follow logs from a CloudWatch log group.
+*   **`aws_help`**: Displays a help message with a list of all available AWS Power Functions.
+
 ## Useful Shell Functions and Aliases
 
 
