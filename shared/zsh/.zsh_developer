@@ -487,20 +487,7 @@ create_repo(){
     fi
 
     repo_name=$(echo "$@" | tr ' ' '_')
-    
-    # Read GIT_PROJECTS_DIR from ~/.env file
-    local base_dir="$HOME/Documents/Git" # Default value
-    if [ -f "$HOME/.env" ]; then
-        # Use grep to find the line with GIT_PROJECTS_DIR and cut to get the value
-        local git_projects_dir=$(grep -E '^GIT_PROJECTS_DIR=' "$HOME/.env" | cut -d '=' -f2-)
-        if [ -n "$git_projects_dir" ]; then
-            # Remove quotes if they exist
-            base_dir=$(echo "$git_projects_dir" | sed -e 's/^"//' -e 's/"$//')
-            # Expand ~ if it exists
-            base_dir=$(eval echo "$base_dir")
-        fi
-    fi
-
+    local base_dir="$HOME/Documents/Git"
     mkdir -p "$base_dir"
 
     use_gitignore="n"
