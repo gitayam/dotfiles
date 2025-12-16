@@ -1,235 +1,258 @@
 #!/usr/bin/env python3
 """
-Enhanced MAC Address Manager
-Provides cross-platform MAC address operations with validation
+Advanced MAC Address Manager
+Provides detailed, cross-platform MAC address operations with live vendor lookup and rich formatting.
 """
 
 import re
 import sys
 import subprocess
 import platform
+import argparse
+import requests
 from typing import Optional, List, Tuple
 
+try:
+    from rich.console import Console
+    from rich.table import Table
+    from rich.panel import Panel
+    from rich.text import Text
+except ImportError:
+    print("Error: 'rich' library not found. Please install it with 'pip install rich'", file=sys.stderr)
+    sys.exit(1)
+
+console = Console()
+
 class MACAddressManager:
-    """Manages MAC address operations across different platforms"""
+    """Manages MAC address operations with advanced features."""
     
-    # IEEE OUI (Organizationally Unique Identifier) database (sample)
-    KNOWN_VENDORS = {
-        "00:00:5E": "IANA",
-        "00:50:56": "VMware",
-        "08:00:27": "VirtualBox",
-        "52:54:00": "QEMU/KVM",
-        "00:16:3E": "Xen",
-        "00:1C:42": "Parallels",
-        "AC:DE:48": "Apple",
-        "00:03:93": "Apple",
-    }
+    VENDOR_API_URL = "https://api.macvendors.com/"
     
     def __init__(self):
         self.platform = platform.system()
         
     def validate_mac(self, mac: str) -> Tuple[bool, str]:
-        """
-        Validate MAC address format
-        Returns: (is_valid, normalized_mac)
-        """
-        # Remove common separators
-        clean = mac.replace(':', '').replace('-', '').replace('.', '').upper()
-        
-        # Check length
+        """Validate and normalize a MAC address."""
+        clean = re.sub(r'[^0-9a-fA-F]', '', mac)
         if len(clean) != 12:
             return False, ""
-            
-        # Check hex characters
-        if not all(c in '0123456789ABCDEF' for c in clean):
-            return False, ""
-            
-        # Format as colon-separated
-        normalized = ':'.join(clean[i:i+2] for i in range(0, 12, 2))
-        return True, normalized.lower()
+        normalized = ':'.join(clean[i:i+2] for i in range(0, 12, 2)).lower()
+        return True, normalized
     
-    def get_vendor(self, mac: str) -> Optional[str]:
-        """Get vendor from MAC address OUI"""
-        oui = ':'.join(mac.upper().split(':')[:3])
-        return self.KNOWN_VENDORS.get(oui, "Unknown Vendor")
+    def get_vendor(self, mac: str) -> str:
+        """Fetch vendor information from an online API."""
+        try:
+            response = requests.get(f"{self.VENDOR_API_URL}{mac}")
+            if response.status_code == 200:
+                return response.text
+            elif response.status_code == 404:
+                return "Vendor not found in public registry"
+        except requests.RequestException:
+            return "Unable to connect to vendor API"
+        return "Unknown Vendor"
     
     def is_locally_administered(self, mac: str) -> bool:
-        """Check if MAC is locally administered (random)"""
+        """Check if MAC is locally administered (random)."""
         first_octet = int(mac.split(':')[0], 16)
         return bool(first_octet & 0x02)
     
     def is_multicast(self, mac: str) -> bool:
-        """Check if MAC is multicast"""
+        """Check if MAC is a multicast address."""
         first_octet = int(mac.split(':')[0], 16)
         return bool(first_octet & 0x01)
-    
+
     def generate_random_mac(self, locally_administered: bool = True) -> str:
-        """
-        Generate a random MAC address
-        If locally_administered=True, sets the local bit
-        """
-        import random
-        
-        # Generate 6 random bytes
-        mac_bytes = [random.randint(0, 255) for _ in range(6)]
+        """Generate a cryptographically secure random MAC address."""
+        import secrets
+        mac_bytes = [secrets.randbits(8) for _ in range(6)]
         
         if locally_administered:
-            # Set bit 1 (locally administered) and clear bit 0 (unicast)
             mac_bytes[0] = (mac_bytes[0] & 0xFE) | 0x02
         else:
-            # Clear both bits (universally administered, unicast)
             mac_bytes[0] = mac_bytes[0] & 0xFC
             
         return ':'.join(f'{b:02x}' for b in mac_bytes)
     
     def get_current_mac(self, interface: str) -> Optional[str]:
-        """Get current MAC address for interface"""
-        try:
-            if self.platform == 'Darwin':  # macOS
-                cmd = ['networksetup', '-getmacaddress', interface]
-                result = subprocess.run(cmd, capture_output=True, text=True)
-                if result.returncode == 0:
-                    # Parse output: "Ethernet Address: xx:xx:xx:xx:xx:xx (Device: en0)"
-                    match = re.search(r'([0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2})', result.stdout)
-                    if match:
-                        return match.group(1).lower()
-                        
-            elif self.platform == 'Linux':
-                cmd = ['ip', 'link', 'show', interface]
-                result = subprocess.run(cmd, capture_output=True, text=True)
-                if result.returncode == 0:
-                    match = re.search(r'link/ether\s+([0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2})', result.stdout)
-                    if match:
-                        return match.group(1).lower()
-                        
-        except Exception as e:
-            print(f"Error getting MAC: {e}", file=sys.stderr)
-            
-        return None
-    
-    def list_interfaces(self) -> List[Tuple[str, str]]:
-        """List all network interfaces with their MAC addresses"""
-        interfaces = []
-        
+        """Get the current MAC address for a given interface."""
+        # This function can be improved with more robust platform-specific parsing
         try:
             if self.platform == 'Darwin':
-                # Use networksetup to list all hardware ports
-                cmd = ['networksetup', '-listallhardwareports']
-                result = subprocess.run(cmd, capture_output=True, text=True)
-                
-                lines = result.stdout.split('\n')
-                current_device = None
-                
-                for line in lines:
-                    if line.startswith('Device:'):
-                        current_device = line.split(':', 1)[1].strip()
-                    elif line.startswith('Ethernet Address:') and current_device:
-                        mac = line.split(':', 1)[1].strip()
-                        if mac and mac != 'N/A':
-                            interfaces.append((current_device, mac))
-                        current_device = None
-                        
+                cmd = ['ifconfig', interface]
             elif self.platform == 'Linux':
-                cmd = ['ip', 'link', 'show']
-                result = subprocess.run(cmd, capture_output=True, text=True)
-                
-                current_iface = None
-                for line in result.stdout.split('\n'):
-                    # Match interface line
-                    iface_match = re.match(r'^\d+:\s+([^:]+):', line)
-                    if iface_match:
-                        current_iface = iface_match.group(1)
-                    # Match MAC address line
-                    elif current_iface and 'link/ether' in line:
-                        mac_match = re.search(r'([0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2})', line)
-                        if mac_match:
-                            interfaces.append((current_iface, mac_match.group(1)))
-                        current_iface = None
-                        
-        except Exception as e:
-            print(f"Error listing interfaces: {e}", file=sys.stderr)
+                cmd = ['ip', 'link', 'show', interface]
+            else:
+                return None
+
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            mac_match = re.search(r'ether\s+([0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2})', result.stdout)
+            if mac_match:
+                return mac_match.group(1).lower()
+
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return None
+        return None
+
+    def list_interfaces(self) -> List[Tuple[str, str]]:
+        """List all network interfaces with their MAC addresses."""
+        interfaces = []
+        try:
+            if self.platform == 'Darwin':
+                cmd = ['networksetup', '-listallhardwareports']
+                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                lines = result.stdout.strip().split('\n\n')
+                for block in lines:
+                    device_match = re.search(r'Device: (en\d+)', block)
+                    mac_match = re.search(r'Ethernet Address: ([0-9a-fA-F:]+)', block)
+                    if device_match and mac_match:
+                        interfaces.append((device_match.group(1), mac_match.group(1).lower()))
+
+            elif self.platform == 'Linux':
+                cmd = ['ip', '-o', 'link', 'show']
+                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                for line in result.stdout.strip().split('\n'):
+                    parts = line.split()
+                    iface = parts[1].strip(':')
+                    mac_index = -1
+                    try:
+                        mac_index = parts.index('link/ether') + 1
+                        if mac_index < len(parts):
+                            interfaces.append((iface, parts[mac_index]))
+                    except ValueError:
+                        continue
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass # Silently fail if listing interfaces doesn't work
             
         return interfaces
     
-    def analyze_mac(self, mac: str) -> dict:
-        """Analyze MAC address and return detailed information"""
+    def analyze_mac(self, mac: str):
+        """Analyze a MAC address and display a rich table of information."""
         is_valid, normalized = self.validate_mac(mac)
-        
         if not is_valid:
-            return {'valid': False, 'error': 'Invalid MAC address format'}
-            
-        return {
-            'valid': True,
-            'mac': normalized,
-            'vendor': self.get_vendor(normalized),
-            'locally_administered': self.is_locally_administered(normalized),
-            'multicast': self.is_multicast(normalized),
-            'type': 'Random/Custom' if self.is_locally_administered(normalized) else 'Manufacturer Assigned',
-        }
+            console.print(f"[bold red]Error:[/] Invalid MAC address format: '{mac}'")
+            return
+
+        vendor = self.get_vendor(normalized)
+        is_local = self.is_locally_administered(normalized)
+        
+        table = Table(title=f"Analysis for [cyan]{normalized}[/]", show_header=False, box=None)
+        table.add_column(style="magenta")
+        table.add_column(style="green")
+        
+        table.add_row("Vendor:", vendor)
+        table.add_row("Type:", "Locally Administered (Random)" if is_local else "Universally Unique (Manufacturer)")
+        table.add_row("Transmission:", "Multicast/Broadcast" if self.is_multicast(normalized) else "Unicast")
+        
+        console.print(table)
 
 
-def main():
-    import argparse
-    
-    parser = argparse.ArgumentParser(description='Enhanced MAC Address Manager')
-    parser.add_argument('command', choices=['validate', 'generate', 'analyze', 'list', 'get'],
-                       help='Command to execute')
-    parser.add_argument('--mac', help='MAC address to validate/analyze')
-    parser.add_argument('--interface', help='Network interface name')
-    parser.add_argument('--locally-administered', action='store_true',
-                       help='Generate locally administered MAC')
-    
-    args = parser.parse_args()
-    manager = MACAddressManager()
-    
+def run_command(manager: MACAddressManager, args: argparse.Namespace):
+    """Execute a command based on parsed arguments."""
     if args.command == 'validate':
-        if not args.mac:
-            print("Error: --mac required for validate", file=sys.stderr)
-            sys.exit(1)
         is_valid, normalized = manager.validate_mac(args.mac)
         if is_valid:
-            print(f"✓ Valid MAC address: {normalized}")
-            sys.exit(0)
+            console.print(f"[green]✓[/] Valid MAC address: [cyan]{normalized}[/]")
         else:
-            print(f"✗ Invalid MAC address", file=sys.stderr)
-            sys.exit(1)
+            console.print(f"[red]✗[/] Invalid MAC address: [yellow]{args.mac}[/]")
             
     elif args.command == 'generate':
         mac = manager.generate_random_mac(args.locally_administered)
-        print(mac)
+        console.print(f"Generated MAC: [bold cyan]{mac}[/]")
         
     elif args.command == 'analyze':
-        if not args.mac:
-            print("Error: --mac required for analyze", file=sys.stderr)
-            sys.exit(1)
-        info = manager.analyze_mac(args.mac)
-        if info['valid']:
-            print(f"MAC Address: {info['mac']}")
-            print(f"Vendor: {info['vendor']}")
-            print(f"Type: {info['type']}")
-            print(f"Locally Administered: {'Yes' if info['locally_administered'] else 'No'}")
-            print(f"Multicast: {'Yes' if info['multicast'] else 'No'}")
-        else:
-            print(info['error'], file=sys.stderr)
-            sys.exit(1)
+        manager.analyze_mac(args.mac)
             
     elif args.command == 'list':
         interfaces = manager.list_interfaces()
-        print("Network Interfaces:")
+        table = Table(title="Available Network Interfaces")
+        table.add_column("Interface", style="cyan", no_wrap=True)
+        table.add_column("MAC Address", style="magenta")
+        table.add_column("Vendor", style="green")
+        
         for iface, mac in interfaces:
             vendor = manager.get_vendor(mac)
-            print(f"  {iface:12} {mac:17} ({vendor})")
+            table.add_row(iface, mac, vendor)
+        console.print(table)
             
     elif args.command == 'get':
-        if not args.interface:
-            print("Error: --interface required for get", file=sys.stderr)
-            sys.exit(1)
         mac = manager.get_current_mac(args.interface)
         if mac:
-            print(mac)
+            console.print(f"MAC for {args.interface}: [bold cyan]{mac}[/]")
         else:
-            print(f"Error: Could not get MAC for {args.interface}", file=sys.stderr)
-            sys.exit(1)
+            console.print(f"[red]Error:[/Could not get MAC for interface '{args.interface}'")
+
+def interactive_mode(manager: MACAddressManager):
+    """Run the tool in interactive mode."""
+    console.print(Panel("Welcome to the [bold green]Interactive MAC Manager[/]!",
+                        expand=False, border_style="blue"))
+    while True:
+        try:
+            cmd_input = console.input("[bold yellow]mac-manager>[/] ").strip()
+            if not cmd_input:
+                continue
+            if cmd_input.lower() in ['exit', 'quit']:
+                break
+                
+            # Basic split, not as robust as shell
+            parts = cmd_input.split()
+            cmd = parts[0]
+            
+            # This is a simplified parser for interactive mode
+            # A more robust solution might use a command parsing library
+            temp_args = {'command': cmd}
+            if len(parts) > 1:
+                if cmd in ['validate', 'analyze']:
+                    temp_args['mac'] = parts[1]
+                elif cmd == 'get':
+                    temp_args['interface'] = parts[1]
+                elif cmd == 'generate' and '--universal' in parts:
+                    temp_args['locally_administered'] = False
+                else:
+                    temp_args['locally_administered'] = True
+
+
+            # Convert dict to Namespace for compatibility
+            run_command(manager, argparse.Namespace(**temp_args))
+
+        except KeyboardInterrupt:
+            console.print("\nExiting interactive mode.")
+            break
+        except Exception as e:
+            console.print(f"[bold red]An unexpected error occurred:[/] {e}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Advanced MAC Address Manager.',
+        formatter_class=argparse.RawTextHelpFormatter
+    )
+    parser.add_argument('command', nargs='?', choices=['validate', 'generate', 'analyze', 'list', 'get', 'interactive'],
+                       default='interactive',
+                       help='''Command to execute:
+  validate      - Validate a MAC address format.
+  generate      - Generate a new random MAC address.
+  analyze       - Analyze a MAC, providing vendor and type info.
+  list          - List network interfaces and their MACs.
+  get           - Get the MAC for a specific interface.
+  interactive   - (Default) Enter interactive mode.''')
+    parser.add_argument('--mac', help='MAC address to use for validate/analyze')
+    parser.add_argument('--interface', help='Network interface for the "get" command')
+    parser.add_argument('--locally-administered', action='store_true',
+                       help='Generate a locally administered MAC (for "generate")')
+
+    args = parser.parse_args()
+    manager = MACAddressManager()
+
+    if args.command == 'interactive':
+        interactive_mode(manager)
+    else:
+        # Validate required args for non-interactive commands
+        if args.command in ['validate', 'analyze'] and not args.mac:
+            parser.error(f"'--mac' is required for the '{args.command}' command.")
+        if args.command == 'get' and not args.interface:
+            parser.error(f"'--interface' is required for the '{args.command}' command.")
+        
+        run_command(manager, args)
 
 
 if __name__ == '__main__':
