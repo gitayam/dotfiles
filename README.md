@@ -49,8 +49,31 @@ The repository is organized into three main directories:
     │   └── ... (zsh files)
     ├── git/
     │   └── .gitconfig
+    ├── python/
+    │   └── ... (advanced Python scripts)
+    ├── javascript/
+    │   └── ... (advanced JavaScript scripts)
     └── ... (other shared files)
 ```
+
+## 🐍 Python & ☕ JavaScript Scripts
+
+The `shared/python` and `shared/javascript` directories contain more advanced, cross-platform scripts. These scripts are intended to be run directly and are not part of the shell configuration.
+
+### Dependencies
+
+Before running the Python or JavaScript scripts, you will need to install their dependencies.
+
+*   **Python:** Each Python script that has dependencies should have a corresponding `requirements.txt` file in the same directory. You can install the dependencies using `pip`:
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+*   **JavaScript:** The JavaScript scripts use Node.js. Make sure you have Node.js and `npm` installed. You can install the dependencies for all scripts from the `shared/javascript` directory:
+    ```bash
+    cd shared/javascript
+    npm install
+    ```
 
 ## ✨ Key Features
 
