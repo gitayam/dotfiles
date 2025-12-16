@@ -45,6 +45,19 @@ The repository is organized into the following top-level directories:
 
 The `python` and `typescript` directories contain more advanced, cross-platform scripts. These scripts are intended to be run directly and are not part of the shell configuration.
 
+### Python Scripts
+
+*   **`organize_files.py`**: A script to organize files in a directory (by default, `~/Downloads`) into subdirectories based on their file extension.
+    *   **Usage:** `python python/organize_files.py [directory]`
+
+*   **`mac_manager.py`**: An advanced tool for managing MAC addresses, with features like live vendor lookup, random address generation, and the ability to set MAC addresses.
+    *   **Usage:** `python python/mac_manager.py [command]`
+
+### TypeScript/Node.js Scripts
+
+*   **`check-env.js`**: A script to check if all required environment variables are set. It reads the required variables from a `.env.example` file in the current directory.
+    *   **Usage:** `node typescript/check-env.js`
+
 ### Dependencies
 
 Before running the Python or JavaScript scripts, you will need to install their dependencies.
