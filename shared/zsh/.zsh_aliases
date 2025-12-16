@@ -1,44 +1,21 @@
-# ----------------------
-# Basic Aliases
-# ----------------------
 
-# Navigation aliases
-alias ..="cd .."
-alias ...="cd ../.."
-alias ....="cd ../../.."
-alias mkdir="mkdir -p"
-alias rmr="rm -rf"
-alias untar="tar -zxvf"
-alias tarx="tar -xvf"
+# Git Aliases
+alias glog='git log --oneline --decorate --graph --all'
+alias gcb='git checkout -b'
+alias gs='git status --short --branch'
+alias ga='git add .'
+alias gc='git commit -m'
+alias gp='git pull && git push'
+alias gco='git checkout'
+alias gd='git diff'
+alias back='git checkout @{-1}'
 
-# Safe aliases to prevent accidental file overwrites or deletions
-
-# Colorize the `ls` output and setup useful aliases
-export LS_OPTIONS='--color=auto'
-alias ls='ls $LS_OPTIONS'
-alias ll='ls -lh $LS_OPTIONS'        # Detailed list view
-alias la='ls -lha $LS_OPTIONS'       # Show hidden files
-alias l='ls -lA $LS_OPTIONS'         # Short list view with hidden files
-alias lt='ls -strhal $LS_OPTIONS'    # Sort by date, most recent last
-
-# Grep aliases and functions
-alias grep='grep -i --color=auto "$@"' # Ignore case and colorize output and pass all arguments to grep in quotes
-alias grepv='grep -vi --color=auto' # Ignore case, invert match, and colorize output
-
-# Find aliases and functions
-alias findf='find . -type f -name' # Find files by name
-alias findd='find . -type d -name' # Find directories by name
-
-# Editor aliases
-alias nanozsh='nano ~/.zshrc'     # Open the zshrc file in nano
-alias reset='reset_file'          # Custom function to erase a file content then open with nano
-
-# Note: All other functions and aliases have been moved to modular files:
-# - Git functions       -> .zsh_git
-# - File utilities      -> .zsh_functions
-# - Network utilities   -> .zsh_network
-# - Docker commands     -> .zsh_docker
-# - Security functions  -> .zsh_security
-# - Transfer functions  -> .zsh_transfer
-# - Application launchers -> .zsh_apps
-# - Miscellaneous utils -> .zsh_utils
+# Docker Aliases
+alias d='docker'
+alias dps='docker ps'
+alias dka='docker attach'
+alias dkl='docker logs'
+alias dkL='docker logs -f'
+alias dcu='docker compose up -d'
+alias dcd='docker compose down'
+alias dke='docker exec'
