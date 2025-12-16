@@ -78,7 +78,7 @@ if [[ -d "/Applications/LibreOffice.app" ]]; then
     LIBREOFFICE_PYTHON_DIR="/Applications/LibreOffice.app/Contents/Resources/Scripts/python"
     if [ -d "$LIBREOFFICE_PYTHON_DIR" ]; then
         echo "Copying python macros..."
-        cp "$SHARED_DIR/libreoffice"/*.py "$LIBREOFFICE_PYTHON_DIR/"
+        cp "$SCRIPT_DIR/../scripts"/*.py "$LIBREOFFICE_PYTHON_DIR/"
         echo "✓ Copied python macros."
     fi
 else

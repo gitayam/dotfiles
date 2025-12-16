@@ -76,7 +76,7 @@ if command -v libreoffice &> /dev/null; then
         mkdir -p "$LIBREOFFICE_PYTHON_DIR"
     fi
     echo "Copying python macros..."
-    cp "$SHARED_DIR/libreoffice"/*.py "$LIBREOFFICE_PYTHON_DIR/"
+    cp "$SCRIPT_DIR/../scripts"/*.py "$LIBREOFFICE_PYTHON_DIR/"
     echo "✓ Copied python macros."
 else
     echo "⚠️ LibreOffice is not installed. Skipping macro installation."
