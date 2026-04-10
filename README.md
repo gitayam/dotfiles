@@ -71,28 +71,42 @@ Before running the Python or JavaScript scripts, you will need to install their 
 
 ## ⚡ AWS Power Functions
 
-A collection of helper functions to make working with the AWS CLI easier and more intuitive.
+A comprehensive collection of AWS CLI helper functions for IAM management, VPC operations, security compliance, and infrastructure management. Functions are available on both macOS (33 functions) and Linux (20 functions).
 
 ### Profile & Region Management
 
-The AWS functions now have a more robust and consistent way of handling profiles and regions.
+*   **Automatic Profile Detection:** Functions use `AWS_PROFILE` or fall back to `default`.
+*   **Per-Command Overrides:** Override profile and region with `--profile` and `--region` flags.
+*   **`aws_use_profile <profile>`:** Switch the active AWS profile for the session.
+*   **`aws_check_profile`**: Verify authentication and IAM permissions.
+*   **`aws_temp_credentials`**: Set temporary credentials interactively (macOS).
 
-*   **Automatic Profile Detection:** The functions will automatically use the profile set in your `AWS_PROFILE` environment variable, or `default` if it's not set.
-*   **Per-Command Overrides:** You can override the profile and region for any command by using the `--profile` and `--region` flags.
-    ```bash
-    aws_ec2_instances --profile my-other-profile --region us-west-2
-    ```
-*   **`aws_use_profile <profile>`:** Easily switch your active AWS profile for the current shell session.
+### IAM User & Group Management
 
-### New & Improved Functions
+*   **`aws_create_user <name> [-g group]`**: Create IAM user with group assignment and auto-generated password.
+*   **`aws_create_group <name> [--type <type>]`**: Create group with predefined permissions (readonly, fullstack, frontend, backend, devops, database, security).
+*   **`aws_reset_password <user>`**: Reset console password with auto-generation.
+*   **`aws_delete_user`**, **`aws_add_user_to_group`**, **`aws_list_users_in_group`**: Full user lifecycle management.
 
-*   **`aws_list_profiles`**: List all your configured AWS profiles.
-*   **`aws_check_profile`**: Check the authentication status of the current or a specified profile.
-*   **`aws_ec2_instances`**: List EC2 instances in a clean, readable table format.
-*   **`aws_ssm_session <instance_id>`**: Start an interactive SSM session with an EC2 instance.
-*   **`aws_s3_ls [s3://path]`**: A more user-friendly `ls`-like interface for S3 buckets and objects.
-*   **`aws_cw_logs <group> [--follow]`**: Fetch and optionally follow logs from a CloudWatch log group.
-*   **`aws_help`**: Displays a help message with a list of all available AWS Power Functions.
+### VPC Management (macOS)
+
+*   **`aws_vpc_list`**, **`aws_vpc_info`**, **`aws_vpc_create`**, **`aws_vpc_delete`**: Full VPC lifecycle.
+*   **`aws_vpc_secure <vpc-id>`**: Interactive security audit — checks IGWs, routes, security groups, NACLs, and public subnets.
+
+### Security & Compliance (macOS)
+
+*   **`aws_enforce_mfa <group>`**: Enforce MFA for all users in an IAM group.
+*   **`aws_list_users_without_mfa`**: Audit MFA coverage across the account.
+*   **`aws_secure_sg <sg-id>`**: Restrict SSH access to your IP only.
+*   **`aws_config_enable`**, **`aws_config_restrict_ssh`**: Set up AWS Config compliance monitoring.
+
+### EC2, S3 & CloudWatch
+
+*   **`aws_ec2_instances`** / **`aws_list_instances`**: List instances with filtering.
+*   **`aws_ssm_session <instance_id>`**: Start an interactive SSM session.
+*   **`aws_s3_ls [s3://path]`**: User-friendly S3 listing.
+*   **`aws_cw_logs <group> [--follow]`**: Tail CloudWatch log groups.
+*   **`aws_help`** / **`awshelp`**: Display full command reference.
 
 ## ☁️ Cloudflare Scripts
 

@@ -226,16 +226,57 @@ None
 ## .zsh_aws
 
 ### Functions:
+
+#### Environment & Profile Management:
 - `load_env()` - Load environment variables from .env
-- `run_aws_cmd()` - Run AWS commands with profile handling
+- `run_aws_cmd()` - Run AWS commands with profile handling and credential fallback
 - `aws_check_profile()` - Check AWS profile and credentials
 - `aws_list_profiles()` - List available AWS profiles
 - `aws_use_profile()` - Set active AWS profile
-- `aws_command_list()` - Display AWS command help
-- `aws_install()` - Install AWS CLI and tools
-- `aws_config()` - Configure AWS profile
-- `aws_create_group()` - Create IAM group with permissions
-- `aws_reset_password()` - Reset IAM user password
+- `aws_command_list()` - Display comprehensive AWS command reference
+- `aws_install()` - Install AWS CLI, aws-vault, and jq via Homebrew
+- `aws_config()` - Configure AWS profile (supports aws-vault)
+- `aws_temp_credentials()` - Set temporary credentials for the session
+- `aws_region()` - Set or change AWS region
+- `aws_check_permissions()` - Test IAM, admin, and identity permissions
+
+#### IAM User Management:
+- `aws_create_user()` - Create IAM user with group assignment and auto-generated password
+- `aws_delete_user()` - Delete IAM user with confirmation
+- `aws_reset_password()` - Reset IAM user console password
+- `aws_add_user_to_group()` - Add user to group (interactive selection)
+- `aws_list_users_in_group()` - List users in a group (interactive)
+- `aws_user_activation()` - User activation placeholder
+
+#### IAM Group Management:
+- `aws_create_group()` - Create IAM group with predefined permission types (readonly, fullstack, frontend, backend, devops, database, security)
+
+#### MFA Security:
+- `aws_enforce_mfa()` - Create and attach MFA enforcement policy to a group
+- `aws_add_mfa()` - Add virtual or hardware MFA device for a user
+- `aws_list_users_without_mfa()` - List all users without MFA configured
+
+#### VPC Management:
+- `aws_vpc_list()` - List all VPCs with details
+- `aws_vpc_info()` - Show detailed VPC information (subnets, routes, SGs, NACLs, endpoints)
+- `aws_vpc_create()` - Create VPC with subnets, DNS, and optional internet gateway
+- `aws_vpc_delete()` - Delete VPC and dependencies (with force option)
+- `aws_vpc_secure()` - Security audit and hardening for a VPC
+
+#### EC2 Instance Management:
+- `aws_list_instances()` - List EC2 instances with optional region and name/ID filter
+- `aws_instance_vpc_info()` - Get full VPC information for an EC2 instance
+- `aws_get_vpc_id()` - Quick VPC ID lookup for an instance
+
+#### Security Group Management:
+- `aws_secure_sg()` - Restrict SSH access to specific IP (auto-detects public IP)
+
+#### AWS Config (Compliance Monitoring):
+- `aws_config_enable()` - Enable AWS Config with S3 delivery and IAM role setup
+- `aws_config_add_rule()` - Add managed Config compliance rule
+- `aws_config_check_rule()` - Check rule compliance status and non-compliant resources
+- `aws_config_list_rules()` - List all Config rules in a region
+- `aws_config_restrict_ssh()` - Quick setup for SSH restriction monitoring
 
 ### Aliases:
 - `awshelp="aws_command_list | less -R"`
