@@ -79,27 +79,40 @@ This document compares bash (Linux) and zsh (macOS) configuration features to id
 46. **docker_volume_inspect()** - Show Docker volume information
 47. **docker_info()** - Show Docker system information
 
-### Missing AWS Functions (Linux has 29, macOS has 12):
-48. **aws_set_profile()** - Set AWS profile for session
-49. **aws_unset_profile()** - Unset AWS profile
-50. **aws_whoami()** - Show current AWS identity
-51. **aws_list_users()** - List all IAM users
-52. **aws_list_groups()** - List all IAM groups
-53. **aws_list_roles()** - List all IAM roles
-54. **aws_list_policies()** - List all IAM policies
-55. **aws_create_user()** - Create new IAM user
-56. **aws_delete_user()** - Delete IAM user with confirmation
-57. **aws_user_info()** - Get detailed user information
-58. **aws_create_access_key()** - Create access key for user
-59. **aws_list_access_keys()** - List access keys for user
-60. **aws_delete_access_key()** - Delete access key with confirmation
-61. **aws_list_buckets()** - List all S3 buckets
-62. **aws_bucket_size()** - Get S3 bucket size
-63. **aws_sync_s3()** - Sync local directory to S3
-64. **aws_list_instances()** - List EC2 instances
-65. **aws_instance_info()** - Get EC2 instance details
-66. **aws_start_instance()** - Start EC2 instance
-67. **aws_stop_instance()** - Stop EC2 instance with confirmation
+### AWS Functions Gap Analysis (macOS has 33, Linux has 20):
+
+macOS has the most comprehensive AWS support with advanced IAM, VPC management, AWS Config compliance, and MFA enforcement. Linux covers core IAM, S3, and EC2 operations.
+
+**Functions unique to macOS (not in Linux):**
+48. **aws_temp_credentials()** - Set temporary session credentials
+49. **aws_region()** - Set or change AWS region interactively
+50. **aws_check_permissions()** - Test IAM permission levels
+51. **aws_add_user_to_group()** - Interactive group assignment
+52. **aws_list_users_in_group()** - List users in a group
+53. **aws_vpc_list()** - List all VPCs
+54. **aws_vpc_info()** - Detailed VPC inspection
+55. **aws_vpc_create()** - Create VPC with subnets and IGW
+56. **aws_vpc_delete()** - Delete VPC and dependencies
+57. **aws_vpc_secure()** - VPC security audit and hardening
+58. **aws_config_enable()** - Enable AWS Config compliance monitoring
+59. **aws_config_add_rule()** - Add managed Config rules
+60. **aws_config_check_rule()** - Check rule compliance
+61. **aws_config_list_rules()** - List Config rules
+62. **aws_config_restrict_ssh()** - Quick SSH restriction setup
+63. **aws_enforce_mfa()** - Enforce MFA for IAM groups
+64. **aws_add_mfa()** - Add MFA device for a user
+65. **aws_list_users_without_mfa()** - Audit MFA coverage
+66. **aws_instance_vpc_info()** - EC2-to-VPC lookup
+67. **aws_get_vpc_id()** - Quick VPC ID for instance
+68. **aws_secure_sg()** - Restrict security group SSH access
+
+**Functions unique to Linux (not in macOS):**
+69. **aws_set_profile()** / **aws_unset_profile()** - Explicit profile set/unset
+70. **aws_whoami()** - Show current AWS identity
+71. **aws_user_info()** - Get detailed user information
+72. **aws_create_access_key()** / **aws_list_access_keys()** / **aws_delete_access_key()** - Access key management
+73. **aws_list_buckets()** / **aws_bucket_size()** / **aws_sync_s3()** - S3 operations
+74. **aws_instance_info()** / **aws_start_instance()** / **aws_stop_instance()** - EC2 lifecycle
 
 ### Missing File Handling Functions:
 68. **safe_rm()** - Safely move file to trash or use rm -i
@@ -302,8 +315,11 @@ This document compares bash (Linux) and zsh (macOS) configuration features to id
 9. **find_large_files()** - Disk management
 10. **psg()** - Process search
 
-### Priority 2 - Port AWS Functions to macOS:
-11. All missing AWS IAM, S3, and EC2 management functions
+### Priority 2 - Port Linux AWS Functions to macOS:
+11. Port S3 operations (aws_list_buckets, aws_bucket_size, aws_sync_s3) - macOS lacks these basics
+12. Port EC2 lifecycle (aws_start_instance, aws_stop_instance) and aws_instance_info
+13. Port access key management functions
+14. Port aws_whoami and aws_user_info for quick lookups
 
 ### Priority 3 - Port Utility Functions:
 12. **sysinfo(), myip(), note(), notes()** - General utilities

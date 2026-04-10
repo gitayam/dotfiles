@@ -8,7 +8,7 @@ ssh_keys:
 log_path: "/var/log/maintenance_log.txt"
 search_path: "/home/"
 exclude_path: "/home/discourse"
-authentik_version: "2025.8.4" # Latest version as of 2025-09-29 - Update periodically from https://docs.goauthentik.io/releases/
+authentik_version: "2025.12.1" # Latest version as of 2025-09-29 - Update periodically from https://docs.goauthentik.io/releases/
 
 # This is the user that will be used to run the maintenance tasks
 user: "{{ inventory_hostname | default('root') }}"

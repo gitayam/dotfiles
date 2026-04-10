@@ -3,6 +3,19 @@ if [[ -n "$ZSH_VERSION" ]]; then # Only set for zsh
   setopt NO_BANG_HIST
 fi
 
+# Dependency checks
+_aws_check_deps() {
+  local missing=()
+  command -v aws &>/dev/null || missing+=(aws)
+  command -v jq &>/dev/null || missing+=(jq)
+  if (( ${#missing[@]} )); then
+    echo "⚠️  AWS functions require: ${missing[*]}"
+    echo "Install with: brew install ${missing[*]}"
+    return 1
+  fi
+  return 0
+}
+
 # AWS Zsh helper functions for IAM management and environment loading
 
 # Load environment variables from .env file
@@ -70,7 +83,7 @@ run_aws_cmd() {
                 if [[ "$create_profile" == "y" ]]; then
                     aws configure --profile "$AWS_PROFILE"
                     # Try again with the newly created profile
-                    aws "$cmd" "$@" --profile "$AWS_PROFILE"
+                    aws --profile "$AWS_PROFILE" "$cmd" "$@"
                     return $?
                 else
                     echo "Operation cancelled. No valid AWS credentials available."
@@ -79,7 +92,7 @@ run_aws_cmd() {
             fi
         else
             # Profile exists, use it
-            aws "$cmd" "$@" --profile "$AWS_PROFILE"
+            aws --profile "$AWS_PROFILE" "$cmd" "$@"
             return $?
         fi
     else
@@ -496,10 +509,15 @@ aws_reset_password() {
       return 1
     fi
     
+    if ! command -v generate_password &>/dev/null && ! declare -f generate_password &>/dev/null; then
+      echo "❌ generate_password function not found. Source .zsh_encryption first."
+      return 1
+    fi
+
     # Generate a compliant password
     local password
     password=$(generate_password -q)
-    
+
     echo "Resetting password for user '$user_name'..."
     if ! run_aws_cmd iam update-login-profile \
       --user-name "$user_name" \
@@ -690,9 +708,14 @@ aws_create_user() {
     
     # Create a login profile with password if requested
     if [[ "$create_password" = true ]]; then
+      if ! command -v generate_password &>/dev/null && ! declare -f generate_password &>/dev/null; then
+        echo "❌ generate_password function not found. Source .zsh_encryption first."
+        return 1
+      fi
+
       local password
       password=$(generate_password -q)
-      
+
       echo "Creating login profile with password..."
       if ! run_aws_cmd iam create-login-profile \
         --user-name "$user_name" \
@@ -2791,15 +2814,17 @@ aws_list_instances() {
     
     echo "Listing EC2 instances..."
     
-    # Check if a filter was provided
-    local filter_args=""
     if [[ -n "$filter" ]]; then
         echo "Filtering by: $filter"
-        filter_args="--filters Name=tag:Name,Values=*${filter}* Name=instance-id,Values=*${filter}*"
+        run_aws_cmd ec2 describe-instances \
+            --filters "Name=tag:Name,Values=*${filter}*" \
+            --query "Reservations[].Instances[].{InstanceId:InstanceId,Name:Tags[?Key=='Name'].Value|[0],Type:InstanceType,State:State.Name,PrivateIP:PrivateIpAddress,PublicIP:PublicIpAddress,VPC:VpcId,AZ:Placement.AvailabilityZone}" \
+            --output table
+    else
+        run_aws_cmd ec2 describe-instances \
+            --query "Reservations[].Instances[].{InstanceId:InstanceId,Name:Tags[?Key=='Name'].Value|[0],Type:InstanceType,State:State.Name,PrivateIP:PrivateIpAddress,PublicIP:PublicIpAddress,VPC:VpcId,AZ:Placement.AvailabilityZone}" \
+            --output table
     fi
-    
-    # Use eval to properly handle the filter arguments
-    eval "aws ec2 describe-instances $filter_args --query \"Reservations[].Instances[].{InstanceId:InstanceId,Name:Tags[?Key=='Name'].Value|[0],Type:InstanceType,State:State.Name,PrivateIP:PrivateIpAddress,PublicIP:PublicIpAddress,VPC:VpcId,AZ:Placement.AvailabilityZone}\" --output text"
     
     # Return to previous region if we changed it
     if [[ -n "$region" ]]; then
