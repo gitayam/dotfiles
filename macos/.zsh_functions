@@ -415,13 +415,13 @@ download_video() {
     echo "  --language, -l LANGUAGE  Language (default: en)"
     echo "  --audio-only, -a         Download audio only"
     echo "  --no-sanitize            Keep original filename (don't remove spaces/special chars)"
-    echo "  --check-format           Check and fix video format after download (for QuickTime compatibility)"
+    echo "  --check-format           Force format check/conversion (automatic for incompatible videos)"
     echo "  --output-dir, -d DIR     Output directory (default: /tmp/, falls back to ./ or ~/)"
     echo "  --help, -h               Show this help message"
     echo ""
-    echo "Note: Filenames are sanitized by default (lowercase, underscores instead of spaces)"
+    echo "Note: Videos are AUTOMATICALLY converted to Signal/iOS/Android compatible format (H.264+AAC+MP4)"
+    echo "      Filenames are sanitized by default (lowercase, underscores instead of spaces)"
     echo "      Downloads save to /tmp/ by default (with fallback to ./ or ~/)"
-    echo "      Use --check-format to ensure QuickTime/macOS compatibility"
     return 0
   fi
 
@@ -651,16 +651,39 @@ download_video() {
       trim_vid "$downloaded_file" --start "$start_time" --end "$end_time"
     fi
 
-    # Check and fix format if requested
-    if [[ "$check_format" == true && "$audio_only" == false ]]; then
-      echo ""
-      echo "🔍 Checking video format compatibility..."
-      check_video_format "$downloaded_file" true
+    # Check and fix format if requested OR if video is not Signal-compatible
+    if [[ "$audio_only" == false ]]; then
+      # Always check format for Signal/iOS/Android compatibility
+      local video_codec=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$downloaded_file" 2>/dev/null)
+      local pix_fmt=$(ffprobe -v error -select_streams v:0 -show_entries stream=pix_fmt -of default=noprint_wrappers=1:nokey=1 "$downloaded_file" 2>/dev/null)
+      local container=$(ffprobe -v error -show_entries format=format_name -of default=noprint_wrappers=1:nokey=1 "$downloaded_file" 2>/dev/null)
 
-      # If a _fixed version was created, update the downloaded_file reference
-      local fixed_file="${downloaded_file%.*}_fixed.mp4"
-      if [[ -f "$fixed_file" ]]; then
-        downloaded_file="$fixed_file"
+      # Check if video needs conversion for Signal compatibility
+      local needs_conversion=false
+      if [[ "$video_codec" != "h264" ]]; then
+        needs_conversion=true
+      elif [[ "$pix_fmt" != "yuv420p" ]]; then
+        needs_conversion=true
+      elif [[ "$container" != *"mp4"* ]]; then
+        needs_conversion=true
+      fi
+
+      # Auto-convert if needed OR if explicitly requested via --check-format
+      if [[ "$needs_conversion" == true || "$check_format" == true ]]; then
+        echo ""
+        echo "🔍 Converting to Signal/iOS/Android-compatible format..."
+        echo "   Current codec: $video_codec (needs H.264)"
+        echo "   Current pixel format: $pix_fmt (needs yuv420p)"
+        check_video_format "$downloaded_file" true "$download_dir"
+
+        # If a _fixed version was created, update the downloaded_file reference
+        local fixed_file="${downloaded_file%.*}_fixed.mp4"
+        if [[ -f "$fixed_file" ]]; then
+          downloaded_file="$fixed_file"
+        fi
+      else
+        echo ""
+        echo "✅ Video format is already Signal/iOS/Android compatible!"
       fi
     fi
 

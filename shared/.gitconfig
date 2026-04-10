@@ -1,0 +1,20 @@
+[gpg]
+	program = /opt/homebrew/bin/gpg
+[user]
+	email = github.ayam@slmail.me
+	name = gitayam
+[safe]
+	directory = /Users/sac/Documents/Git/google_scraper
+	directory = /Users/sac/Documents/Git/alfarenxyz
+	directory = /Users/sac/Git/redOSR
+[credential "https://github.com"]
+	helper =
+	helper = !/opt/homebrew/bin/gh auth git-credential
+[credential "https://gist.github.com"]
+	helper =
+	helper = !/opt/homebrew/bin/gh auth git-credential
+[filter "lfs"]
+	smudge = git-lfs smudge -- %f
+	process = git-lfs filter-process
+	required = true
+	clean = git-lfs clean -- %f
