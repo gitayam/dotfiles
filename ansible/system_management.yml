@@ -743,8 +743,9 @@
               cp docker-compose.yml docker-compose.yml.bak.$(date +%Y%m%d_%H%M%S)
               echo "Backed up existing docker-compose.yml"
             fi
-            # Download the new docker-compose.yml file (URL changed 2025.12+)
-            wget -O docker-compose.yml https://docs.goauthentik.io/docker-compose.yml
+            # Download the new docker-compose.yml file
+            # URL moved 2026.5+: docs.goauthentik.io (404) -> goauthentik.io
+            wget -O docker-compose.yml https://goauthentik.io/docker-compose.yml
             # Verify download
             if [ -f docker-compose.yml ]; then
               echo "✓ docker-compose.yml downloaded"
