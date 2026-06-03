@@ -72,8 +72,9 @@ main() {
     else
         echo "No GUI apps installed because not on Ubuntu or Debian."
     fi
-    echo "Syncing Linux aliases and functions to ~/.bashrc"
-    ./sync_linux_dotfiles.sh
+    echo "Syncing shared zsh configuration files to \$HOME"
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    "$SCRIPT_DIR/install.sh"
     echo "Initial install complete."
 }
 

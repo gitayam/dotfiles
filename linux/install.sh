@@ -2,7 +2,8 @@
 
 # Get the directory where the script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SHARED_DIR="$SCRIPT_DIR/../shared"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+SHARED_DIR="$REPO_DIR/shared"
 SYSTEM_DIR="$HOME"
 
 # Array of all zsh config files to sync from the shared directory
@@ -21,6 +22,7 @@ ZSH_FILES=(
     ".zsh_handle_files"
     ".zsh_aws"
     ".zsh_encryption"
+    ".zsh_linux_compat"
 )
 
 # Function to create a symlink
@@ -65,6 +67,29 @@ done
 # Create symlinks for any Linux-specific files here
 # Example: ln -sf "$SCRIPT_DIR/linux-specific-file" "$SYSTEM_DIR/.linux-specific-file"
 
+# Wire the shared config files into bash (default shell on most Linux hosts).
+# The .zsh_* files are bash-compatible; only zsh reads ~/.zshrc, so bash needs
+# its own loader block in ~/.bashrc.
+echo "----------------------------"
+echo "----Bash Integration--------"
+BASHRC="$SYSTEM_DIR/.bashrc"
+MARKER=">>> dotfiles shared shell config >>>"
+if grep -qF "$MARKER" "$BASHRC" 2>/dev/null; then
+    echo "✓ Bash loader block already present in ~/.bashrc"
+else
+    cat >> "$BASHRC" <<'EOF'
+
+# >>> dotfiles shared shell config >>>
+# Managed by ~/Git/dotfiles/linux/install.sh — shared aliases/functions (also used by zsh)
+for config_file in "$HOME"/.zsh_{aliases,aws,functions,developer,apps,network,transfer,security,utils,docker,handle_files,encryption,git,linux_compat}; do
+  [ -f "$config_file" ] && . "$config_file"
+done
+unset config_file
+# <<< dotfiles shared shell config <<<
+EOF
+    echo "✓ Added shared config loader block to ~/.bashrc"
+fi
+
 # Check for LibreOffice
 echo "----------------------------"
 echo "----LibreOffice Macros------"
@@ -72,16 +97,21 @@ if command -v libreoffice &> /dev/null; then
     echo "✓ LibreOffice is installed"
     # The macro path for Linux can vary, this is a common one
     LIBREOFFICE_PYTHON_DIR="$HOME/.config/libreoffice/4/user/Scripts/python"
-    if [ ! -d "$LIBREOFFICE_PYTHON_DIR" ]; then
+    MACRO_SRC_DIR="$REPO_DIR/libreoffice"
+    if ls "$MACRO_SRC_DIR"/*.py &> /dev/null; then
         mkdir -p "$LIBREOFFICE_PYTHON_DIR"
+        echo "Copying python macros from $MACRO_SRC_DIR..."
+        for macro in "$MACRO_SRC_DIR"/*.py; do
+            cp "$macro" "$LIBREOFFICE_PYTHON_DIR/"
+            echo "✓ Copied $(basename "$macro")"
+        done
+    else
+        echo "⚠️ No macros found in $MACRO_SRC_DIR. Skipping."
     fi
-    echo "Copying python macros..."
-    cp "$SCRIPT_DIR/../scripts"/*.py "$LIBREOFFICE_PYTHON_DIR/"
-    echo "✓ Copied python macros."
 else
     echo "⚠️ LibreOffice is not installed. Skipping macro installation."
 fi
 
 echo "----------------------------"
 echo "Sync process completed."
-echo "To load the updated configuration, run: source ~/.zshrc"
+echo "To load the updated configuration, run: source ~/.bashrc (bash) or source ~/.zshrc (zsh)"
