@@ -1,0 +1,14 @@
+---
+# Temporary inventory for Proxmox upgrade at 100.87.20.88
+all:
+  children:
+    upgrade_targets:
+      hosts:
+        proxmox-main:
+          ansible_host: 100.87.20.88
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/proxmox_ed25519
+          ansible_python_interpreter: /usr/bin/python3
+          # Upgrade-specific variables
+          upgrade_safety: true
+          backup_before_upgrade: true

@@ -82,3 +82,8 @@ sudotouch
 # Add local bin to PATH
 export PATH=$PATH:$HOME/.local/binexport PATH="/opt/homebrew/sbin:$PATH"
 export PATH="/opt/homebrew/bin:$PATH"
+
+# >>> claude-aliases.zsh <<<
+[ -r "$HOME/Git/dotfiles/shared/zsh/claude-aliases.zsh" ] && \
+  source "$HOME/Git/dotfiles/shared/zsh/claude-aliases.zsh"
+# >>> claude-aliases.zsh <<<
