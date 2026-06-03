@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>io.gitsync</string>
+
+  <!-- Mirror of the qube's systemd user unit git-sync.timer:
+       hourly fetch + ff-only pull of every repo under ~/Git.
+       See ~/Git/ai-coding-env/docs/syncthing/GIT-SYNC.md -->
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <!-- bash -lc so PATH picks up ~/.local/bin and ssh-agent / keychain env -->
+    <string>exec "$HOME/.local/bin/git-sync-all"</string>
+  </array>
+
+  <!-- Run once 3 min after load (parity with systemd's OnBootSec=3min) -->
+  <key>RunAtLoad</key>
+  <false/>
+
+  <!-- Hourly cadence (parity with systemd OnUnitActiveSec=1h) -->
+  <key>StartInterval</key>
+  <integer>3600</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/sac/.local/state/git-sync/launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/sac/.local/state/git-sync/launchd.log</string>
+
+  <!-- Be a polite citizen — sync runs at idle priority, niced -->
+  <key>Nice</key>
+  <integer>10</integer>
+  <key>LowPriorityIO</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <!-- Don't restart on success-exit — it's a periodic oneshot, not a daemon -->
+  <key>KeepAlive</key>
+  <false/>
+</dict>
+</plist>
