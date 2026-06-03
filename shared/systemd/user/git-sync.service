@@ -1,0 +1,15 @@
+[Unit]
+Description=Fetch + safe ff-pull all git repos in ~/Git (companion to Syncthing mesh)
+Documentation=file:///home/user/Git/ai-coding-env/docs/syncthing/GIT-SYNC.md
+# Don't fight Syncthing's initial scan or a half-up network right at qube boot;
+# the script itself exits cleanly when offline.
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/git-sync-all
+TimeoutStartSec=30min
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=default.target

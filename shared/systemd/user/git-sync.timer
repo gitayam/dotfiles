@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly git fetch/ff-pull of ~/Git repos
+
+[Timer]
+# First run shortly after the qube's user session starts, then hourly.
+OnStartupSec=3min
+OnUnitActiveSec=1h
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target
