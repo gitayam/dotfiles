@@ -1,0 +1,21 @@
+[Unit]
+Description=LiteLLM proxy for cc-vibe (user-local)
+# Wait for outbound DNS before starting (sys-tailscale on QubesOS, normal network on regular Linux)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Type=exec so systemd considers the unit started as soon as the exec succeeds
+# (run-litellm.sh `exec`s litellm in the foreground; KeepAlive restarts on crash)
+Type=exec
+ExecStart=%h/.vibe/run-litellm.sh
+WorkingDirectory=%h/.vibe
+Restart=on-failure
+RestartSec=10
+# Mirror Mac launchd plist's log destination
+StandardOutput=append:%h/.vibe/logs/litellm.log
+StandardError=append:%h/.vibe/logs/litellm.log
+
+[Install]
+# `default.target` is the user's runlevel — starts on user login
+WantedBy=default.target
