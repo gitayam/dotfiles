@@ -55,3 +55,6 @@ build/
 *.bak
 *.bak_*
 *~
+
+# Real backend secrets — live in ~/.vibe/, not in dotfiles
+claude-backends.env

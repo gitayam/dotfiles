@@ -1,0 +1,235 @@
+#!/usr/bin/env bash
+# claude-switch.sh — Switch Claude Code between Anthropic cloud and self-hosted models
+#
+# Usage:
+#   source claude-switch.sh cloud       # Use Anthropic cloud (default)
+#   source claude-switch.sh local       # Use self-hosted Mistral Medium via LiteLLM
+#   source claude-switch.sh ollama      # Use local Ollama
+#   source claude-switch.sh status      # Show current config
+#   source claude-switch.sh             # Interactive picker
+#
+# IMPORTANT: Must be sourced (not executed) to set env vars in your shell:
+#   source claude-switch.sh local    ✓
+#   ./claude-switch.sh local         ✗ (env vars lost when script exits)
+#
+# Config: Edit ~/.claude-backends.env to set your endpoints and keys.
+
+set -euo pipefail
+
+# ── Config file ──────────────────────────────────────────────────────────────
+CONFIG_FILE="${CLAUDE_BACKENDS_CONFIG:-$HOME/.claude-backends.env}"
+
+# Create default config if it doesn't exist
+if [ ! -f "$CONFIG_FILE" ]; then
+  cat > "$CONFIG_FILE" << 'DEFAULT_CONFIG'
+# Claude Code Backend Configuration
+# Edit this file with your actual endpoints and API keys.
+# This file should NOT be committed to git.
+
+# ── Anthropic Cloud (default) ────────────────────────────────────────────────
+# No config needed — Claude Code uses Anthropic by default when no env vars are set.
+
+# ── Self-Hosted via LiteLLM / Open-WebUI ─────────────────────────────────────
+LOCAL_BASE_URL="https://ai.digitalfacility.io/api"
+LOCAL_AUTH_TOKEN="your-openwebui-api-key"
+LOCAL_MODEL="mistral-medium"
+LOCAL_MODEL_NAME="Mistral Medium 1M (Self-Hosted)"
+
+# ── Ollama (local machine) ───────────────────────────────────────────────────
+OLLAMA_BASE_URL="http://localhost:11434"
+OLLAMA_AUTH_TOKEN="ollama"
+OLLAMA_MODEL="devstral"
+OLLAMA_MODEL_NAME="Devstral (Ollama Local)"
+
+# ── Mistral Vibe (Official API) ──────────────────────────────────────────────
+# Uses official Mistral API — credentials sourced from ~/.vibe/.env (DF_API_KEY)
+# ANTHROPIC_BASE_URL must point to an Anthropic-compatible endpoint.
+# Default: same as LOCAL_BASE_URL (DigitalFacility proxy). Override if needed.
+VIBE_API_AVAILABLE=true
+VIBE_API_KEY_FILE="$HOME/.vibe/.env"
+VIBE_BASE_URL="${LOCAL_BASE_URL}"
+VIBE_MODEL="mistral-small"
+VIBE_MODEL_NAME="Mistral Vibe (Official API)"
+
+# ── Custom / Direct vLLM ─────────────────────────────────────────────────────
+# VLLM_BASE_URL="http://192.168.1.19:8000"
+# VLLM_AUTH_TOKEN="vllm"
+# VLLM_MODEL="devstral"
+# VLLM_MODEL_NAME="Devstral 123B (vLLM Direct)"
+DEFAULT_CONFIG
+  echo "Created default config at: $CONFIG_FILE"
+  echo "Edit it with your actual endpoints and keys."
+  chmod 600 "$CONFIG_FILE"
+fi
+
+# Load config
+source "$CONFIG_FILE"
+
+# ── Functions ────────────────────────────────────────────────────────────────
+
+switch_cloud() {
+  unset ANTHROPIC_BASE_URL
+  unset ANTHROPIC_AUTH_TOKEN
+  unset ANTHROPIC_CUSTOM_MODEL_OPTION
+  unset ANTHROPIC_CUSTOM_MODEL_OPTION_NAME
+  unset ANTHROPIC_MODEL
+  unset CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS
+  echo "Switched to: Anthropic Cloud (default)"
+  echo "  Run: claude"
+}
+
+switch_local() {
+  export ANTHROPIC_BASE_URL="${LOCAL_BASE_URL}"
+  export ANTHROPIC_AUTH_TOKEN="${LOCAL_AUTH_TOKEN}"
+  export ANTHROPIC_CUSTOM_MODEL_OPTION="${LOCAL_MODEL}"
+  export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="${LOCAL_MODEL_NAME}"
+  export ANTHROPIC_MODEL="${LOCAL_MODEL}"
+  export CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1
+  echo "Switched to: Self-Hosted (${LOCAL_MODEL_NAME})"
+  echo "  Endpoint: ${LOCAL_BASE_URL}"
+  echo "  Run: claude --model ${LOCAL_MODEL}"
+  echo "  Or just: claude  (ANTHROPIC_MODEL is set)"
+}
+
+switch_ollama() {
+  export ANTHROPIC_BASE_URL="${OLLAMA_BASE_URL}"
+  export ANTHROPIC_AUTH_TOKEN="${OLLAMA_AUTH_TOKEN}"
+  export ANTHROPIC_CUSTOM_MODEL_OPTION="${OLLAMA_MODEL}"
+  export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="${OLLAMA_MODEL_NAME}"
+  export ANTHROPIC_MODEL="${OLLAMA_MODEL}"
+  export CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1
+  echo "Switched to: Ollama (${OLLAMA_MODEL_NAME})"
+  echo "  Endpoint: ${OLLAMA_BASE_URL}"
+  echo "  Run: claude"
+}
+
+switch_vibe() {
+  if [ ! -f "${VIBE_API_KEY_FILE}" ]; then
+    echo "ERROR: Mistral Vibe API key file not found at ${VIBE_API_KEY_FILE}"
+    echo "Run: source ~/.vibe/.env to configure it."
+    return 1
+  fi
+  source "${VIBE_API_KEY_FILE}"
+  if [ -z "${LITELLM_MASTER_KEY:-}" ]; then
+    echo "ERROR: LITELLM_MASTER_KEY not set in ${VIBE_API_KEY_FILE}"
+    echo "       cc-vibe routes Claude Code through the local LiteLLM proxy"
+    echo "       (Anthropic Messages -> Mistral). DF_API_KEY is the upstream"
+    echo "       Mistral key and is NOT accepted by the LiteLLM proxy itself."
+    return 1
+  fi
+  # Pre-flight: probe the proxy via a real /v1/messages call. We don't use
+  # /v1/models because LiteLLM 400s that endpoint without a tracking DB even
+  # when the proxy itself is healthy. A tiny messages call costs ~1 token and
+  # confirms both TCP reachability AND upstream Mistral credentials.
+  if ! curl -fsS -o /dev/null -m 5 "${VIBE_BASE_URL}/v1/messages" \
+       -H "x-api-key: ${LITELLM_MASTER_KEY}" \
+       -H "anthropic-version: 2023-06-01" \
+       -H "Content-Type: application/json" \
+       -d '{"model":"'"${VIBE_MODEL}"'","max_tokens":1,"messages":[{"role":"user","content":"x"}]}' 2>/dev/null; then
+    echo "ERROR: LiteLLM proxy at ${VIBE_BASE_URL} is not responding to /v1/messages."
+    echo "       Check:  launchctl list | grep io.vibe.litellm"
+    echo "       Logs:   tail -50 ~/.vibe/logs/litellm.log"
+    echo "       Manual: litellm --config ~/.vibe/litellm-config.yaml --port 4000 --host 127.0.0.1"
+    echo "       Refusing to launch cc-vibe against a dead backend."
+    return 1
+  fi
+  export ANTHROPIC_BASE_URL="${VIBE_BASE_URL}"
+  export ANTHROPIC_AUTH_TOKEN="${LITELLM_MASTER_KEY}"
+  export ANTHROPIC_CUSTOM_MODEL_OPTION="${VIBE_MODEL}"
+  export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="${VIBE_MODEL_NAME}"
+  export ANTHROPIC_MODEL="${VIBE_MODEL}"
+  unset CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS  # Allow experimental features
+  echo "Switched to: Mistral Vibe (${VIBE_MODEL_NAME})"
+  echo "  Endpoint: ${VIBE_BASE_URL}"
+  echo "  API Key: from ${VIBE_API_KEY_FILE}"
+  echo "  Model: ${VIBE_MODEL}"
+  echo "  Run: claude"
+}
+
+switch_vllm() {
+  if [ -z "${VLLM_BASE_URL:-}" ]; then
+    echo "ERROR: VLLM_BASE_URL not set in $CONFIG_FILE"
+    echo "Uncomment the vLLM section and set your endpoint."
+    return 1
+  fi
+  export ANTHROPIC_BASE_URL="${VLLM_BASE_URL}"
+  export ANTHROPIC_AUTH_TOKEN="${VLLM_AUTH_TOKEN}"
+  export ANTHROPIC_CUSTOM_MODEL_OPTION="${VLLM_MODEL}"
+  export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="${VLLM_MODEL_NAME}"
+  export ANTHROPIC_MODEL="${VLLM_MODEL}"
+  export CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1
+  echo "Switched to: vLLM Direct (${VLLM_MODEL_NAME})"
+  echo "  Endpoint: ${VLLM_BASE_URL}"
+  echo "  Run: claude"
+}
+
+show_status() {
+  echo "=== Claude Code Backend Status ==="
+  if [ -z "${ANTHROPIC_BASE_URL:-}" ]; then
+    echo "  Mode:     Anthropic Cloud (default)"
+    echo "  Model:    Claude Opus/Sonnet (subscription)"
+  else
+    echo "  Mode:     Self-Hosted"
+    echo "  Endpoint: ${ANTHROPIC_BASE_URL}"
+    echo "  Model:    ${ANTHROPIC_CUSTOM_MODEL_OPTION:-not set}"
+    echo "  Name:     ${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME:-not set}"
+  fi
+  echo ""
+  echo "  Config:   $CONFIG_FILE"
+}
+
+show_help() {
+  echo "Usage: source claude-switch.sh <backend>"
+  echo ""
+  echo "Backends:"
+  echo "  cloud    Anthropic Cloud (default, requires subscription)"
+  echo "  local    Self-hosted via LiteLLM/Open-WebUI"
+  echo "  ollama   Local Ollama instance"
+  echo "  vibe     Mistral Vibe (Official API)"
+  echo "  vllm     Direct vLLM endpoint"
+  echo "  status   Show current backend configuration"
+  echo ""
+  echo "Config: $CONFIG_FILE"
+  echo ""
+  echo "Examples:"
+  echo "  source claude-switch.sh vibe      # Switch to Mistral Vibe"
+  echo "  claude                            # Use it"
+  echo "  source claude-switch.sh local     # Switch to self-hosted"
+  echo "  claude --model mistral-medium     # Use it"
+  echo "  source claude-switch.sh cloud     # Switch back to Anthropic"
+  echo "  claude                            # Back to normal"
+}
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+case "${1:-}" in
+  cloud)    switch_cloud ;;
+  local)    switch_local ;;
+  ollama)   switch_ollama ;;
+  vibe)     switch_vibe ;;
+  vllm)     switch_vllm ;;
+  status)   show_status ;;
+  -h|--help|help) show_help ;;
+  "")
+    echo "Select Claude Code backend:"
+    echo "  1) Anthropic Cloud (default)"
+    echo "  2) Self-Hosted (LiteLLM/Open-WebUI)"
+    echo "  3) Ollama (local)"
+    echo "  4) Mistral Vibe (Official API)"
+    echo "  5) vLLM (direct)"
+    echo ""
+    read -p "Choice [1-5]: " choice
+    case "$choice" in
+      1) switch_cloud ;;
+      2) switch_local ;;
+      3) switch_ollama ;;
+      4) switch_vibe ;;
+      5) switch_vllm ;;
+      *) echo "Invalid choice" ;;
+    esac
+    ;;
+  *)
+    echo "Unknown backend: $1"
+    show_help
+    ;;
+esac
