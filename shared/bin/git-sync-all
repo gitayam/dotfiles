@@ -1,0 +1,259 @@
+#!/usr/bin/env bash
+# git-sync-all — fetch (+ safe ff-pull) every git repo under ~/Git.
+#
+# Companion to the Syncthing mesh (ai-coding-env/docs/syncthing/): Syncthing
+# moves WORKING FILES between devices and excludes .git everywhere; this tool
+# moves GIT HISTORY through the forges (GitHub + git.irregularchat.com).
+#
+# Safety model:
+#   - fetch --all --prune        always (only touches .git, always safe)
+#   - merge --ff-only @{u}       only when the working tree is CLEAN.
+#     A dirty tree often means uncommitted edits synced in from another
+#     device via Syncthing — never auto-merge on top of those.
+#   - push                       NEVER automatic. `--push` pushes branches
+#     that are strictly ahead; normal pushes stay deliberate (`git wip`).
+#   - skips repos mid-merge/rebase, detached HEADs, and anything listed in
+#     ~/Git/.git-sync-ignore (one directory name per line, # comments ok).
+#
+# Usage:
+#   git-sync-all              fetch + ff-pull clean repos
+#   git-sync-all --push       additionally push branches that are ahead
+#   git-sync-all --status     offline report (no network calls)
+#   git-sync-all --fetch-only never ff-pull, just fetch
+#
+# Env: GIT_SYNC_ROOT (default ~/Git), GIT_SYNC_JOBS (4), GIT_SYNC_TIMEOUT (120s)
+
+set -u
+
+GIT_ROOT="${GIT_SYNC_ROOT:-$HOME/Git}"
+STATE_DIR="$HOME/.local/state/git-sync"
+IGNORE_FILE="$GIT_ROOT/.git-sync-ignore"
+JOBS="${GIT_SYNC_JOBS:-4}"
+FETCH_TIMEOUT="${GIT_SYNC_TIMEOUT:-120}"
+
+DO_PUSH=0; STATUS_ONLY=0; FETCH_ONLY=0
+for arg in "$@"; do
+  case "$arg" in
+    --push) DO_PUSH=1 ;;
+    --status) STATUS_ONLY=1 ;;
+    --fetch-only) FETCH_ONLY=1 ;;
+    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+    *) echo "unknown arg: $arg (try --help)" >&2; exit 2 ;;
+  esac
+done
+
+mkdir -p "$STATE_DIR"
+
+# ── shared cleanup (single EXIT trap — both lock and tmpdir) ────────────────
+TMP=""; LOCKDIR=""
+cleanup() {
+  [ -n "$TMP" ] && rm -rf "$TMP"
+  [ -n "$LOCKDIR" ] && rm -rf "$LOCKDIR"
+}
+trap cleanup EXIT
+
+# ── single-instance lock (flock on Linux; mkdir+pid fallback on macOS) ──────
+if command -v flock >/dev/null 2>&1; then
+  exec 9>"$STATE_DIR/lock"
+  if ! flock -n 9; then
+    echo "git-sync-all: another run is in progress, exiting." >&2
+    exit 0
+  fi
+else
+  LOCKDIR_PATH="$STATE_DIR/lock.d"
+  take_lock() { mkdir "$LOCKDIR_PATH" 2>/dev/null && echo $$ >"$LOCKDIR_PATH/pid"; }
+  if take_lock; then
+    LOCKDIR="$LOCKDIR_PATH"
+  else
+    oldpid="$(cat "$LOCKDIR_PATH/pid" 2>/dev/null || true)"
+    if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null; then
+      echo "git-sync-all: another run is in progress (pid $oldpid), exiting." >&2
+      exit 0
+    fi
+    rm -rf "$LOCKDIR_PATH"          # stale lock from a killed run
+    take_lock && LOCKDIR="$LOCKDIR_PATH" || { echo "cannot take lock" >&2; exit 1; }
+  fi
+fi
+
+# ── portability shims (macOS: no timeout/getent, bash 3.2) ──────────────────
+if command -v timeout >/dev/null 2>&1; then TIMEOUT_BIN="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then TIMEOUT_BIN="gtimeout"
+else TIMEOUT_BIN=""; fi
+run_to() {  # run_to <seconds> <cmd...> — best-effort timeout
+  local t="$1"; shift
+  if [ -n "$TIMEOUT_BIN" ]; then "$TIMEOUT_BIN" "$t" "$@"; else "$@"; fi
+}
+net_ok() {
+  if command -v getent >/dev/null 2>&1; then getent hosts github.com >/dev/null 2>&1
+  else nslookup github.com >/dev/null 2>&1; fi
+}
+
+# ── split-ssh: make sure the vault agent socket listener exists ─────────────
+# (mirrors ~/.config/shell/common.sh — needed when run from systemd, where no
+# interactive shell has set this up)
+SSH_VAULT_VM="vault"
+if command -v socat >/dev/null 2>&1 && command -v qrexec-client-vm >/dev/null 2>&1; then
+  mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
+  export SSH_AUTH_SOCK="$HOME/.ssh/agent.$SSH_VAULT_VM.sock"
+  if ! pgrep -f "UNIX-LISTEN:$SSH_AUTH_SOCK" >/dev/null 2>&1; then
+    rm -f "$SSH_AUTH_SOCK"
+    ( setsid socat "UNIX-LISTEN:$SSH_AUTH_SOCK,fork,mode=600" \
+        "EXEC:qrexec-client-vm $SSH_VAULT_VM qubes.SshAgent" >/dev/null 2>&1 & )
+    sleep 0.5
+  fi
+fi
+
+# Never let git prompt for credentials from a daemon context.
+export GIT_TERMINAL_PROMPT=0
+export GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=15"
+
+# ── network check (skip quietly when offline; timer fires regardless) ───────
+if [ "$STATUS_ONLY" -eq 0 ] && ! net_ok; then
+  echo "git-sync-all: no network (github.com unresolvable), skipping run."
+  exit 0
+fi
+
+# ── per-repo worker ─────────────────────────────────────────────────────────
+# Emits one tab-separated line: STATUS <repo> <detail>
+sync_one() {
+  local dir="$1" name; name="$(basename "$1")"
+  cd "$dir" || { printf 'ERROR\t%s\tcannot cd\n' "$name"; return; }
+
+  local g=".git"
+  if [ -f "$g/MERGE_HEAD" ] || [ -d "$g/rebase-merge" ] || [ -d "$g/rebase-apply" ]; then
+    printf 'SKIP\t%s\tmerge/rebase in progress\n' "$name"; return
+  fi
+
+  local remotes; remotes="$(git remote 2>/dev/null)"
+  if [ -z "$remotes" ]; then
+    printf 'LOCAL\t%s\tno remotes configured\n' "$name"; return
+  fi
+
+  # dirty = tracked changes, staged changes, or untracked files
+  local dirty=0
+  [ -n "$(git status --porcelain 2>/dev/null)" ] && dirty=1
+
+  local branch; branch="$(git symbolic-ref --short -q HEAD || true)"
+
+  if [ "$STATUS_ONLY" -eq 1 ]; then
+    local d="clean"; [ "$dirty" -eq 1 ] && d="DIRTY"
+    local ab=""
+    if git rev-parse -q --verify '@{u}' >/dev/null 2>&1; then
+      ab="$(git rev-list --left-right --count '@{u}...HEAD' 2>/dev/null | awk '{printf "behind %s, ahead %s", $1, $2}')"
+    else
+      ab="no upstream"
+    fi
+    printf 'STATUS\t%s\t%s | %s | %s\n' "$name" "${branch:-detached}" "$d" "$ab"
+    return
+  fi
+
+  # fetch all remotes (the only step that talks to the network)
+  local ferr
+  if ! ferr="$(run_to "$FETCH_TIMEOUT" git fetch --all --prune --quiet 2>&1)"; then
+    printf 'ERROR\t%s\tfetch failed: %s\n' "$name" "$(echo "$ferr" | head -1)"
+    return
+  fi
+
+  if [ -z "$branch" ]; then
+    printf 'FETCHED\t%s\tdetached HEAD, fetch only\n' "$name"; return
+  fi
+  if ! git rev-parse -q --verify '@{u}' >/dev/null 2>&1; then
+    printf 'FETCHED\t%s\t%s has no upstream, fetch only\n' "$name" "$branch"; return
+  fi
+
+  local behind ahead
+  read -r behind ahead <<<"$(git rev-list --left-right --count '@{u}...HEAD' 2>/dev/null)"
+  behind="${behind:-0}"; ahead="${ahead:-0}"
+
+  if [ "$behind" -gt 0 ]; then
+    if [ "$dirty" -eq 1 ]; then
+      printf 'DIRTY\t%s\t%s behind %s, tree dirty — fetch only (commit or stash, then rerun)\n' \
+        "$name" "$branch" "$behind"
+    elif [ "$ahead" -gt 0 ]; then
+      printf 'DIVERGED\t%s\t%s ahead %s / behind %s — resolve manually\n' \
+        "$name" "$branch" "$ahead" "$behind"
+    elif [ "$FETCH_ONLY" -eq 1 ]; then
+      printf 'FETCHED\t%s\t%s behind %s (--fetch-only)\n' "$name" "$branch" "$behind"
+    else
+      if git merge --ff-only '@{u}' --quiet >/dev/null 2>&1; then
+        printf 'PULLED\t%s\t%s fast-forwarded %s commit(s)\n' "$name" "$branch" "$behind"
+      else
+        printf 'ERROR\t%s\tff merge failed unexpectedly\n' "$name"
+      fi
+      return
+    fi
+  fi
+
+  if [ "$ahead" -gt 0 ] && [ "$behind" -eq 0 ]; then
+    if [ "$DO_PUSH" -eq 1 ]; then
+      local perr
+      if perr="$(run_to "$FETCH_TIMEOUT" git push --quiet 2>&1)"; then
+        printf 'PUSHED\t%s\t%s pushed %s commit(s)\n' "$name" "$branch" "$ahead"
+      else
+        printf 'ERROR\t%s\tpush failed: %s\n' "$name" "$(echo "$perr" | head -1)"
+      fi
+      return
+    fi
+    printf 'AHEAD\t%s\t%s ahead %s commit(s) — push with git-sync-all --push or git wip\n' \
+      "$name" "$branch" "$ahead"
+    return
+  fi
+
+  [ "$behind" -eq 0 ] && printf 'OK\t%s\tup to date (%s)\n' "$name" "$branch"
+}
+
+# ── collect repos ───────────────────────────────────────────────────────────
+declare -a REPOS=()
+for d in "$GIT_ROOT"/*/; do
+  [ -d "$d/.git" ] || continue
+  name="$(basename "$d")"
+  if [ -f "$IGNORE_FILE" ] && grep -qxF "$name" <(grep -v '^\s*#' "$IGNORE_FILE" 2>/dev/null); then
+    continue
+  fi
+  REPOS+=("$d")
+done
+
+if [ "${#REPOS[@]}" -eq 0 ]; then
+  echo "git-sync-all: no git repos found under $GIT_ROOT"
+  exit 0
+fi
+
+# ── run with bounded parallelism ────────────────────────────────────────────
+# (poll instead of `wait -n` — macOS ships bash 3.2; cleanup trap set earlier)
+TMP="$(mktemp -d)"
+
+i=0
+for d in "${REPOS[@]}"; do
+  while [ "$(jobs -rp | wc -l)" -ge "$JOBS" ]; do sleep 0.2; done
+  sync_one "$d" >"$TMP/$(printf '%03d' "$i").out" 2>&1 &
+  i=$((i+1))
+done
+wait
+
+# ── report ──────────────────────────────────────────────────────────────────
+RUN_LOG="$STATE_DIR/last-run.log"
+{
+  echo "git-sync-all  $(date '+%Y-%m-%d %H:%M:%S %Z')  root=$GIT_ROOT repos=${#REPOS[@]}$([ "$DO_PUSH" -eq 1 ] && echo ' (push enabled)')"
+  echo "──────────────────────────────────────────────────────────────"
+  cat "$TMP"/*.out | sort -t$'\t' -k1,1 -k2,2 | column -t -s$'\t'
+  echo "──────────────────────────────────────────────────────────────"
+  cat "$TMP"/*.out | cut -f1 | sort | uniq -c | sort -rn | awk '{printf "%s %s  ", $1, $2}'
+  echo
+} | { [ "$STATUS_ONLY" -eq 1 ] && cat || tee "$RUN_LOG"; }
+
+# one summary line per real run into the rolling history (--status leaves no trace)
+if [ "$STATUS_ONLY" -eq 0 ]; then
+  {
+    printf '%s ' "$(date '+%Y-%m-%dT%H:%M:%S')"
+    cat "$TMP"/*.out | cut -f1 | sort | uniq -c | sort -rn | awk '{printf "%s=%s ", $2, $1}'
+    echo
+  } >> "$STATE_DIR/history.log"
+  tail -n 500 "$STATE_DIR/history.log" > "$STATE_DIR/history.log.tmp" \
+    && mv "$STATE_DIR/history.log.tmp" "$STATE_DIR/history.log"
+fi
+
+# nonzero exit if anything needs attention (visible in systemctl status)
+if cat "$TMP"/*.out | cut -f1 | grep -qE '^(ERROR|DIVERGED)$'; then
+  exit 1
+fi
+exit 0
