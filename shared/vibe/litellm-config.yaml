@@ -1,0 +1,120 @@
+# LiteLLM proxy config — Mistral → Anthropic-compatible translator
+# Exposes Mistral models on http://localhost:4000/v1/messages (Anthropic format)
+# so Claude Code can use them.
+#
+# Reload after edits: launchctl kickstart -k gui/$UID/io.vibe.litellm
+#
+# Pricing (June 2026, $/M tokens in/out):
+#   devstral-small-latest   $0.10 / $0.30   agentic coding, cheap fanout
+#   codestral-latest        $0.30 / $0.90   FIM / inline completion (not agent loop)
+#   devstral-medium-latest  $0.40 / $2.00   FRONTIER agentic coding (SWE-bench 72.2%)
+#   mistral-large-latest    $0.50 / $1.50   frontier generalist, hard reasoning
+#   mistral-medium-latest   $1.50 / $7.50   multimodal frontier (only when you need images)
+#   magistral-medium-latest $2.00 / $5.00   reasoning-tuned (architecture, planning)
+
+model_list:
+  # ── Coding-specialized (default for cc-vibe) ────────────────────────────────
+  - model_name: devstral-medium
+    litellm_params:
+      model: mistral/devstral-medium-latest
+      api_key: os.environ/MISTRAL_API_KEY
+  - model_name: devstral-small
+    litellm_params:
+      model: mistral/devstral-small-latest
+      api_key: os.environ/MISTRAL_API_KEY
+  - model_name: codestral
+    litellm_params:
+      model: mistral/codestral-latest
+      api_key: os.environ/MISTRAL_API_KEY
+
+  # ── Reasoning / generalist tiers ────────────────────────────────────────────
+  - model_name: mistral-large
+    litellm_params:
+      model: mistral/mistral-large-latest
+      api_key: os.environ/MISTRAL_API_KEY
+  - model_name: mistral-medium
+    litellm_params:
+      model: mistral/mistral-medium-latest
+      api_key: os.environ/MISTRAL_API_KEY
+  - model_name: mistral-small
+    litellm_params:
+      model: mistral/mistral-small-latest
+      api_key: os.environ/MISTRAL_API_KEY
+  - model_name: magistral-medium
+    litellm_params:
+      model: mistral/magistral-medium-latest
+      api_key: os.environ/MISTRAL_API_KEY
+
+  # ── Claude tier aliases ─────────────────────────────────────────────────────
+  # Claude Code internally dispatches subagents under specific claude-* model
+  # IDs. Map each Anthropic tier to the Mistral model that matches its *role*:
+  #   haiku  → cheap fast fanout       → devstral-small  ($0.10/$0.30)
+  #   sonnet → default agent worker    → devstral-medium ($0.40/$2.00)
+  #   opus   → planner / architect     → mistral-large   ($0.50/$1.50)
+  # Previously these all mapped to mistral-{small,medium,large} generalists,
+  # leaving Devstral's coding-agent specialization unused.
+  #
+  # Bare tier names (haiku/sonnet/opus) are also accepted as defense-in-depth
+  # in case Claude Code (or any other caller) skips fully-qualified expansion.
+  - model_name: haiku
+    litellm_params:
+      model: mistral/devstral-small-latest
+      api_key: os.environ/MISTRAL_API_KEY
+  - model_name: sonnet
+    litellm_params:
+      model: mistral/devstral-medium-latest
+      api_key: os.environ/MISTRAL_API_KEY
+  - model_name: opus
+    litellm_params:
+      model: mistral/mistral-large-latest
+      api_key: os.environ/MISTRAL_API_KEY
+  - model_name: claude-haiku-4-5-20251001
+    litellm_params:
+      model: mistral/devstral-small-latest
+      api_key: os.environ/MISTRAL_API_KEY
+  - model_name: claude-haiku-4-5
+    litellm_params:
+      model: mistral/devstral-small-latest
+      api_key: os.environ/MISTRAL_API_KEY
+  - model_name: claude-sonnet-4-6
+    litellm_params:
+      model: mistral/devstral-medium-latest
+      api_key: os.environ/MISTRAL_API_KEY
+  - model_name: claude-sonnet-4-6-20250514
+    litellm_params:
+      model: mistral/devstral-medium-latest
+      api_key: os.environ/MISTRAL_API_KEY
+  - model_name: claude-opus-4-7
+    litellm_params:
+      model: mistral/mistral-large-latest
+      api_key: os.environ/MISTRAL_API_KEY
+  - model_name: claude-opus-4-7[1m]
+    litellm_params:
+      model: mistral/mistral-large-latest
+      api_key: os.environ/MISTRAL_API_KEY
+
+litellm_settings:
+  drop_params: true            # silently drop unsupported params (e.g. temperature when Mistral rejects)
+  set_verbose: false
+
+  # Pre-call hook that trims oversize prompts to fit Mistral's 131072 cap.
+  # Source: ~/.vibe/litellm_trim.py (loaded because the proxy's cwd is ~/.vibe).
+  # Tunables: LITELLM_TRIM_TARGET_TOKENS (default 120000),
+  #           LITELLM_TRIM_KEEP_TAIL (default 6),
+  #           LITELLM_TRIM_DISABLE=1 to bypass.
+  # Audit log: ~/.vibe/logs/trim.log (one JSON object per trimmed request).
+  callbacks: litellm_trim.proxy_handler_instance
+
+  # Belt-and-suspenders: if the trimmed request STILL overflows (e.g. a single
+  # tool result is itself >120K), retry the call against a non-Mistral model
+  # with a larger context window. Disabled by default — uncomment one of the
+  # blocks below and add the matching model_list entry above.
+  #
+  # context_window_fallbacks:
+  #   - mistral-medium: ["openai-gpt-5-4-mini"]
+  #   - mistral-large: ["openai-gpt-5-4-mini"]
+  #   - devstral-medium: ["openai-gpt-5-4-mini"]
+  #   - devstral-small: ["openai-gpt-5-4-mini"]
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
