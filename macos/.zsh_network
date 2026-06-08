@@ -975,3 +975,342 @@ restore_original_mac() {
         return 1
     fi
 }
+# ───────────────────────────────────────────────────────────────────────────
+
+# ───────────────────────────────────────────────────────────────────────────
+# Tor + Xray (anti-censorship proxy chain)
+# Added 2026-06-08 — canonical: ~/Git/dotfiles/macos/.zsh_network
+# ───────────────────────────────────────────────────────────────────────────
+# Apps point at Xray (127.0.0.1:10808 SOCKS, :10809 HTTP) → Xray forwards
+# to Tor (127.0.0.1:9050) → Tor reaches the network via obfs4 bridges that
+# look like random noise to a passive observer.
+#
+# Configs (edit these to change bridges or ports):
+#   $(brew --prefix)/etc/tor/torrc
+#   $(brew --prefix)/etc/xray/config.json
+#
+# Quick reference:
+#   tx              start tor + xray, show status
+#   txd             stop both, clear shell proxy env vars
+#   txr             restart both
+#   txs             status (with ✓/✗/⋯ indicators + how-to-stop footer)
+#   txw             tail tor log live (Ctrl-C to exit)
+#   txb [secs]      block until bootstrap hits 100% (default 120s timeout)
+#   tx-bridges      open bridges.torproject.org to refresh stale bridges
+#   pon / poff      toggle THIS shell's HTTP/SOCKS env vars
+#   proxy-ip        side-by-side: direct IP vs Tor exit IP
+#   proxy-test      full check: Tor exit + geo + DNS leak
+#   sys-socks-on    enable macOS system-wide SOCKS proxy (needs sudo)
+#   sys-socks-off   disable macOS system-wide SOCKS proxy (needs sudo)
+#   sys-socks-status  show macOS system proxy state
+# ───────────────────────────────────────────────────────────────────────────
+
+# Endpoints — override in ~/.zshrc before sourcing if you want different ones
+: ${TORXRAY_TOR_SOCKS:=127.0.0.1:9050}
+: ${TORXRAY_XRAY_SOCKS:=127.0.0.1:10808}
+: ${TORXRAY_XRAY_HTTP:=127.0.0.1:10809}
+: ${TORXRAY_NETWORK_SERVICE:=Wi-Fi}
+
+# Internal helpers
+_torxray_prefix() { brew --prefix 2>/dev/null; }
+_torxray_have()   { command -v "$1" >/dev/null 2>&1; }
+
+# ANSI colors (graceful on no-tty: colors render as empty)
+_torxray_colors() {
+  if [[ -t 1 ]]; then
+    _TX_G=$'\033[32m'; _TX_Y=$'\033[33m'; _TX_R=$'\033[31m'
+    _TX_B=$'\033[1m'; _TX_D=$'\033[2m';   _TX_N=$'\033[0m'
+  else
+    _TX_G=; _TX_Y=; _TX_R=; _TX_B=; _TX_D=; _TX_N=
+  fi
+}
+
+# One-line "what to do next" footer — shown after every up/status/down
+_torxray_footer() {
+  _torxray_colors
+  echo "${_TX_D}──────────────────────────────────────────────────────${_TX_N}"
+  echo "  ${_TX_B}Stop everything:${_TX_N}  txd"
+  echo "  ${_TX_B}Wait until ready:${_TX_N} txb        ${_TX_D}# blocks until bootstrap=100%${_TX_N}"
+  echo "  ${_TX_B}Live tor log:${_TX_N}     txw        ${_TX_D}# Ctrl-C to exit${_TX_N}"
+  echo "  ${_TX_B}Fresh bridges:${_TX_N}    tx-bridges ${_TX_D}# if bootstrap stalls${_TX_N}"
+  echo "  ${_TX_B}This shell:${_TX_N}       pon / poff ${_TX_D}# toggle proxy env vars${_TX_N}"
+}
+
+torxray-up() {
+  _torxray_have brew || { echo "torxray: brew not installed" >&2; return 1; }
+  _torxray_have tor  || { echo "torxray: 'brew install tor' first" >&2; return 1; }
+  _torxray_have xray || { echo "torxray: 'brew install xray' first" >&2; return 1; }
+  brew services start tor  2>&1 | grep -viE 'already started|use .brew' || true
+  brew services start xray 2>&1 | grep -viE 'already started|use .brew' || true
+  echo
+  torxray-status
+}
+
+torxray-down() {
+  _torxray_colors
+  brew services stop xray >/dev/null 2>&1
+  brew services stop tor  >/dev/null 2>&1
+  unset ALL_PROXY HTTP_PROXY HTTPS_PROXY NO_PROXY
+  unset all_proxy http_proxy https_proxy no_proxy
+  echo "${_TX_G}✓${_TX_N} torxray: ${_TX_B}stopped${_TX_N} (services + this shell's proxy env cleared)"
+  if scutil --proxy 2>/dev/null | grep -q 'SOCKSEnable : 1'; then
+    echo "${_TX_Y}⚠${_TX_N}  macOS ${_TX_B}system-wide SOCKS is still ON${_TX_N} — run '${_TX_B}sys-socks-off${_TX_N}' to fully unproxy"
+  fi
+  echo "${_TX_D}Restart with: tx${_TX_N}"
+}
+
+torxray-restart() {
+  brew services restart tor  >/dev/null
+  brew services restart xray >/dev/null
+  echo
+  torxray-status
+}
+
+torxray-status() {
+  _torxray_colors
+  local prefix="$(_torxray_prefix)"
+  local log="$prefix/var/log/tor/notices.log"
+  local tor_state xray_state tor_listening xray_listening pct resp tor_check exit_ip
+
+  tor_state=$(brew services list 2>/dev/null  | awk '$1=="tor"  {print $2}')
+  xray_state=$(brew services list 2>/dev/null | awk '$1=="xray" {print $2}')
+  lsof -nP -iTCP:"${TORXRAY_TOR_SOCKS##*:}"  -sTCP:LISTEN >/dev/null 2>&1 && tor_listening=yes
+  lsof -nP -iTCP:"${TORXRAY_XRAY_SOCKS##*:}" -sTCP:LISTEN >/dev/null 2>&1 && xray_listening=yes
+  pct=$(grep -oE 'Bootstrapped [0-9]+%' "$log" 2>/dev/null | tail -1 | grep -oE '[0-9]+')
+  pct=${pct:-0}
+
+  if [[ "$xray_listening" == "yes" ]]; then
+    resp=$(curl -s --max-time 8 --socks5-hostname "$TORXRAY_XRAY_SOCKS" https://check.torproject.org/api/ip 2>/dev/null)
+    if [[ "$resp" == *'"IsTor":true'* ]]; then
+      tor_check=yes
+      exit_ip=$(echo "$resp" | grep -oE '"IP":"[^"]+"' | cut -d'"' -f4)
+    fi
+  fi
+
+  echo "${_TX_B}torxray status${_TX_N}"
+  echo "${_TX_D}──────────────${_TX_N}"
+
+  if [[ "$tor_state" == "started" && "$tor_listening" == "yes" ]]; then
+    echo "  ${_TX_G}✓${_TX_N} tor service     ${_TX_B}listening${_TX_N} on $TORXRAY_TOR_SOCKS"
+  elif [[ "$tor_state" == "started" ]]; then
+    echo "  ${_TX_Y}⋯${_TX_N} tor service     started but ${_TX_Y}not listening yet${_TX_N} (wait a few sec)"
+  else
+    echo "  ${_TX_R}✗${_TX_N} tor service     ${_TX_R}not running${_TX_N} (run '${_TX_B}tx${_TX_N}' to start)"
+  fi
+
+  if [[ "$xray_state" == "started" && "$xray_listening" == "yes" ]]; then
+    echo "  ${_TX_G}✓${_TX_N} xray service    ${_TX_B}listening${_TX_N} on $TORXRAY_XRAY_SOCKS (SOCKS) + $TORXRAY_XRAY_HTTP (HTTP)"
+  elif [[ "$xray_state" == "started" ]]; then
+    echo "  ${_TX_Y}⋯${_TX_N} xray service    started but ${_TX_Y}not listening${_TX_N} — check $prefix/etc/xray/config.json"
+  else
+    echo "  ${_TX_R}✗${_TX_N} xray service    ${_TX_R}not running${_TX_N}"
+  fi
+
+  if [[ "$tor_listening" != "yes" ]]; then
+    echo "  ${_TX_D}— tor bootstrap   n/a (tor is stopped)${_TX_N}"
+  elif (( pct == 100 )); then
+    echo "  ${_TX_G}✓${_TX_N} tor bootstrap   ${_TX_B}100%${_TX_N} — ready"
+  elif (( pct > 0 )); then
+    echo "  ${_TX_Y}⋯${_TX_N} tor bootstrap   ${_TX_Y}${pct}%${_TX_N} — connecting (run '${_TX_B}txb${_TX_N}' to wait)"
+  else
+    echo "  ${_TX_R}✗${_TX_N} tor bootstrap   no progress yet (check '${_TX_B}txw${_TX_N}')"
+  fi
+
+  if [[ "$tor_check" == "yes" ]]; then
+    echo "  ${_TX_G}✓${_TX_N} via tor         exit IP ${_TX_B}$exit_ip${_TX_N}"
+  elif (( pct < 100 )); then
+    echo "  ${_TX_Y}⋯${_TX_N} via tor         waiting for bootstrap to finish"
+  else
+    echo "  ${_TX_R}✗${_TX_N} via tor         no response — try '${_TX_B}txr${_TX_N}' or '${_TX_B}tx-bridges${_TX_N}'"
+  fi
+
+  if [[ -n "$ALL_PROXY" ]]; then
+    echo "  ${_TX_G}◉${_TX_N} shell proxy     ${_TX_B}ON${_TX_N}  — this shell's curl/git/etc go through Tor"
+  else
+    echo "  ${_TX_D}○ shell proxy     OFF — this shell goes direct (run '${_TX_B}pon${_TX_N}${_TX_D}' to flip)${_TX_N}"
+  fi
+
+  if scutil --proxy 2>/dev/null | grep -q 'SOCKSEnable : 1'; then
+    echo "  ${_TX_Y}◉${_TX_N} system SOCKS    ${_TX_Y}ON${_TX_N}  — macOS apps route via SOCKS (run '${_TX_B}sys-socks-off${_TX_N}' to clear)"
+  else
+    echo "  ${_TX_D}○ system SOCKS    OFF — macOS apps go direct${_TX_N}"
+  fi
+
+  _torxray_footer
+}
+
+torxray-watch() {
+  local log="$(_torxray_prefix)/var/log/tor/notices.log"
+  [[ -r "$log" ]] || { echo "torxray: no log at $log — is tor running?" >&2; return 1; }
+  echo "Tailing $log — Ctrl-C to exit"
+  tail -F "$log"
+}
+
+torxray-bootstrap-wait() {
+  _torxray_colors
+  local timeout=${1:-120}
+  local log="$(_torxray_prefix)/var/log/tor/notices.log"
+  local started=${EPOCHSECONDS:-$(date +%s)}
+  local pct=0
+  echo "torxray: waiting up to ${timeout}s for bootstrap (Ctrl-C to cancel)..."
+  while (( ${EPOCHSECONDS:-$(date +%s)} - started < timeout )); do
+    pct=$(grep -oE 'Bootstrapped [0-9]+%' "$log" 2>/dev/null | tail -1 | grep -oE '[0-9]+')
+    pct=${pct:-0}
+    printf "\r  ${_TX_B}%3s%%${_TX_N}  (%ds elapsed)   " "$pct" $((${EPOCHSECONDS:-$(date +%s)} - started))
+    [[ "$pct" == "100" ]] && { echo; echo "${_TX_G}✓${_TX_N} bootstrap complete — ready to proxy"; return 0; }
+    sleep 2
+  done
+  echo
+  echo "${_TX_Y}⚠${_TX_N}  timed out (last seen: ${pct}%) — try '${_TX_B}tx-bridges${_TX_N}' for fresh bridges"
+  return 1
+}
+
+torxray-bridges-refresh() {
+  _torxray_colors
+  echo "Opening Tor bridges page → pick ${_TX_B}obfs4${_TX_N}, copy the lines."
+  echo "Then paste them (prefixed with '${_TX_B}Bridge${_TX_N}') into:"
+  echo "  $(_torxray_prefix)/etc/tor/torrc"
+  echo "Replace the existing 'Bridge obfs4 ...' lines. Then run: ${_TX_B}txr${_TX_N}"
+  open https://bridges.torproject.org/options
+}
+
+# ─── Shell-level proxy env vars (current shell only) ──────────────────────
+proxy-on() {
+  _torxray_colors
+  export ALL_PROXY="socks5h://$TORXRAY_XRAY_SOCKS"
+  export HTTP_PROXY="http://$TORXRAY_XRAY_HTTP"
+  export HTTPS_PROXY="$HTTP_PROXY"
+  export NO_PROXY="localhost,127.0.0.1,::1,*.local"
+  export http_proxy="$HTTP_PROXY" https_proxy="$HTTPS_PROXY"
+  export all_proxy="$ALL_PROXY"   no_proxy="$NO_PROXY"
+  echo "${_TX_G}◉${_TX_N} shell proxy ${_TX_B}ON${_TX_N}  ($ALL_PROXY)"
+  echo "${_TX_D}  Turn off with: poff${_TX_N}"
+}
+
+proxy-off() {
+  _torxray_colors
+  unset ALL_PROXY HTTP_PROXY HTTPS_PROXY NO_PROXY
+  unset all_proxy http_proxy https_proxy no_proxy
+  echo "${_TX_D}○${_TX_N} shell proxy ${_TX_B}OFF${_TX_N}"
+}
+
+proxy-ip() {
+  _torxray_colors
+  local direct via_tor
+  direct=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null) || direct="(timeout)"
+  via_tor=$(curl -s --max-time 15 --socks5-hostname "$TORXRAY_XRAY_SOCKS" https://api.ipify.org 2>/dev/null) || via_tor="(timeout)"
+  echo "${_TX_B}direct :${_TX_N} ${direct:-(empty)}"
+  echo "${_TX_B}via tor:${_TX_N} ${via_tor:-(empty)}"
+}
+
+proxy-test() {
+  _torxray_colors
+  echo "${_TX_B}── direct (no proxy) ──${_TX_N}"
+  curl -s --max-time 5 https://ipinfo.io 2>/dev/null | head -12 || echo "(timeout)"
+  echo
+  echo "${_TX_B}── via xray → tor: IsTor check ──${_TX_N}"
+  curl -s --max-time 15 --socks5-hostname "$TORXRAY_XRAY_SOCKS" https://check.torproject.org/api/ip 2>/dev/null || echo "(timeout)"
+  echo
+  echo "${_TX_B}── via xray → tor: exit IP geolocation ──${_TX_N}"
+  curl -s --max-time 15 --socks5-hostname "$TORXRAY_XRAY_SOCKS" https://ipinfo.io 2>/dev/null | head -12 || echo "(timeout)"
+  echo
+  echo "${_TX_B}── DNS resolution path (should be via Tor) ──${_TX_N}"
+  curl -s --max-time 15 --socks5-hostname "$TORXRAY_XRAY_SOCKS" \
+    'https://1.1.1.1/dns-query?name=example.com&type=A' \
+    -H 'accept: application/dns-json' 2>/dev/null | head -c 250
+  echo
+}
+
+# ─── macOS system-wide SOCKS proxy (Wi-Fi service by default) ─────────────
+sys-socks-on() {
+  _torxray_colors
+  local host="${TORXRAY_XRAY_SOCKS%:*}" port="${TORXRAY_XRAY_SOCKS##*:}"
+  echo "Setting macOS SOCKS on '${TORXRAY_NETWORK_SERVICE}' → $host:$port (via Xray → Tor)"
+  sudo networksetup -setsocksfirewallproxy "$TORXRAY_NETWORK_SERVICE" "$host" "$port" || return 1
+  sudo networksetup -setsocksfirewallproxystate "$TORXRAY_NETWORK_SERVICE" on
+  echo "${_TX_G}◉${_TX_N} system SOCKS ${_TX_B}ON${_TX_N}  — ${_TX_Y}remember to 'sys-socks-off' before 'txd'${_TX_N}"
+}
+
+sys-socks-off() {
+  _torxray_colors
+  sudo networksetup -setsocksfirewallproxystate "$TORXRAY_NETWORK_SERVICE" off
+  echo "${_TX_D}○${_TX_N} system SOCKS ${_TX_B}OFF${_TX_N}"
+}
+
+sys-socks-status() {
+  _torxray_colors
+  echo "${_TX_B}── macOS proxy state ──${_TX_N}"
+  scutil --proxy | grep -E 'HTTP|SOCKS|Proxy' | sed 's/^/  /'
+  echo
+  echo "${_TX_B}── '$TORXRAY_NETWORK_SERVICE' service ──${_TX_N}"
+  networksetup -getsocksfirewallproxy "$TORXRAY_NETWORK_SERVICE" 2>&1 | sed 's/^/  /'
+}
+
+torxray-help() {
+  _torxray_colors
+  cat <<EOF
+${_TX_B}torxray${_TX_N} — tor + xray local proxy chain
+
+${_TX_B}Usage:${_TX_N}
+  tx [command]                        (no args = 'up')
+
+${_TX_B}Commands / flags:${_TX_N}
+  up        --up                       start tor + xray, show status
+  down      --off,   --down,   -d      stop both, clear shell proxy env
+  restart   --restart,         -r      restart both
+  status    --status,          -s      status with ✓/✗/⋯ indicators
+  watch     --watch,           -w      tail tor log live (Ctrl-C exits)
+  wait      --wait,            -b N    block until bootstrap=100% (default 120s)
+  bridges   --bridges                  open bridges.torproject.org to refresh
+  help      --help,            -h      this menu
+
+${_TX_B}Short aliases (same actions):${_TX_N}
+  txd, txr, txs, txw, txb, tx-bridges
+
+${_TX_B}Shell-level proxy (this shell only):${_TX_N}
+  pon / poff                          toggle HTTP/SOCKS env vars
+  proxy-ip                            direct IP vs Tor exit IP
+  proxy-test                          full check incl. DNS leak
+
+${_TX_B}macOS system-wide SOCKS (all apps, needs sudo):${_TX_N}
+  sys-socks-on / sys-socks-off / sys-socks-status
+
+${_TX_B}Configs:${_TX_N}
+  $(_torxray_prefix)/etc/tor/torrc
+  $(_torxray_prefix)/etc/xray/config.json
+EOF
+}
+
+# Dispatcher: parses flags / subcommands. Bound to 'tx' alias.
+torxray() {
+  local cmd=${1:-up}
+  case "$cmd" in
+    up|--up)                                  shift 2>/dev/null; torxray-up "$@" ;;
+    down|--down|--off|-d)                     shift 2>/dev/null; torxray-down "$@" ;;
+    restart|--restart|-r)                     shift 2>/dev/null; torxray-restart "$@" ;;
+    status|--status|-s)                       shift 2>/dev/null; torxray-status "$@" ;;
+    watch|--watch|-w)                         shift 2>/dev/null; torxray-watch "$@" ;;
+    wait|--wait|-b)                           shift 2>/dev/null; torxray-bootstrap-wait "$@" ;;
+    bridges|--bridges)                        shift 2>/dev/null; torxray-bridges-refresh "$@" ;;
+    help|--help|-h)                           torxray-help ;;
+    *)
+      _torxray_colors
+      echo "${_TX_R}torxray:${_TX_N} unknown command or flag: '${_TX_B}$cmd${_TX_N}'"
+      echo
+      torxray-help
+      return 2
+      ;;
+  esac
+}
+
+# ─── Aliases ──────────────────────────────────────────────────────────────
+alias tx='torxray'
+alias txd='torxray-down'
+alias txr='torxray-restart'
+alias txs='torxray-status'
+alias txw='torxray-watch'
+alias txb='torxray-bootstrap-wait'
+alias tx-bridges='torxray-bridges-refresh'
+alias pon='proxy-on'
+alias poff='proxy-off'
+# ─── end Tor + Xray block ──────────────────────────────────────────────────
