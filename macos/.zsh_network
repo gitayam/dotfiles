@@ -1246,6 +1246,59 @@ sys-socks-status() {
   networksetup -getsocksfirewallproxy "$TORXRAY_NETWORK_SERVICE" 2>&1 | sed 's/^/  /'
 }
 
+# ─── VPS connection info from Syncthing-synced env ────────────────────────
+# Lives in ~/Git/ai-coding-env/servers/torxray-vps.env — gitignored but
+# synced across machines via the 'Code Mesh' Syncthing folder.
+TORXRAY_VPS_ENV="${TORXRAY_VPS_ENV:-$HOME/Git/ai-coding-env/servers/torxray-vps.env}"
+
+# Source the synced env into this shell (idempotent; no-op if file missing)
+torxray-vps-load() {
+  _torxray_colors
+  if [[ -r "$TORXRAY_VPS_ENV" ]]; then
+    set -a; . "$TORXRAY_VPS_ENV"; set +a
+    echo "${_TX_G}✓${_TX_N} loaded VPS env from $TORXRAY_VPS_ENV"
+  else
+    echo "${_TX_R}✗${_TX_N} no synced env at $TORXRAY_VPS_ENV"
+    echo "${_TX_D}  bootstrap it: cp ~/Git/ai-coding-env/servers/torxray-vps.env.template \$TORXRAY_VPS_ENV${_TX_N}"
+    return 1
+  fi
+}
+
+# Show VPS connection info — masks sensitive fields by default
+torxray-vps-info() {
+  _torxray_colors
+  if [[ ! -r "$TORXRAY_VPS_ENV" ]]; then
+    echo "${_TX_R}✗${_TX_N} no synced env at $TORXRAY_VPS_ENV"
+    echo "${_TX_D}  copy the template: cp ~/Git/ai-coding-env/servers/torxray-vps.env{.template,}${_TX_N}"
+    return 1
+  fi
+  torxray-vps-load >/dev/null
+  echo "${_TX_B}torxray VPS${_TX_N}  ${_TX_D}(synced via ${TORXRAY_VPS_ENV/$HOME/~})${_TX_N}"
+  echo "${_TX_D}──────────────────────────────────────────────────────${_TX_N}"
+  local mask() { [[ -n "$1" ]] && echo "${1:0:6}…${1: -4}" || echo "${_TX_D}(unset)${_TX_N}"; }
+  printf "  %-26s %s\n" "VPS host:"            "${TORXRAY_VPS_HOST:-${_TX_D}(unset)${_TX_N}}"
+  printf "  %-26s %s\n" "SSH port:"            "${TORXRAY_VPS_PORT:-22}"
+  printf "  %-26s %s\n" "Provider:"            "${TORXRAY_VPS_PROVIDER:-${_TX_D}(unset)${_TX_N}} ${TORXRAY_VPS_LOCATION:+($TORXRAY_VPS_LOCATION)}"
+  printf "  %-26s %s\n" "Provisioned:"         "${TORXRAY_VPS_PROVISIONED:-${_TX_D}(unset)${_TX_N}}"
+  printf "  %-26s %s\n" "VLESS URI (masked):"  "$(mask "$TORXRAY_VLESS_URI")"
+  printf "  %-26s %s\n" "REALITY pub key:"     "$(mask "$TORXRAY_REALITY_PUBLIC_KEY")"
+  printf "  %-26s %s\n" "REALITY priv key:"    "${TORXRAY_REALITY_PRIVATE_KEY:+${_TX_Y}(set — server-side only)${_TX_N}}${TORXRAY_REALITY_PRIVATE_KEY:-${_TX_D}(unset)${_TX_N}}"
+  printf "  %-26s %s\n" "REALITY SNI:"         "${TORXRAY_REALITY_SERVER_NAME:-${_TX_D}(unset)${_TX_N}}"
+  echo "${_TX_D}──────────────────────────────────────────────────────${_TX_N}"
+  echo "  ${_TX_B}Full unmask:${_TX_N}  cat \$TORXRAY_VPS_ENV  ${_TX_D}# never paste in chat${_TX_N}"
+  echo "  ${_TX_B}SSH in:${_TX_N}       tx-vps-ssh"
+  echo "  ${_TX_B}Edit:${_TX_N}         \$EDITOR \$TORXRAY_VPS_ENV"
+}
+
+# SSH to the VPS using the synced host
+torxray-vps-ssh() {
+  torxray-vps-load >/dev/null || return 1
+  [[ -n "$TORXRAY_VPS_HOST" ]] || { echo "torxray-vps-ssh: TORXRAY_VPS_HOST is empty in $TORXRAY_VPS_ENV" >&2; return 1; }
+  local sshargs=(-p "${TORXRAY_VPS_PORT:-22}")
+  [[ -n "${TORXRAY_VPS_SSH_KEY:-}" ]] && sshargs+=(-i "$TORXRAY_VPS_SSH_KEY")
+  ssh "${sshargs[@]}" "$TORXRAY_VPS_HOST" "$@"
+}
+
 torxray-help() {
   _torxray_colors
   cat <<EOF
@@ -1275,9 +1328,15 @@ ${_TX_B}Shell-level proxy (this shell only):${_TX_N}
 ${_TX_B}macOS system-wide SOCKS (all apps, needs sudo):${_TX_N}
   sys-socks-on / sys-socks-off / sys-socks-status
 
+${_TX_B}VPS (Syncthing-synced env at ~/Git/ai-coding-env/servers/torxray-vps.env):${_TX_N}
+  tx-vps        show VPS connection info (masked secrets)
+  tx-vps-ssh    ssh into the VPS using the synced TORXRAY_VPS_HOST
+  tx-vps-load   source the env into the current shell (TORXRAY_VPS_* vars)
+
 ${_TX_B}Configs:${_TX_N}
   $(_torxray_prefix)/etc/tor/torrc
   $(_torxray_prefix)/etc/xray/config.json
+  ~/Git/ai-coding-env/servers/torxray-vps.env
 EOF
 }
 
@@ -1311,6 +1370,9 @@ alias txs='torxray-status'
 alias txw='torxray-watch'
 alias txb='torxray-bootstrap-wait'
 alias tx-bridges='torxray-bridges-refresh'
+alias tx-vps='torxray-vps-info'
+alias tx-vps-ssh='torxray-vps-ssh'
+alias tx-vps-load='torxray-vps-load'
 alias pon='proxy-on'
 alias poff='proxy-off'
 # ─── end Tor + Xray block ──────────────────────────────────────────────────
