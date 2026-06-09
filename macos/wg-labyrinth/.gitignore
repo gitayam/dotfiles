@@ -1,0 +1,6 @@
+# State and keys never live in the repo.
+rendered/
+keys/
+*.key
+*.pub
+state
