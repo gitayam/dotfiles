@@ -28,7 +28,8 @@ docker_compose_services:
   - name: headscale
     path: /home/headscale
     tags: [headscale, vpn, tailscale, custom]
-    enabled: true
+    enabled: false
+    note: "VERIFIED 2026-07-14: no containers running from this path (docker compose ps -a empty). Directory is a Node-based checkout (pnpm-lock.yaml, lefthook.yml — looks like a headscale UI/admin dev checkout, not the core headscale service) with its compose file named compose.yaml, not docker-compose.yml (docker_quick/docker_compose_update tasks only look for the legacy filename, so this would fail the file-check even if enabled). Also has a dirty git tree (6 changed lines) — don't touch without operator input. Tailscale (not headscale) is the actual VPN in use per ai-coding-env CLAUDE.md; this looks like a dormant experiment."
 
   # Media Services
   - name: jellyfin
@@ -44,7 +45,8 @@ docker_compose_services:
   - name: funkwhale
     path: /home/funkwhale
     tags: [funkwhale, music, media, custom]
-    enabled: true
+    enabled: false
+    note: "VERIFIED 2026-07-14: /home/funkwhale is a completely empty directory (root-owned, mode 700, no files at all). Not deployed. Disabled to prevent docker_quick/docker_compose_update failing on it."
 
   - name: peertube
     path: /home/PeerTube
@@ -62,12 +64,13 @@ docker_compose_services:
     path: /home/cryptpad
     tags: [cryptpad, docs, custom]
     enabled: true
-    note: "Check for subdirectory: /home/cryptpad/cryptpad"
+    note: "VERIFIED 2026-07-14: container healthy, but git repo has zero commits on 'main' with a large staged-but-uncommitted tree — the --tags cryptpad git-pull step will likely fail or misbehave until the repo is fixed. Don't run --tags cryptpad until confirmed working on the host."
 
   - name: mediawiki
     path: /home/mediawiki
     tags: [mediawiki, wiki, docs, custom]
-    enabled: true
+    enabled: false
+    note: "VERIFIED 2026-07-14: /home/mediawiki does not exist on the host. Disabled to prevent docker_compose_update failing. Confirm with operator whether this service was decommissioned/moved before removing this entry entirely."
 
   - name: outline-irregularchat
     path: /home/outline/irregularchat_outline
@@ -85,6 +88,12 @@ docker_compose_services:
     enabled: false
     note: "Missing .env file - not configured"
 
+  - name: outline-ncfayetteville
+    path: /home/outline/ncfayetteville_outline
+    tags: [outline, docs, wiki, custom]
+    enabled: true
+    note: "ADDED 2026-07-14: was missing from this inventory entirely — directory + docker-compose.yml confirmed present on host, sibling to the other 3 outline instances (irregularchat, norequirement, alfaren)."
+
   - name: calibre-web
     path: /home/calibre-web
     tags: [calibre, books, library, custom]
@@ -101,7 +110,7 @@ docker_compose_services:
     tags: [research, tools, custom]
     enabled: false
     needs_build: true
-    note: "Build-based service - requires docker compose up --build"
+    note: "VERIFIED 2026-07-14: no /home/researchtoolspy directory exists anywhere on this host (find under /home turned up nothing). Not deployed here — researchtools.net is a separate Cloudflare-hosted codebase per ai-coding-env memory. This entry is likely stale; confirm with operator before removing."
 
   - name: rstudio
     path: /home/rstudio
@@ -115,19 +124,26 @@ docker_compose_services:
     tags: [muse, custom]
     enabled: false
     needs_build: true
-    note: "Build-based service - requires docker compose up --build"
+    note: "VERIFIED 2026-07-14: /home/Muse_and_Co does not exist and there's no trace of a Muse & Co web-app deployment anywhere on this host (docker/systemd/LXC all checked). Per ai-coding-env memory the Muse & Co site (ncmuse.co) is Cloudflare Workers-hosted, not deployed here — this entry/path was likely aspirational or superseded. Distinct from muse-streaming below, which IS real and live on this host."
+
+  - name: muse-streaming
+    path: /home/muse/streaming
+    tags: [muse, streaming, camera, custom]
+    enabled: true
+    note: "ADDED 2026-07-14: was completely missing from this inventory. Real, live service — docker-compose.yml present, muse-transcode container confirmed 'Up 2 days (healthy)', plus a separate muse-stream-control.service systemd unit (active/enabled, not managed by this docker tag). Camera/streaming pipeline for the physical Muse & Co cafe location — distinct from the ncmuse.co web app (which is Cloudflare-hosted, not here)."
 
   # Productivity
   - name: clapper
-    path: /home/clapper/Claper
+    path: /home/Claper
     tags: [clapper, clap, presentations, custom]
     enabled: true
+    note: "FIXED 2026-07-14: path was /home/clapper/Claper (no 'clapper' parent dir exists) — corrected to /home/Claper, verified present on host."
 
   - name: openslides
     path: /home/OpenSlides
     tags: [openslides, slides, meetings, custom]
-    enabled: true
-    note: "Complex multi-container setup - monitor for OOM issues"
+    enabled: false
+    note: "VERIFIED 2026-07-14: /home/OpenSlides does not exist on the host. Disabled to prevent docker_compose_update failing. Confirm with operator whether this service was decommissioned/moved before removing this entry entirely."
 
   - name: linkwarden
     path: /home/linkwarden
@@ -137,7 +153,8 @@ docker_compose_services:
   - name: infisical
     path: /home/infisical
     tags: [infisical, secrets, custom]
-    enabled: true
+    enabled: false
+    note: "VERIFIED 2026-07-14: /home/infisical is a completely empty directory (root-owned, mode 700), no container running anywhere on the host. Not deployed. Disabled to prevent docker_quick/docker_compose_update failing on it."
 
   # Communication & Email
   - name: simplelogin
@@ -149,13 +166,15 @@ docker_compose_services:
   - name: syncthing
     path: /home/syncthing
     tags: [syncthing, sync, backup, custom]
-    enabled: true
+    enabled: false
+    note: "CORRECTED 2026-07-14: /home/syncthing is empty because syncthing is NOT a docker-compose service on this host at all — it runs as Proxmox LXC 100 ('syncthing-hub', service unit syncthing@coder.service inside the container), part of the 3-node mesh documented in ai-coding-env's docs/syncthing/. Manage it with 'pct start/stop 100' and 'pct exec 100 -- systemctl ... syncthing@coder', not docker_quick/docker_compose_update. This inventory entry is a dead path for the docker tooling — keep disabled, but don't read 'disabled' as 'not running': it was actually stopped since the June datadrive outage (5 bind mounts require /datadrive) and was restarted 2026-07-14 once datadrive came back healthy. See docs/lessons-learned/proxmox-security-hardening-2026-06.md for the LXC 100 recovery history."
 
   # Search
   - name: searxng
     path: /home/searxng
     tags: [searxng, search, custom]
     enabled: true
+    note: "VERIFIED 2026-07-14: container running fine, but /home/searxng is NOT a git repository — the --tags searxng workflow (git stash / git pull / git stash pop) will fail immediately. Don't run --tags searxng until the repo is restored or the tag's git steps are made conditional."
 
   # Archived/Empty Services
   - name: archive
@@ -169,3 +188,66 @@ docker_compose_services:
     tags: [archived]
     enabled: false
     note: "Empty docker-compose - no services defined"
+
+  # Previously untracked live services (found 2026-07-14 by diffing every
+  # real compose file on the host against this inventory — none of these
+  # were in services.yaml OR ai-coding-env's CLAUDE.md service table before today)
+  - name: cloudtak
+    path: /home/cloudtak
+    tags: [cloudtak, tak, custom]
+    enabled: true
+    note: "UPDATED 2026-07-14. Actually 7 containers (events/retention/api/store/postgis/tiles/media), all confirmed running/healthy. Depends on the separate /home/tak-server stack (9 containers) for its actual TAK backend — that was down since a 2026-07-05 content-store corruption, recovered same day as this note (see docs/lessons-learned/tak-server-recovery-2026-07-14.md). CloudTAK's server DB entry must point at ssl://tak-eud-handler-ssl:8089, not localhost or tak-server. Has docker-compose.yml + docker-compose.override.yml. Also a git repo with uncommitted local changes (2 lines) — see the ansible services drift memory before running any git-pull-based workflow against this path."
+
+  - name: ntfy
+    path: /home/ntfy
+    tags: [ntfy, notifications, custom]
+    enabled: false
+    note: "ADDED 2026-07-14, disabled for now. Container confirmed running/healthy ('Up 2 days (healthy)'), but its compose file is named compose.yml, not docker-compose.yml/.yaml — docker_quick/docker_compose_update's file-existence check only looks for the legacy names and will report 'No docker-compose file found' if enabled. Same underlying playbook limitation as headscale's entry. Enable once the playbook check is updated to also look for compose.yml, or symlink docker-compose.yml -> compose.yml on the host."
+
+  - name: strudel-watch
+    path: /home/strudel-watch
+    tags: [strudel, custom]
+    enabled: false
+    note: "ADDED 2026-07-14, disabled for now. Container confirmed running ('Up 2 days'), but compose file is compose.yml — same docker_quick filename-check limitation as ntfy above. Don't enable until that's addressed."
+
+  - name: cad-viewer
+    path: /home/cad-viewer
+    tags: [cad, viewer, custom]
+    enabled: true
+    note: "ADDED 2026-07-14. Container confirmed running ('Up 2 days'), docker-compose.yml present."
+
+  - name: brother-print-server
+    path: /home/brother-print-server
+    tags: [printing, custom]
+    enabled: true
+    note: "ADDED 2026-07-14. Container confirmed running ('Up 2 days'), docker-compose.yml present (plus a .bak from 2026-06-30, harmless)."
+
+  - name: clamav
+    path: /home/clamav
+    tags: [clamav, antivirus, security, custom]
+    enabled: true
+    note: "ADDED 2026-07-14. Two containers confirmed running: clamav (healthy) + clamav-rest (healthy). docker-compose.yml present."
+
+  - name: audio-processor
+    path: /home/audio-processor
+    tags: [audio, irregularpedia, custom]
+    enabled: true
+    note: "ADDED 2026-07-14. Container 'irregularpedia-audio-processor' confirmed running/healthy ('Up 41 hours'), docker-compose.yml present."
+
+  - name: riff-render
+    path: /home/riff-render
+    tags: [riff, render, custom]
+    enabled: false
+    note: "ADDED 2026-07-14, disabled for now. Container confirmed running ('Up 2 days'), but compose file is compose.yml — same docker_quick filename-check limitation as ntfy/strudel-watch above. Don't enable until that's addressed."
+
+  - name: uxs-portal-api
+    path: /home/uxs-portal-api
+    tags: [uxs, portal, api, custom]
+    enabled: true
+    note: "ADDED 2026-07-14. Container confirmed running/healthy ('Up 2 days'), docker-compose.yml present."
+
+  - name: pastefy
+    path: /home/pastefy
+    tags: [pastefy, custom]
+    enabled: false
+    note: "ADDED 2026-07-14, disabled — status unclear. docker-compose.yml present at /home/pastefy but NO container found running anywhere on the host under any pastefy-related name. Could be intentionally stopped, or a silent failure. Needs operator confirmation before enabling or attempting to bring up."
