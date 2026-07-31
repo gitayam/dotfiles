@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Docker runtime and Signal identity monitor every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
+Persistent=true
+Unit=docker-runtime-monitor.service
+
+[Install]
+WantedBy=timers.target

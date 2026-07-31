@@ -1,0 +1,17 @@
+[Unit]
+Description=Recover Docker Compose stacks after runtime reconciliation
+After=docker.service containerd.service network-online.target
+Wants=network-online.target
+RequiresMountsFor=/datadrive
+StartLimitIntervalSec=1800
+StartLimitBurst=15
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/docker-stack-recovery.sh
+TimeoutStartSec=1800
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
