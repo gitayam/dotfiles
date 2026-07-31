@@ -189,12 +189,17 @@ maybe_autoheal_signal() {
   fi
 
   # If Docker has full runtime control but the canonical service itself is not
-  # ready, permit one rate-limited narrow compose recovery.
+  # ready, permit one rate-limited narrow compose recovery. `up -d` alone is a
+  # no-op here: Compose only recreates on a config/image diff, and a process
+  # that's alive-but-internally-broken (e.g. a dead signal-cli daemon inside a
+  # still-running Node process) looks unchanged to Compose. --force-recreate
+  # is required to actually restart it (2026-07-28 outage: this branch fired
+  # every 15 minutes for the full outage and never once worked).
   if [ "$running_unmanaged_count" -eq 0 ] && [ "$internal_ready" -eq 0 ]; then
     mark_autoheal
-    (cd "$SIGNAL_COMPOSE_DIR" && docker compose up -d signal-bot) || return 1
+    (cd "$SIGNAL_COMPOSE_DIR" && docker compose up -d --force-recreate signal-bot) || return 1
     notify "Signal readiness auto-heal attempted" \
-      "No runtime split-brain was present; restarted the canonical Signal stack." "high"
+      "No runtime split-brain was present; force-recreated the canonical Signal stack." "high"
     sleep 10
     return 0
   fi
