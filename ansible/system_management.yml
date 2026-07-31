@@ -1319,6 +1319,79 @@
           ignore_errors: yes
       tags: [monitoring, maintenance]
 
+    - name: Install Docker runtime recovery and Signal identity monitoring
+      when: inventory_hostname == 'proxmox-main'
+      block:
+        - name: Install runtime monitor dependencies
+          package:
+            name:
+              - curl
+              - jq
+            state: present
+
+        - name: Install Docker runtime scripts
+          copy:
+            src: "{{ item.src }}"
+            dest: "{{ item.dest }}"
+            owner: root
+            group: root
+            mode: '0755'
+          loop:
+            - src: files/docker-runtime-monitor.sh
+              dest: /usr/local/bin/docker-runtime-monitor.sh
+            - src: files/docker-stack-recovery.sh
+              dest: /usr/local/bin/docker-stack-recovery.sh
+
+        - name: Install Docker runtime systemd units
+          copy:
+            src: "{{ item }}"
+            dest: "/etc/systemd/system/{{ item }}"
+            owner: root
+            group: root
+            mode: '0644'
+          loop:
+            - docker-runtime-monitor.service
+            - docker-runtime-monitor.timer
+            - docker-stack-recovery.service
+          register: docker_runtime_units
+
+        - name: Install /datadrive boot-ordering drop-ins (containerd/docker/pve-guests)
+          copy:
+            src: "files/systemd-dropins/{{ item }}-datadrive-dependency.conf"
+            dest: "/etc/systemd/system/{{ item }}.service.d/datadrive-dependency.conf"
+            owner: root
+            group: root
+            mode: '0644'
+          loop:
+            - containerd
+            - docker
+            - pve-guests
+          register: datadrive_dropins
+          # 2026-07-28/29: containerd/docker/pve-guests.service all raced /datadrive
+          # mounting at boot with no ordering dependency, causing repeated boot-time
+          # failures (containerd retried 75x over 6.5min on 07-28) — see
+          # docs/lessons-learned/proxmox-boot-race-2026-07-28.md. RequiresMountsFor
+          # fixes the ordering; each unit gets its own drop-in dir automatically.
+
+        - name: Reload systemd after Docker runtime unit changes
+          systemd:
+            daemon_reload: yes
+          when: docker_runtime_units.changed or datadrive_dropins.changed
+
+        - name: Enable Docker stack recovery at boot
+          systemd:
+            name: docker-stack-recovery.service
+            enabled: yes
+          when: not ansible_check_mode
+
+        - name: Enable and start Docker runtime monitor timer
+          systemd:
+            name: docker-runtime-monitor.timer
+            enabled: yes
+            state: started
+          when: not ansible_check_mode
+      tags: [docker_runtime_recovery, monitoring, maintenance]
+
     - name: Configure logrotate
       block:
         - name: Ensure logrotate is installed

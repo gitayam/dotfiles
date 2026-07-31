@@ -1,0 +1,11 @@
+[Unit]
+Description=Detect Docker/containerd split-brain and verify Signal service identity
+After=docker.service containerd.service network-online.target
+Wants=network-online.target
+Requires=docker.service containerd.service
+ConditionPathIsMountPoint=/datadrive
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/docker-runtime-monitor.sh
+TimeoutStartSec=120
