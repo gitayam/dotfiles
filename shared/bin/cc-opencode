@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+"""Launch Claude Code with OpenCode Go/Go Plus inference."""
+
+import getpass
+import json
+import os
+from pathlib import Path
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+
+
+ENDPOINT = "https://opencode.ai/inference/go/anthropic"
+KEY_FILE = Path.home() / ".config/claude-opencode/api-key"
+
+
+def console_credential():
+    """Read only the selected integration through OpenCode's supported CLI."""
+    binary = shutil.which("opencode")
+    if not binary:
+        return "", "missing"
+    for attempt in range(2):
+        try:
+            result = subprocess.run(
+                [binary, "auth", "export", "opencode"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode:
+                return "", "missing"
+            entries = json.loads(result.stdout)
+            active = [e["value"] for e in entries
+                      if e.get("integrationID") == "opencode" and e.get("active")]
+            if len(active) != 1:
+                return "", "missing"
+            value = active[0]
+            if value.get("type") == "api":
+                return value.get("key", ""), "OpenCode active API key"
+            if value.get("type") != "oauth":
+                return "", "missing"
+            if value.get("metadata", {}).get("server", "").rstrip("/") != "https://opencode.ai/console":
+                sys.exit("OpenCode's active login is for another Console server.")
+            if value.get("expires", 0) > (time.time() + 60) * 1000:
+                return value.get("access", ""), "OpenCode active Console login"
+            if attempt == 0:
+                # The shared OpenCode service owns refresh-token rotation.
+                # Ask it to resolve models, then read the updated access token.
+                refreshed = subprocess.run(
+                    [binary, "models"], capture_output=True, timeout=45,
+                )
+                if not refreshed.returncode:
+                    continue
+            sys.exit("OpenCode login needs renewal. Run opencode auth login opencode.")
+        except (OSError, subprocess.TimeoutExpired, ValueError, TypeError, KeyError, AttributeError):
+            sys.exit("Could not read the OpenCode login; raw credential output suppressed.\n"
+                     "Check opencode auth list, or use cc-opencode --setup-key.")
+    return "", "missing"
+
+
+def credential():
+    for name in ("OPENCODE_GO_API_KEY", "OPENCODE_API_KEY"):
+        if os.environ.get(name, "").strip():
+            return os.environ[name].strip(), name
+    if KEY_FILE.is_file():
+        if KEY_FILE.stat().st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+            sys.exit(f"Key file must be private: chmod 600 {KEY_FILE}")
+        return KEY_FILE.read_text().strip(), str(KEY_FILE)
+    return console_credential()
+
+
+def setup_key():
+    if not sys.stdin.isatty():
+        sys.exit("Run cc-opencode --setup-key in an interactive terminal.")
+    key = getpass.getpass("OpenCode Go API key (hidden): ").strip()
+    if not key or any(c.isspace() for c in key):
+        sys.exit("No key saved: enter one nonempty API key without whitespace.")
+    KEY_FILE.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".api-key-", dir=KEY_FILE.parent)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(key + "\n")
+        os.replace(temporary, KEY_FILE)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+    print(f"Saved private key to {KEY_FILE}; no request sent.")
+
+
+def main():
+    args = sys.argv[1:]
+    if args == ["--setup-key"]:
+        setup_key()
+        return
+    if args in (["--help"], ["--launcher-help"]):
+        print("Usage: cc-opencode [Claude Code arguments]\n"
+              "       cc-opencode --setup-key   Save a key using hidden input\n"
+              "       cc-opencode --check       Check local setup without inference\n\n"
+              "Model: OPENCODE_GO_MODEL (default: qwen3.7-plus).\n"
+              "Key: OPENCODE_GO_API_KEY, OPENCODE_API_KEY, " + str(KEY_FILE) + ",\n"
+              "or the active opencode auth login opencode credential.\n"
+              "Use cc-opencode -- --help for Claude Code's own help.")
+        return
+    if args[:1] == ["--"]:
+        args = args[1:]
+    binary = shutil.which("claude")
+    if binary and args in (["--help"], ["-h"], ["--version"], ["-v"]):
+        os.execv(binary, [binary, *args])
+    key, source = credential()
+    model = os.environ.get("OPENCODE_GO_MODEL", "qwen3.7-plus").strip()
+    if not model or any(c.isspace() for c in model):
+        sys.exit("OPENCODE_GO_MODEL must be one nonempty model ID.")
+    if args == ["--check"]:
+        print(f"Claude: {binary or 'missing'}\nEndpoint: {ENDPOINT}\n"
+              f"Model: {model}\nCredential: {source}\n"
+              "Local check only; subscription and inference are not verified.")
+        sys.exit(0 if binary and key else 2)
+    if not binary:
+        sys.exit("Claude Code is not installed or is not on PATH.")
+    if not key:
+        sys.exit("OpenCode key missing. Run cc-opencode --setup-key in your terminal,\n"
+                 "or provide OPENCODE_GO_API_KEY. Do not paste a key into chat.")
+    env = dict(os.environ)
+    for name in list(env):
+        if name.startswith("ANTHROPIC_") or name in {
+            "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_SUBAGENT_MODEL_FORCE",
+            "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
+            "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_USE_MANTLE",
+        }:
+            del env[name]
+    routing = {
+        "ANTHROPIC_BASE_URL": ENDPOINT,
+        "ANTHROPIC_MODEL": model,
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": model,
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,
+        "ANTHROPIC_DEFAULT_FABLE_MODEL": model,
+        "CLAUDE_CODE_SUBAGENT_MODEL": model,
+        "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
+    }
+    env.update(routing, ANTHROPIC_AUTH_TOKEN=key)
+    # Pass only nonsecret routing settings in argv. Detached background
+    # credentials still need separate provisioning; the token stays in env.
+    settings = json.dumps({"env": routing})
+    os.execve(binary, [binary, "--settings", settings, "--model", model, *args], env)
+
+
+if __name__ == "__main__":
+    main()
