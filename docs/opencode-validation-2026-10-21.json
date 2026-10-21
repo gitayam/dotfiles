@@ -1,0 +1,377 @@
+{
+  "date": "2026-10-21",
+  "runtime": "OpenCode 2.1.0",
+  "coding": {
+    "exit": 0,
+    "deadline_reached": false,
+    "interrupted": false,
+    "seconds": 16.369,
+    "requested_model": "opencode-go/qwen3.7-plus",
+    "agent": "build",
+    "cli_attempts": 1,
+    "retained_parent_model_turns": 4,
+    "model_identities": [
+      "opencode-go/qwen3.7-plus"
+    ],
+    "reported_cost": 0.0094175,
+    "session_error_events": 0,
+    "acceptance": "passed",
+    "check": {
+      "exit": 0,
+      "deadline_reached": false,
+      "interrupted": false
+    },
+    "complete": true
+  },
+  "child_parent": {
+    "exit": 0,
+    "deadline_reached": false,
+    "interrupted": false,
+    "seconds": 36.399,
+    "requested_model": "opencode-go/qwen3.7-plus",
+    "agent": "build",
+    "cli_attempts": 1,
+    "retained_parent_model_turns": 5,
+    "model_identities": [
+      "opencode-go/qwen3.7-plus"
+    ],
+    "reported_cost": 0.010863479999999998,
+    "session_error_events": 0,
+    "acceptance": "unchecked",
+    "complete": false
+  },
+  "child_usage": [
+    {
+      "role": "scout",
+      "usage": [
+        {
+          "model": {
+            "id": "glm-5.3-flash",
+            "providerID": "opencode-go",
+            "variant": "default"
+          },
+          "tokens": {
+            "input": 1264,
+            "output": 35,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "cost": 0.0002071,
+          "finish": "tool-calls"
+        },
+        {
+          "model": {
+            "id": "glm-5.3-flash",
+            "providerID": "opencode-go",
+            "variant": "default"
+          },
+          "tokens": {
+            "input": 1351,
+            "output": 94,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "cost": 0.00024965,
+          "finish": "stop"
+        }
+      ],
+      "completed": true
+    },
+    {
+      "role": "reviewer",
+      "usage": [
+        {
+          "model": {
+            "id": "glm-5.3-flash",
+            "providerID": "opencode-go",
+            "variant": "default"
+          },
+          "tokens": {
+            "input": 1340,
+            "output": 34,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "cost": 0.000218,
+          "finish": "tool-calls"
+        },
+        {
+          "model": {
+            "id": "glm-5.3-flash",
+            "providerID": "opencode-go",
+            "variant": "default"
+          },
+          "tokens": {
+            "input": 1507,
+            "output": 157,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "cost": 0.00030454999999999995,
+          "finish": "stop"
+        }
+      ],
+      "completed": true
+    }
+  ],
+  "permission_evaluations": [
+    {
+      "agent": "scout",
+      "action": "read",
+      "resource": "calc.py",
+      "expected": "allow",
+      "actual": "allow",
+      "passed": true
+    },
+    {
+      "agent": "scout",
+      "action": "glob",
+      "resource": "*.py",
+      "expected": "allow",
+      "actual": "allow",
+      "passed": true
+    },
+    {
+      "agent": "scout",
+      "action": "edit",
+      "resource": "calc.py",
+      "expected": "deny",
+      "actual": "deny",
+      "passed": true
+    },
+    {
+      "agent": "scout",
+      "action": "shell",
+      "resource": "printf canary",
+      "expected": "deny",
+      "actual": "deny",
+      "passed": true
+    },
+    {
+      "agent": "scout",
+      "action": "subagent",
+      "resource": "scout",
+      "expected": "deny",
+      "actual": "deny",
+      "passed": true
+    },
+    {
+      "agent": "scout",
+      "action": "execute",
+      "resource": "*",
+      "expected": "deny",
+      "actual": "deny",
+      "passed": true
+    },
+    {
+      "agent": "scout",
+      "action": "unregistered_mcp_write",
+      "resource": "*",
+      "expected": "deny",
+      "actual": "deny",
+      "passed": true
+    },
+    {
+      "agent": "scout",
+      "action": "external_directory",
+      "resource": "/private/tmp/unrelated/*",
+      "expected": "deny",
+      "actual": "deny",
+      "passed": true
+    },
+    {
+      "agent": "scout",
+      "action": "read",
+      "resource": ".env",
+      "expected": "deny",
+      "actual": "deny",
+      "passed": true
+    },
+    {
+      "agent": "scout",
+      "action": "read",
+      "resource": "nested/.env.production",
+      "expected": "deny",
+      "actual": "deny",
+      "passed": true
+    },
+    {
+      "agent": "scout",
+      "action": "read",
+      "resource": ".env.example",
+      "expected": "allow",
+      "actual": "allow",
+      "passed": true
+    },
+    {
+      "agent": "scout",
+      "action": "grep",
+      "resource": "anything",
+      "expected": "deny",
+      "actual": "deny",
+      "passed": true
+    },
+    {
+      "agent": "reviewer",
+      "action": "read",
+      "resource": "calc.py",
+      "expected": "allow",
+      "actual": "allow",
+      "passed": true
+    },
+    {
+      "agent": "reviewer",
+      "action": "glob",
+      "resource": "*.py",
+      "expected": "allow",
+      "actual": "allow",
+      "passed": true
+    },
+    {
+      "agent": "reviewer",
+      "action": "edit",
+      "resource": "calc.py",
+      "expected": "deny",
+      "actual": "deny",
+      "passed": true
+    },
+    {
+      "agent": "reviewer",
+      "action": "shell",
+      "resource": "printf canary",
+      "expected": "deny",
+      "actual": "deny",
+      "passed": true
+    },
+    {
+      "agent": "reviewer",
+      "action": "subagent",
+      "resource": "scout",
+      "expected": "deny",
+      "actual": "deny",
+      "passed": true
+    },
+    {
+      "agent": "reviewer",
+      "action": "execute",
+      "resource": "*",
+      "expected": "deny",
+      "actual": "deny",
+      "passed": true
+    },
+    {
+      "agent": "reviewer",
+      "action": "unregistered_mcp_write",
+      "resource": "*",
+      "expected": "deny",
+      "actual": "deny",
+      "passed": true
+    },
+    {
+      "agent": "reviewer",
+      "action": "external_directory",
+      "resource": "/private/tmp/unrelated/*",
+      "expected": "deny",
+      "actual": "deny",
+      "passed": true
+    },
+    {
+      "agent": "reviewer",
+      "action": "read",
+      "resource": ".env",
+      "expected": "deny",
+      "actual": "deny",
+      "passed": true
+    },
+    {
+      "agent": "reviewer",
+      "action": "read",
+      "resource": "nested/.env.production",
+      "expected": "deny",
+      "actual": "deny",
+      "passed": true
+    },
+    {
+      "agent": "reviewer",
+      "action": "read",
+      "resource": ".env.example",
+      "expected": "allow",
+      "actual": "allow",
+      "passed": true
+    },
+    {
+      "agent": "reviewer",
+      "action": "grep",
+      "resource": "anything",
+      "expected": "deny",
+      "actual": "deny",
+      "passed": true
+    }
+  ],
+  "skill_load": {
+    "exit": 0,
+    "deadline_reached": false,
+    "interrupted": false,
+    "seconds": 12.323,
+    "requested_model": "opencode-go/qwen3.7-plus",
+    "agent": "build",
+    "cli_attempts": 1,
+    "retained_parent_model_turns": 2,
+    "model_identities": [
+      "opencode-go/qwen3.7-plus"
+    ],
+    "reported_cost": 0.00828744,
+    "session_error_events": 0,
+    "acceptance": "unchecked",
+    "parent_cache_tokens": {
+      "read": 13081,
+      "write": 13906
+    },
+    "complete": false
+  },
+  "scope": "Small local daily-configuration canaries, separate from the 81-attempt benchmark. No Proxmox model-lane qualification.",
+  "initial_probe_note": "A first permission probe on the parent session with child-role overrides returned two unexpected denials of allowed scout operations. Accepted checks use actual role-matched child sessions after verifying session identity. Cause not established.",
+  "managed_sha256": {
+    "shared/opencode/opencode.json": "21040f8d179b67aab8ead3f15ffe5783bdfc39360c64ac7456bc9c4b63b4a85b",
+    "shared/opencode/AGENTS.md": "805ce3ba70d783d8e62d5b3ac4d15bcd03ca3182855ef2c55c6917423474bf74",
+    "shared/skills/agent-reliability/SKILL.md": "f9d984ad5ad0ea516be2ae219155b787540ec8a4d72f5a137e3d079dabe1434b",
+    "shared/skills/agent-reliability/references/study-calibration.md": "dbbc87c5ee7fd3bbb1d1254dd840fb8a9a028f8a3b2b4e8d8833401dbeef6e41",
+    "shared/skills/team-swarm/SKILL.md": "2b6ba7c0cfb257b83e337da6d0c72771fdce1a0bd95a735b268c4f4963e60bc1",
+    "shared/skills/team-cloudflare/SKILL.md": "10b4f95bc953ddcf54d8329f5c5643a743664892b696b72f9d08b164762102be",
+    "shared/skills/vibe-orchestrator/SKILL.md": "5f59b1454e6688faa2d3a7dd56f65137d58224f5e7790c04933008ff58c47ee2",
+    "shared/skills/claudeflare/SKILL.md": "b7b52575e17cbe13d2ce8eb8873fb36b209bf8b39013b48243f57bd67e796428"
+  },
+  "global_instructions_canary": {
+    "exit": 0,
+    "deadline_reached": false,
+    "interrupted": false,
+    "seconds": 6.944,
+    "requested_model": "opencode-go/qwen3.7-plus",
+    "agent": "build",
+    "cli_attempts": 1,
+    "retained_parent_model_turns": 1,
+    "model_identities": [
+      "opencode-go/qwen3.7-plus"
+    ],
+    "reported_cost": 0.0070165,
+    "session_error_events": 0,
+    "acceptance": "unchecked",
+    "parent_cache_tokens": {
+      "read": 0,
+      "write": 13081
+    },
+    "complete": false
+  }
+}
