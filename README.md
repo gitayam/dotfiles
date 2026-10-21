@@ -2,6 +2,11 @@
 
 This repository contains my personal dotfiles for `zsh`, `git`, and other tools, organized by platform and technology.
 
+`cc-opencode` runs Claude Code against an existing OpenCode Go/Go Plus subscription.
+See [setup and verification](docs/claude-opencode.md) for Console login and model selection.
+For native OpenCode rules, read-only agents, repaired shared skills and bounded tasks,
+see [the scoped local setup](docs/opencode-local.md).
+
 ## 📁 Directory Structure
 
 The repository is organized into the following top-level directories:
