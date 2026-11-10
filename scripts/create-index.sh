@@ -10,13 +10,21 @@ if [[ -z "$DIR" ]] || [[ -z "$FILE" ]]; then
     exit 0
 fi
 
+# The file name comes from whoever uploaded the file: escape it for HTML text
+# and attributes, and percent-encode it for src/href, or a name like
+# <script>…</script>.png runs in every viewer's browser
+# python3 for both: in bash 5.2 "&" in a ${var//x/y} replacement means the
+# match, in bash 3.2 a literal "&", so shell escaping can't be portable
+FILE_HTML=$(python3 -c 'import html, sys; print(html.escape(sys.argv[1], quote=True))' "$FILE") || exit 1
+FILE_URL=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$FILE") || exit 1
+
 # Check if it's an image
 if [[ "$FILE" =~ \.(png|jpg|jpeg|gif|webp|svg)$ ]]; then
     cat > "$DIR/index.html" << EOF
 <!DOCTYPE html>
 <html>
 <head>
-    <title>$FILE</title>
+    <title>$FILE_HTML</title>
     <style>
         body {
             margin: 0;
@@ -59,9 +67,9 @@ if [[ "$FILE" =~ \.(png|jpg|jpeg|gif|webp|svg)$ ]]; then
 </head>
 <body>
     <div class="container">
-        <img src="$FILE" alt="$FILE">
-        <div class="filename">$FILE</div>
-        <a href="$FILE" download class="download">⬇ Download</a>
+        <img src="$FILE_URL" alt="$FILE_HTML">
+        <div class="filename">$FILE_HTML</div>
+        <a href="$FILE_URL" download class="download">⬇ Download</a>
     </div>
 </body>
 </html>
@@ -73,7 +81,7 @@ elif [[ "$FILE" =~ \.(mp4|webm|mov|avi)$ ]]; then
 <!DOCTYPE html>
 <html>
 <head>
-    <title>$FILE</title>
+    <title>$FILE_HTML</title>
     <style>
         body {
             margin: 0;
@@ -105,10 +113,10 @@ elif [[ "$FILE" =~ \.(mp4|webm|mov|avi)$ ]]; then
 <body>
     <div class="container">
         <video controls>
-            <source src="$FILE" type="video/${FILE##*.}">
+            <source src="$FILE_URL" type="video/${FILE##*.}">
             Your browser does not support the video tag.
         </video>
-        <div class="filename">$FILE</div>
+        <div class="filename">$FILE_HTML</div>
     </div>
 </body>
 </html>
@@ -120,7 +128,7 @@ elif [[ "$FILE" =~ \.pdf$ ]]; then
 <!DOCTYPE html>
 <html>
 <head>
-    <title>$FILE</title>
+    <title>$FILE_HTML</title>
     <style>
         body {
             margin: 0;
@@ -135,7 +143,7 @@ elif [[ "$FILE" =~ \.pdf$ ]]; then
     </style>
 </head>
 <body>
-    <iframe src="$FILE"></iframe>
+    <iframe src="$FILE_URL"></iframe>
 </body>
 </html>
 EOF

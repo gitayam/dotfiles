@@ -1,108 +1,63 @@
 #!/bin/bash
+# Redeploy the cffile "secure-tunnel" Worker (typescript/hybrid-tunnel.js) with
+# its TUNNEL_CONFIG KV binding.
+#
+#   scripts/fix-cffile-worker.sh               deploy in place (the live Worker keeps serving)
+#   scripts/fix-cffile-worker.sh --recreate    delete the Worker first (asks you to type its name)
+#   scripts/fix-cffile-worker.sh --selftest    also register a "test-deploy" tunnel on the live Worker
+#
+# Earlier versions deleted the live Worker first and then deployed
+# src/hybrid-tunnel.js, a path that doesn't exist, so a run ended with no
+# Worker at all. Nothing here deletes or writes to production unless asked.
 
-# Fix cffile Worker deployment - removes old and deploys new hybrid version
-# This fixes the password authentication redirect issue
+set -u
+WORKER_NAME="secure-tunnel"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SRC="$REPO/typescript/hybrid-tunnel.js"
+RECREATE=0; SELFTEST=0
+for arg in "$@"; do
+  case "$arg" in
+    --recreate) RECREATE=1 ;;
+    --selftest) SELFTEST=1 ;;
+    -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
+    *) echo "Unknown option: $arg"; exit 2 ;;
+  esac
+done
 
-set -e
+echo "🔧 cffile Worker redeploy ($WORKER_NAME)"
 
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "🔧 cffile Worker Fix Script"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
-echo "This will fix the password authentication issue where"
-echo "the Worker shows 'Connection Instructions' instead of"
-echo "redirecting to your files."
-echo ""
-
-# Check if wrangler is installed
-if ! command -v wrangler &> /dev/null; then
-    echo "❌ wrangler not found. Installing..."
-    npm install -g wrangler
+# Every check before anything changes
+[[ -f "$SRC" ]] || { echo "❌ Worker source not found: $SRC"; exit 1; }
+command -v wrangler >/dev/null || { echo "❌ wrangler not found. Install it (npm install -g wrangler) and re-run."; exit 1; }
+command -v python3 >/dev/null || { echo "❌ python3 is needed to read wrangler's JSON output."; exit 1; }
+if ! wrangler whoami >/dev/null 2>&1; then
+  echo "❌ Not logged in to Cloudflare. Run: wrangler login"
+  exit 1
 fi
+echo "✅ Source: ${SRC#$REPO/}; logged in to Cloudflare"
 
-# Function to check if wrangler is authenticated
-check_wrangler_auth() {
-    if ! wrangler whoami &>/dev/null; then
-        echo "⚠️  Not logged in to Cloudflare"
-        echo "Please run: wrangler login"
-        echo "Then run this script again"
-        exit 1
-    fi
-}
-
-# Function to deploy with retry
-deploy_worker() {
-    local attempt=1
-    local max_attempts=3
-    
-    while [ $attempt -le $max_attempts ]; do
-        echo "🚀 Deployment attempt $attempt of $max_attempts..."
-        
-        if timeout 30 wrangler deploy src/hybrid-tunnel.js \
-            --name secure-tunnel \
-            --compatibility-date 2024-01-01 2>&1; then
-            echo "✅ Worker deployed successfully!"
-            return 0
-        else
-            echo "⚠️  Attempt $attempt failed"
-            attempt=$((attempt + 1))
-            if [ $attempt -le $max_attempts ]; then
-                echo "   Retrying in 3 seconds..."
-                sleep 3
-            fi
-        fi
-    done
-    
-    return 1
-}
-
-# Step 1: Check authentication
-echo "1️⃣ Checking Cloudflare authentication..."
-if wrangler whoami &>/dev/null; then
-    echo "✅ Authenticated to Cloudflare"
+# KV namespace: reuse TUNNEL_CONFIG, or create it
+KV_ID=$(wrangler kv namespace list 2>/dev/null | python3 -c '
+import json, sys
+try:
+    print(next(n["id"] for n in json.load(sys.stdin) if n.get("title", "").endswith("TUNNEL_CONFIG")))
+except (StopIteration, ValueError):
+    pass')
+if [[ -z "$KV_ID" ]]; then
+  echo "Creating the TUNNEL_CONFIG KV namespace..."
+  KV_ID=$(wrangler kv namespace create TUNNEL_CONFIG 2>&1 | grep -oE '[a-f0-9]{32}' | head -1)
+  [[ -n "$KV_ID" ]] || { echo "❌ Could not create or find the TUNNEL_CONFIG KV namespace."; exit 1; }
+  echo "✅ KV namespace created: $KV_ID"
 else
-    echo "📝 Opening browser for authentication..."
-    wrangler login
-    if ! wrangler whoami &>/dev/null; then
-        echo "❌ Authentication failed. Please try again."
-        exit 1
-    fi
+  echo "✅ Using KV namespace $KV_ID"
 fi
 
-# Step 2: Delete old Worker (if exists)
-echo ""
-echo "2️⃣ Removing old Worker (if exists)..."
-if wrangler delete --name secure-tunnel --force 2>/dev/null; then
-    echo "✅ Old Worker removed"
-    sleep 2  # Wait for deletion to propagate
-else
-    echo "ℹ️  No existing Worker found or already removed"
-fi
-
-# Step 3: Create KV namespace if needed
-echo ""
-echo "3️⃣ Setting up KV namespace..."
-KV_ID=$(wrangler kv:namespace list 2>/dev/null | grep -o '"id":"[^"]*".*"title":"TUNNEL_CONFIG"' | grep -o '"id":"[^"]*"' | cut -d'"' -f4 || true)
-
-if [ -z "$KV_ID" ]; then
-    echo "   Creating new KV namespace..."
-    KV_OUTPUT=$(wrangler kv:namespace create "TUNNEL_CONFIG" 2>&1)
-    KV_ID=$(echo "$KV_OUTPUT" | grep -o 'id = "[^"]*"' | cut -d'"' -f2)
-    if [ -z "$KV_ID" ]; then
-        # Try alternative parsing
-        KV_ID=$(echo "$KV_OUTPUT" | grep -o '[a-f0-9]\{32\}' | head -1)
-    fi
-    echo "✅ KV namespace created: $KV_ID"
-else
-    echo "✅ Using existing KV namespace: $KV_ID"
-fi
-
-# Step 4: Create wrangler.toml with correct KV binding
-echo ""
-echo "4️⃣ Creating deployment configuration..."
-cat > wrangler-temp.toml << EOF
-name = "secure-tunnel"
-main = "src/hybrid-tunnel.js"
+# Config in a temp file, removed however the script ends
+CONFIG=$(mktemp "${TMPDIR:-/tmp}/wrangler-cffile.XXXXXX") || exit 1
+trap 'rm -f "$CONFIG"' EXIT
+cat > "$CONFIG" <<EOF
+name = "$WORKER_NAME"
+main = "$SRC"
 compatibility_date = "2024-01-01"
 
 [[kv_namespaces]]
@@ -110,76 +65,36 @@ binding = "TUNNEL_CONFIG"
 id = "$KV_ID"
 EOF
 
-echo "✅ Configuration created"
-
-# Step 5: Deploy the new Worker
-echo ""
-echo "5️⃣ Deploying new hybrid Worker..."
-if wrangler deploy --config wrangler-temp.toml; then
-    echo "✅ Worker deployed successfully!"
-    WORKER_URL=$(wrangler deployments list --name secure-tunnel 2>/dev/null | grep -o 'https://[^[:space:]]*' | head -1 || echo "https://secure-tunnel.*.workers.dev")
-else
-    echo "⚠️  Automated deployment failed. Trying alternative method..."
-    if deploy_worker; then
-        WORKER_URL="https://secure-tunnel.*.workers.dev"
-    else
-        echo ""
-        echo "❌ Automated deployment failed. Manual deployment required:"
-        echo ""
-        echo "1. Go to https://dash.cloudflare.com"
-        echo "2. Navigate to Workers & Pages"
-        echo "3. Click 'Create' → 'Create Worker'"
-        echo "4. Name it: secure-tunnel"
-        echo "5. Click 'Create'"
-        echo "6. Click 'Quick edit'"
-        echo "7. Delete the default code"
-        echo "8. Copy all content from: src/hybrid-tunnel.js"
-        echo "9. Paste and click 'Save and Deploy'"
-        echo "10. Go to Settings → Variables → KV Namespace Bindings"
-        echo "11. Add binding: Variable name = TUNNEL_CONFIG"
-        echo ""
-        rm -f wrangler-temp.toml
-        exit 1
-    fi
+if [[ $RECREATE -eq 1 ]]; then
+  echo ""
+  echo "⚠️  --recreate deletes the live Worker; cffile links stop working until the deploy below succeeds."
+  printf 'Type %s to confirm: ' "$WORKER_NAME"
+  read -r confirm
+  [[ "$confirm" == "$WORKER_NAME" ]] || { echo "Not confirmed; nothing changed."; exit 1; }
+  wrangler delete --name "$WORKER_NAME" --force || { echo "❌ Delete failed; nothing else changed."; exit 1; }
 fi
 
-# Step 6: Test the deployment
-echo ""
-echo "6️⃣ Testing deployment..."
-# Use the known Worker URL for testing
-TEST_URL="https://secure-tunnel.wemea-5ahhf.workers.dev"
-TEST_RESPONSE=$(curl -s -X POST "$TEST_URL/api/register" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "tunnelId": "test-deploy",
-    "password": "test",
-    "port": 8080,
-    "cloudflaredUrl": "https://test.trycloudflare.com",
-    "description": "Test"
-  }' 2>/dev/null || echo "{}")
-
-if echo "$TEST_RESPONSE" | grep -q "success"; then
-    echo "✅ Worker is responding correctly!"
-else
-    echo "⚠️  Worker deployed but may need configuration"
+echo "Deploying..."
+if ! wrangler deploy --config "$CONFIG"; then
+  echo ""
+  echo "❌ Deploy failed.$([[ $RECREATE -eq 0 ]] && echo ' The live Worker is unchanged.')"
+  echo "   Manual route: dash.cloudflare.com > Workers & Pages > $WORKER_NAME > Edit code,"
+  echo "   paste ${SRC#$REPO/}, and keep the TUNNEL_CONFIG KV binding ($KV_ID)."
+  exit 1
 fi
+echo "✅ Worker deployed with the TUNNEL_CONFIG binding"
 
-# Cleanup
-rm -f wrangler-temp.toml
-
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "✅ cffile Worker Fix Complete!"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
-echo "The password authentication should now work correctly."
-echo "When you use cffile with a password, it will:"
-echo "1. Show the authentication page"
-echo "2. After entering password, redirect directly to your files"
-echo "3. No more 'Connection Instructions' page"
-echo ""
-echo "Test it with:"
-echo "  cffile -p mypassword somefile.txt"
-echo ""
-echo "Worker URL: $WORKER_URL"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+TEST_URL="https://$WORKER_NAME.wemea-5ahhf.workers.dev"
+if [[ $SELFTEST -eq 1 ]]; then
+  # Writes a "test-deploy" tunnel record into the live KV
+  if curl -fsS -X POST "$TEST_URL/api/register" -H "Content-Type: application/json" \
+       -d '{"tunnelId":"test-deploy","password":"test","port":8080,"cloudflaredUrl":"https://test.trycloudflare.com","description":"Test"}' |
+     grep -q success; then
+    echo "✅ Worker answered /api/register"
+  else
+    echo "⚠️  Worker deployed but /api/register did not answer with success"
+  fi
+else
+  echo "Check it read-only: curl -sI $TEST_URL  (or re-run with --selftest)"
+fi
+echo "Test with: cffile -p mypassword somefile.txt"
