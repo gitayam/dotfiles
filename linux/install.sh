@@ -40,7 +40,13 @@ create_symlink() {
         echo "✓ Symlink for $file_name already exists and is correct."
     else
         if [[ -e "$destination_file" ]]; then
-            read -p "File $destination_file already exists. Replace with a symlink? (y/n): " choice
+            # SYNC_ANSWER (y/n) answers for every file; initial_linux_setup.sh sets it
+            if [[ -n "$SYNC_ANSWER" ]]; then
+                choice="$SYNC_ANSWER"
+                echo "File $destination_file already exists. Replace with a symlink? $choice (preset)"
+            else
+                read -p "File $destination_file already exists. Replace with a symlink? (y/n): " choice
+            fi
             if [[ "$choice" != "y" ]]; then
                 echo "✓ Kept existing file $file_name."
                 return

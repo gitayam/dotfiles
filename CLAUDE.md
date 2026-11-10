@@ -81,7 +81,11 @@ Interactive sync from this repo's `shared/zsh/` (the canonical copies) to `~/.zs
 
 For each differing file it asks before overwriting and keeps a timestamped backup. `scripts/sync_mac_dotfiles.sh` is a stub that runs it. `macos/.zshrc` is a stale copy; edit `shared/zsh/.zshrc`.
 
-The new-Mac bootstrap is `macos/initial_macos_setup.sh` (alias `initial-install`): Homebrew formulae and casks, IrregularChat bookmarks file, macOS security/defaults, then the sync above. All questions come first, then one sudo prompt (kept alive), then it runs unattended with `HOMEBREW_NO_ASK=1`; only the screen-lock delay and FileVault, if chosen, ask for the password again at the very end. Re-runnable; `DRY_RUN=1` asks the questions but only prints brew commands and skips sudo, settings and sync. It skips casks Homebrew has disabled and lists every skipped or failed item at the end.
+The new-Mac bootstrap is `macos/initial_macos_setup.sh` (alias `initial-install`): Homebrew formulae and casks, IrregularChat bookmarks file, macOS security/defaults, then the sync above. All questions come first, then one sudo prompt (kept alive), then it runs unattended with `HOMEBREW_NO_ASK=1`; only the screen-lock delay and FileVault, if chosen, ask for the password again at the very end. Re-runnable; `DRY_RUN=1` asks the questions but only prints brew commands and skips sudo, settings and sync. It skips casks Homebrew has disabled and lists every skipped or failed item, plus next steps, at the end.
+
+The Linux counterpart is `linux/initial_linux_setup.sh` (Debian/Ubuntu; same alias on Linux), with the same flow and `DRY_RUN=1` (which also runs on macOS to test the flow). Sources in order: distro apt, vendor apt repos or checksummed .debs (Signal, Mullvad, Proton VPN, Proton's `version.json` feeds with SHA-512), vendor install scripts (Tailscale, Claude Code, Codex, OpenCode, Hermes, Ollama), Flathub only for publisher-verified apps (Element is the labelled exception). Anything else becomes a next step with its download page.
+
+Both scripts source `shared/setup/common.sh` (prompt parsing, sudo keepalive, summary, bookmarks file, and the vibe-coding step that clones `git.juntogroups.org/public-repos/vibe-coding` beside this repo and symlinks rules/skills/agents without overwriting existing files). Change shared behaviour there, OS-specific package lists in each script. Both have a DFP (Digital Force Protection) menu based on Irregularpedia's Quick DFP guide and Privacy Guides.
 
 ---
 

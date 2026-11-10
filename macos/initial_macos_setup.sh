@@ -12,6 +12,8 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Shared with linux/initial_linux_setup.sh: prompts, summary, vibe-coding, bookmarks
+source "$REPO_ROOT/shared/setup/common.sh"
 ARCH=$(uname -m)
 
 # Global variables to store user preferences
@@ -21,6 +23,7 @@ CLOUD_CHOICES=()
 PROTON_CHOICES=()
 INSTALL_MULLVAD=""
 MICROSOFT_CHOICES=()
+DFP_CHOICES=()
 APPLY_SETTINGS=""
 DISABLE_REMOTE=""
 ENABLE_FILEVAULT="n"
@@ -32,56 +35,12 @@ SYNC_ANSWER=""
 export HOMEBREW_NO_ASK=1
 export HOMEBREW_NO_ENV_HINTS=1
 
-# Problems collected during the run, printed together at the end
-PROBLEMS=()
-
-note_problem() {
-  PROBLEMS+=("$1")
-}
-
-is_dry_run() {
-  [[ "${DRY_RUN:-0}" == "1" ]]
-}
-
-# Ask for the password once and keep the sudo ticket fresh, so Homebrew's pkg
-# installers and the system settings never stop to ask again.
-start_sudo_keepalive() {
-  echo "Enter your Mac password once. The rest of the setup runs without questions."
-  if ! sudo -v; then
-    echo "❌ Setup needs administrator rights. Re-run as an admin user."
-    exit 1
-  fi
-  ( while kill -0 "$$" 2>/dev/null; do sudo -n true 2>/dev/null; sleep 50; done ) &
-  SUDO_KEEPALIVE_PID=$!
-  trap 'kill "$SUDO_KEEPALIVE_PID" 2>/dev/null' EXIT
-}
-
 run_brew() {
   if [[ "${DRY_RUN:-0}" == "1" ]]; then
     echo "  [dry-run] brew $*"
     return 0
   fi
   brew "$@"
-}
-
-# Split a comma-separated answer into unique, trimmed choices.
-# Usage: parse_choices "1, 2,2" -> prints "1" and "2" on separate lines
-parse_choices() {
-  local seen=" " item
-  local IFS=','
-  for item in $1; do
-    item=$(echo "$item" | xargs)
-    if [[ -n "$item" && "$seen" != *" $item "* ]]; then
-      echo "$item"
-      seen="$seen$item "
-    fi
-  done
-}
-
-# True if the space-separated list contains the value
-has_choice() {
-  local value="$1"; shift
-  [[ " $* " == *" $value "* ]]
 }
 
 # Install a Homebrew formula unless Homebrew already has it.
@@ -190,6 +149,10 @@ gather_user_preferences() {
 
   echo ""
 
+  ask_vibe_coding
+
+  echo ""
+
   # AI Apps Selection
   echo "Which AI Apps would you like to install?"
   echo "1. ChatGPT"
@@ -248,6 +211,37 @@ gather_user_preferences() {
   echo -n "Do you want to install Mullvad apps (MullvadVPN, Browser)? (y/n)(Default: n): "
   read INSTALL_MULLVAD
   INSTALL_MULLVAD=${INSTALL_MULLVAD:-n}
+
+  echo ""
+
+  # Digital Force Protection: picks from Irregularpedia's Quick DFP guide and
+  # Privacy Guides. GPG Suite is left out: its last release is 2023.
+  echo "Digital Force Protection (DFP): which security and privacy tools would you like?"
+  echo "See https://irregularpedia.org/cybersecurity/prevention/quick-dfp"
+  echo "  Password managers"
+  echo "  1. KeePassXC (offline vault file) (Default)"
+  echo "  2. Bitwarden (synced vault)"
+  echo "  3. 1Password (synced vault, paid)"
+  echo "  Encryption"
+  echo "  4. Cryptomator (encrypted vaults inside cloud drives)"
+  echo "  5. VeraCrypt (encrypted volumes; uses FUSE-T, no kernel extension)"
+  echo "  6. GnuPG with the macOS password prompt (pinentry-mac)"
+  echo "  Keys and 2FA"
+  echo "  7. YubiKey tools (Yubico Authenticator, ykman)"
+  echo "  Network and monitoring (Objective-See)"
+  echo "  8. LuLu outbound firewall"
+  echo "  9. BlockBlock and OverSight (alerts on new launch items and mic/camera use)"
+  echo "  Privacy"
+  echo "  10. Metadata scrubbing (exiftool, mat2)"
+  echo "  11. Tor Browser"
+  echo "  12. All of the above"
+  echo "  13. None"
+  echo -n "Enter your choice (1-13)(Default: 1) (multiple choices separated by commas): "
+  read dfp_choice
+  DFP_CHOICES=($(parse_choices "${dfp_choice:-1}"))
+  if has_choice 12 "${DFP_CHOICES[@]}"; then
+    DFP_CHOICES=(1 2 3 4 5 6 7 8 9 10 11)
+  fi
 
   echo ""
 
@@ -395,7 +389,6 @@ install_gui_apps() {
   # qBittorrent's cask was disabled on 2026-09-01 (fails Gatekeeper); Transmission replaces it
   install_cask element
   install_cask firefox
-  install_cask keepassxc
   install_cask obsidian
   install_cask transmission
   install_cask simplex
@@ -417,7 +410,7 @@ install_gui_apps() {
           echo "Proton Authenticator is already installed."
         else
           echo "Proton Authenticator is only on the Mac App Store."
-          note_problem "Install Proton Authenticator from the Mac App Store: https://apps.apple.com/app/id6741758667"
+          note_next_step "Install Proton Authenticator from the Mac App Store: https://apps.apple.com/app/id6741758667"
         fi
         ;;
       9) ;;
@@ -452,36 +445,66 @@ install_gui_apps() {
   fi
 }
 
-# Write the community bookmarks as a standard bookmarks file that every browser
-# can import. Writing browser databases directly is unsafe while the browser
-# runs, and adding them again on every re-run creates duplicates.
-write_bookmarks_file() {
-  local bookmarks_file="$HOME/Downloads/irregularchat-bookmarks.html"
-  if is_dry_run; then
-    echo "[dry-run] Would write IrregularChat bookmarks to $bookmarks_file"
+install_dfp_tools() {
+  if has_choice 13 "${DFP_CHOICES[@]}"; then
+    echo "No DFP tools selected. Skipping."
+    return
+  fi
+  echo "Installing selected DFP tools..."
+  for choice in "${DFP_CHOICES[@]}"; do
+    case $choice in
+      1) install_cask keepassxc ;;
+      2)
+        install_cask bitwarden
+        note_next_step "Bitwarden: set Settings > Security > Key derivation function to Argon2id"
+        ;;
+      3) install_cask 1password ;;
+      4) install_cask cryptomator ;;
+      5) install_cask veracrypt-fuse-t "VeraCrypt.app" ;;
+      6)
+        install_formula gnupg
+        install_formula pinentry-mac
+        configure_pinentry_mac
+        ;;
+      7)
+        install_cask yubico-authenticator
+        install_formula ykman
+        ;;
+      8)
+        install_cask lulu
+        note_next_step "LuLu: open it once and approve its network extension in System Settings"
+        ;;
+      9)
+        install_cask blockblock
+        install_cask oversight
+        note_next_step "BlockBlock and OverSight: open each once and grant the permissions they ask for"
+        ;;
+      10)
+        install_formula exiftool
+        install_formula mat2
+        ;;
+      11) install_cask tor-browser ;;
+      *) echo "Invalid choice: $choice" ;;
+    esac
+  done
+}
+
+# Point gpg-agent at the macOS password dialog, unless a pinentry is already set
+configure_pinentry_mac() {
+  local conf="$HOME/.gnupg/gpg-agent.conf"
+  if grep -qs '^pinentry-program' "$conf"; then
+    echo "gpg-agent already has a pinentry-program. Left as is."
     return 0
   fi
-  mkdir -p "$HOME/Downloads"
-  cat > "$bookmarks_file" <<'HTML'
-<!DOCTYPE NETSCAPE-Bookmark-file-1>
-<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">
-<TITLE>Bookmarks</TITLE>
-<H1>Bookmarks</H1>
-<DL><p>
-  <DT><H3>IrregularChat</H3>
-  <DL><p>
-    <DT><A HREF="https://forum.irregularchat.com">Irregular Forum</A>
-    <DT><A HREF="https://irregularpedia.org">Irregularpedia</A>
-    <DT><A HREF="https://matrix.irregularchat.com">Irregular Matrix</A>
-    <DT><A HREF="https://videos.irregularchat.com">Irregular Videos</A>
-  </DL><p>
-</DL><p>
-HTML
-  echo "Wrote IrregularChat bookmarks to $bookmarks_file"
-  echo "  Import it once per browser:"
-  echo "  Safari: File > Import From > Bookmarks HTML File"
-  echo "  Firefox: Bookmarks > Manage Bookmarks > Import and Backup > Import Bookmarks from HTML"
-  echo "  Chrome/Brave/Edge: Bookmarks > Import Bookmarks and Settings > Bookmarks HTML File"
+  if is_dry_run; then
+    echo "  [dry-run] Would add pinentry-program to $conf"
+    return 0
+  fi
+  mkdir -p "$HOME/.gnupg"
+  chmod 700 "$HOME/.gnupg"
+  echo "pinentry-program $(brew --prefix)/bin/pinentry-mac" >> "$conf"
+  gpgconf --kill gpg-agent 2>/dev/null
+  echo "gpg-agent now uses pinentry-mac."
 }
 
 configure_macos_settings() {
@@ -644,19 +667,6 @@ configure_macos_settings() {
   echo ""
 }
 
-print_summary() {
-  echo "======================================"
-  if [[ ${#PROBLEMS[@]} -eq 0 ]]; then
-    echo "✅ Initial install complete, no problems."
-  else
-    echo "Initial install complete with ${#PROBLEMS[@]} item(s) needing attention:"
-    for problem in "${PROBLEMS[@]}"; do
-      echo "  - $problem"
-    done
-  fi
-  echo "======================================"
-}
-
 # The only steps that need the user again, run once everything else is done:
 # both ask for the login password, and FileVault prints a recovery key.
 finish_steps_needing_user() {
@@ -708,6 +718,8 @@ main() {
   install_terminal_apps
   install_cloud_drives
   install_gui_apps
+  install_dfp_tools
+  install_vibe_coding
   write_bookmarks_file
   configure_macos_settings
 

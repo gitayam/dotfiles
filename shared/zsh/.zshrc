@@ -76,10 +76,14 @@ sudotouch() {
     echo "Touch ID for sudo not enabled. Passwords will be required for sudo."
   fi
 }
-# alias for initial-setup.sh
-alias initial-install="$HOME/Git/dotfiles/macos/initial_macos_setup.sh"
-# call sudotouch to enable Touch ID for sudo if not already enabled
-sudotouch
+# New-machine setup and Touch ID for sudo, per OS (this file is synced to Linux too)
+if [[ "$OSTYPE" == darwin* ]]; then
+  alias initial-install="$HOME/Git/dotfiles/macos/initial_macos_setup.sh"
+  # call sudotouch to enable Touch ID for sudo if not already enabled
+  sudotouch
+else
+  alias initial-install="$HOME/Git/dotfiles/linux/initial_linux_setup.sh"
+fi
 
 # Add local bin to PATH
 export PATH="$HOME/.local/bin:$PATH"
