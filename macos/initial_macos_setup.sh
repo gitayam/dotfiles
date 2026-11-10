@@ -3,8 +3,8 @@
 # then the zsh dotfile sync. Safe to re-run: installed packages are skipped.
 #
 # Every question is asked up front, then the password once; after that the run
-# is unattended. The one exception is FileVault, which needs the user and runs
-# last only if they chose it.
+# is unattended. The exceptions are the screen lock delay and FileVault, which
+# need the login password and run last, only if the user chose them.
 #
 # Runs on the stock /bin/bash (3.2), so no associative arrays.
 # DRY_RUN=1 asks the questions, prints the brew commands instead of running
@@ -18,12 +18,13 @@ ARCH=$(uname -m)
 EDITOR_CHOICES=()
 AI_CHOICES=()
 CLOUD_CHOICES=()
-INSTALL_PROTON=""
+PROTON_CHOICES=()
 INSTALL_MULLVAD=""
 MICROSOFT_CHOICES=()
 APPLY_SETTINGS=""
 DISABLE_REMOTE=""
 ENABLE_FILEVAULT="n"
+SET_SCREEN_LOCK="n"
 SYNC_ANSWER=""
 
 # Homebrew 7 asks "Do you want to proceed?" before every install. Older
@@ -147,6 +148,10 @@ print("|".join([status, reason, replacement, apps[0] if apps else ""]))
   run_brew install --cask "$token" || note_problem "cask $token: brew install failed (see output above)"
 }
 
+screen_lock_is_immediate() {
+  sysadminctl -screenLock status 2>&1 | grep -qE 'immediate|delay is 0 seconds'
+}
+
 # Install a command-line agent unless the command is already on PATH. Their
 # native installers (claude, hermes) put them in ~/.local/bin, outside Homebrew.
 # Usage: install_cli <command> <brew name> --cask|--formula
@@ -190,11 +195,13 @@ gather_user_preferences() {
   echo "1. ChatGPT"
   echo "2. Claude"
   echo "3. LM Studio"
-  echo "4. Qwen (no Homebrew cask; prints the download page)"
-  echo "5. None"
-  echo -n "Enter your choice (1-5)(Default: 5) (multiple choices separated by commas): "
+  echo "4. Ollama (local models)"
+  echo "5. Perplexity"
+  echo "6. Qwen (no Homebrew cask; prints the download page)"
+  echo "7. None"
+  echo -n "Enter your choice (1-7)(Default: 7) (multiple choices separated by commas): "
   read ai_choice
-  AI_CHOICES=($(parse_choices "${ai_choice:-5}"))
+  AI_CHOICES=($(parse_choices "${ai_choice:-7}"))
 
   echo ""
 
@@ -217,9 +224,26 @@ gather_user_preferences() {
   echo ""
 
   # VPN Apps Selection
-  echo -n "Do you want to install Proton apps (ProtonVPN, Mail, Pass, Drive)? (y/n)(Default: n): "
-  read INSTALL_PROTON
-  INSTALL_PROTON=${INSTALL_PROTON:-n}
+  # Proton Apps Selection. Lumo, Wallet and Docs have no Mac app (web and mobile only).
+  echo "Which Proton apps would you like to install?"
+  echo "1. Proton VPN"
+  echo "2. Proton Mail (includes Calendar)"
+  echo "3. Proton Pass"
+  echo "4. Proton Drive"
+  echo "5. Proton Mail Bridge (paid plans; mail in Apple Mail, Thunderbird, Outlook)"
+  echo "6. Proton Meet"
+  echo "7. Proton Authenticator (Mac App Store; prints the link)"
+  echo "8. All of the above"
+  echo "9. None"
+  echo "   Lumo (AI), Wallet and Docs have no Mac app: use lumo.proton.me, wallet.proton.me, drive.proton.me"
+  echo -n "Enter your choice (1-9)(Default: 9) (multiple choices separated by commas): "
+  read proton_choice
+  PROTON_CHOICES=($(parse_choices "${proton_choice:-9}"))
+  if has_choice 8 "${PROTON_CHOICES[@]}"; then
+    PROTON_CHOICES=(1 2 3 4 5 6 7)
+  fi
+
+  echo ""
 
   echo -n "Do you want to install Mullvad apps (MullvadVPN, Browser)? (y/n)(Default: n): "
   read INSTALL_MULLVAD
@@ -253,6 +277,16 @@ gather_user_preferences() {
     echo -n "Do you want to disable remote login services? (y/yes/n/no)(Default: n): "
     read DISABLE_REMOTE
     DISABLE_REMOTE=${DISABLE_REMOTE:-n}
+
+    # macOS ignores the old com.apple.screensaver askForPassword defaults;
+    # only sysadminctl changes the delay, and it needs the login password.
+    if ! screen_lock_is_immediate; then
+      echo ""
+      echo "Your Mac waits before requiring a password after sleep or the screen saver."
+      echo -n "Require it immediately? You'll type your password at the end of setup. (y/n)(Default: y): "
+      read SET_SCREEN_LOCK
+      SET_SCREEN_LOCK=${SET_SCREEN_LOCK:-y}
+    fi
 
     if ! fdesetup status | grep -q "FileVault is On"; then
       echo ""
@@ -296,7 +330,7 @@ install_cloud_drives() {
       1) echo "iCloud Drive is built-in to macOS. No installation needed." ;;
       2) install_cask google-drive ;;
       3) install_cask dropbox ;;
-      4) install_cask pcloud-drive ;;
+      4) echo "pCloud left Homebrew. Download it from https://www.pcloud.com/download-free-online-cloud-file-storage.html" ;;
       5) install_cask megasync ;;
       6) install_cask onedrive ;;
       7) install_cask box-drive ;;
@@ -342,7 +376,7 @@ install_gui_apps() {
     done
   fi
 
-  if has_choice 5 "${AI_CHOICES[@]}"; then
+  if has_choice 7 "${AI_CHOICES[@]}"; then
     echo "No AI App selected. Skipping AI App installation."
   else
     for choice in "${AI_CHOICES[@]}"; do
@@ -350,7 +384,9 @@ install_gui_apps() {
         1) install_cask chatgpt ;;
         2) install_cask claude ;;
         3) install_cask lm-studio ;;
-        4) echo "Qwen has no Homebrew cask. Download it from https://chat.qwen.ai" ;;
+        4) install_cli ollama ollama-app --cask ;;
+        5) install_cask perplexity ;;
+        6) echo "Qwen has no Homebrew cask. Download it from https://chat.qwen.ai" ;;
         *) echo "Invalid choice: $choice" ;;
       esac
     done
@@ -364,16 +400,30 @@ install_gui_apps() {
   install_cask transmission
   install_cask simplex
   install_cask tailscale-app "Tailscale.app"
-  install_cask docker
+  install_cask signal
+  install_cask docker-desktop
   install_cask warp
 
-  if [[ "$INSTALL_PROTON" == "y" ]]; then
-    echo "Installing Proton apps..."
-    install_cask protonvpn "Proton VPN.app"
-    install_cask proton-mail
-    install_cask proton-pass
-    install_cask proton-drive
-  fi
+  for choice in "${PROTON_CHOICES[@]}"; do
+    case $choice in
+      1) install_cask protonvpn "Proton VPN.app" ;;
+      2) install_cask proton-mail ;;
+      3) install_cask proton-pass ;;
+      4) install_cask proton-drive ;;
+      5) install_cask proton-mail-bridge ;;
+      6) install_cask proton-meet ;;
+      7)
+        if [[ -d "/Applications/Proton Authenticator.app" ]]; then
+          echo "Proton Authenticator is already installed."
+        else
+          echo "Proton Authenticator is only on the Mac App Store."
+          note_problem "Install Proton Authenticator from the Mac App Store: https://apps.apple.com/app/id6741758667"
+        fi
+        ;;
+      9) ;;
+      *) echo "Invalid choice: $choice" ;;
+    esac
+  done
 
   if [[ "$INSTALL_MULLVAD" == "y" ]]; then
     echo "Installing Mullvad apps..."
@@ -465,15 +515,15 @@ configure_macos_settings() {
   echo "Disabling automatic login..."
   sudo defaults delete /Library/Preferences/com.apple.loginwindow autoLoginUser 2>/dev/null || true
 
-  # 4. Require password immediately after sleep/screensaver
-  echo "Setting password requirements..."
-  defaults write com.apple.screensaver askForPassword -int 1
-  defaults write com.apple.screensaver askForPasswordDelay -int 0
+  # 4. Require password immediately after sleep/screensaver: needs the login
+  # password, so finish_steps_needing_user runs it last
 
   # 5. Disable remote login services (answered up front)
   if [[ "$DISABLE_REMOTE" =~ ^[Yy]([Ee][Ss])?$ ]]; then
     echo "Disabling remote login and screen sharing..."
-    sudo systemsetup -setremotelogin off
+    # Needs Full Disk Access for the terminal; -f skips its "are you sure" prompt
+    sudo systemsetup -setremotelogin -f off ||
+      note_problem "Remote Login still on: grant your terminal Full Disk Access, or turn it off in System Settings > General > Sharing"
     sudo launchctl disable system/com.apple.screensharing 2>/dev/null || true
     echo "✅ Remote services disabled"
   else
@@ -491,7 +541,10 @@ configure_macos_settings() {
 
   # 8. Enable Gatekeeper
   echo "Enabling Gatekeeper..."
-  sudo spctl --master-enable
+  if ! spctl --status 2>/dev/null | grep -q "assessments enabled"; then
+    # --master-enable was renamed --global-enable in macOS 15
+    sudo spctl --global-enable 2>/dev/null || sudo spctl --master-enable
+  fi
 
   # Privacy & Cleanup (9-11)
   echo "Configuring privacy settings..."
@@ -505,7 +558,6 @@ configure_macos_settings() {
   echo "Configuring Safari privacy..."
   if defaults write com.apple.Safari IncludeDevelopMenu -bool true 2>/dev/null; then
     defaults write com.apple.Safari WebKitDeveloperExtrasEnabledPreferenceKey -bool true
-    defaults write com.apple.Safari SendDoNotTrackHTTPHeader -bool true
   else
     echo "⚠️  Skipped Safari settings: this terminal needs Full Disk Access to write them."
     note_problem "Safari settings skipped: grant your terminal Full Disk Access (System Settings > Privacy & Security), then re-run"
@@ -514,20 +566,18 @@ configure_macos_settings() {
   # 11. Enable advanced security logging and auditing
   echo "Enabling security auditing..."
   sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.auditd.plist 2>/dev/null || true
-  sudo defaults write /Library/Preferences/com.apple.loginwindow LoginHook /usr/bin/logger
-  sudo defaults write /Library/Preferences/com.apple.loginwindow LogoutHook /usr/bin/logger
 
   # Convenience & Performance (12-17)
   echo "Configuring system performance..."
 
-  # 12. Disable Spotlight indexing of external drives
-  echo "Configuring Spotlight..."
-  sudo defaults write /.Spotlight-V100/VolumeConfiguration Exclusions -array "/Volumes" 2>/dev/null || true
-
-  # 13. Enable tap to click and three-finger drag
+  # 13. Enable tap to click and three-finger drag on built-in and Bluetooth
+  # trackpads; tapBehavior applies tap to click at the login screen too
   echo "Configuring trackpad..."
-  defaults write com.apple.driver.AppleBluetoothMultitouch.trackpad Clicking -bool true
-  defaults write com.apple.AppleMultitouchTrackpad TrackpadThreeFingerDrag -bool true
+  for domain in com.apple.AppleMultitouchTrackpad com.apple.driver.AppleBluetoothMultitouch.trackpad; do
+    defaults write "$domain" Clicking -bool true
+    defaults write "$domain" TrackpadThreeFingerDrag -bool true
+  done
+  defaults write NSGlobalDomain com.apple.mouse.tapBehavior -int 1
 
   # 14. Show hidden files and file extensions
   echo "Configuring Finder visibility..."
@@ -607,21 +657,30 @@ print_summary() {
   echo "======================================"
 }
 
-# Runs after the summary because it needs the user: fdesetup asks for the login
-# password and prints the recovery key.
-enable_filevault() {
-  [[ "$ENABLE_FILEVAULT" =~ ^[Yy] ]] || return 0
+# The only steps that need the user again, run once everything else is done:
+# both ask for the login password, and FileVault prints a recovery key.
+finish_steps_needing_user() {
+  [[ "$SET_SCREEN_LOCK" =~ ^[Yy] || "$ENABLE_FILEVAULT" =~ ^[Yy] ]] || return 0
   if is_dry_run; then
-    echo "[dry-run] Would turn on FileVault now."
+    [[ "$SET_SCREEN_LOCK" =~ ^[Yy] ]] && echo "[dry-run] Would set the screen lock to immediate now."
+    [[ "$ENABLE_FILEVAULT" =~ ^[Yy] ]] && echo "[dry-run] Would turn on FileVault now."
     return 0
   fi
   echo ""
   echo "======================================"
-  echo "Last step: turning on FileVault. Your input is needed."
-  echo "Save the recovery key it prints somewhere other than this Mac."
+  echo "Last steps: your input is needed."
   echo "======================================"
-  sudo fdesetup enable -user "$USER" ||
-    echo "⚠️  FileVault was not turned on. Use System Settings > Privacy & Security > FileVault."
+  if [[ "$SET_SCREEN_LOCK" =~ ^[Yy] ]]; then
+    echo "Requiring your password immediately after sleep. Enter your login password:"
+    # "-password -" prompts, so the password never appears in the command line
+    sysadminctl -screenLock immediate -password - ||
+      note_problem "Screen lock not changed: System Settings > Lock Screen > Require password after screen saver begins > Immediately"
+  fi
+  if [[ "$ENABLE_FILEVAULT" =~ ^[Yy] ]]; then
+    echo "Turning on FileVault. Save the recovery key it prints somewhere other than this Mac."
+    sudo fdesetup enable -user "$USER" ||
+      note_problem "FileVault not turned on: System Settings > Privacy & Security > FileVault"
+  fi
 }
 
 main() {
@@ -662,8 +721,8 @@ main() {
       note_problem "dotfile sync failed: run $REPO_ROOT/macos/install.sh"
   fi
 
+  finish_steps_needing_user
   print_summary
-  enable_filevault
 }
 
 # Run only when executed, so the functions can be sourced for testing
