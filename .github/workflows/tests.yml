@@ -1,0 +1,28 @@
+# Runs tests/run.sh on macOS and Linux. On Ubuntu this also runs
+# linux/harden.sh --check (read-only) and the Linux setup dry run on a real
+# Linux machine. Nothing here applies changes or uses secrets.
+name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      # v7.0.1, pinned to its commit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install zsh (Ubuntu)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y -qq zsh
+      - name: Run tests
+        run: tests/run.sh -v

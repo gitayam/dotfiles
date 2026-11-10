@@ -95,6 +95,10 @@ OS hardening lives in `macos/harden.sh` and `linux/harden.sh` (alias `harden`). 
 
 ---
 
+## Tests
+
+`tests/run.sh` (`-v` prints failing output) checks: every script parses in bash and zsh, the repo `.zshrc` starts silently and re-sources cleanly over old aliases, every `.zsh_*` loads in bash (Linux loader), `dots --lint` is empty, `git wip` refusals and index restore, `git-inventory` detection and redaction, `ssh-doctor` failure paths, the Linux sysctl and SSH-lockout logic against fakes, `harden.sh --check`, and both setup dry runs. It works in a scratch dir with its own git config and never touches `$HOME`. CI (`.github/workflows/tests.yml`) runs it on macOS and Ubuntu on every push, which is the only place `linux/harden.sh --check` and the Linux setup run on real Linux. Run it before pushing; add a test (and see it fail on the broken code) when you fix a bug.
+
 ## Workstation tools (git, SSH, tmux, Tailscale)
 
 | Tool | Where | Does |
