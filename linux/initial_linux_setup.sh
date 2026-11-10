@@ -244,10 +244,11 @@ gather_user_preferences() {
   echo "4. Codex (OpenAI, CLI)"
   echo "5. OpenCode (CLI)"
   echo "6. Hermes Agent (Nous Research, CLI)"
-  echo "7. None (Default)"
-  echo -n "Enter your choice (1-7)(Default: 7) (multiple choices separated by commas): "
+  echo "7. Orca (runs Codex/Claude/Cursor as observable lanes for an orchestrator; npm)"
+  echo "8. None (Default)"
+  echo -n "Enter your choice (1-8)(Default: 8) (multiple choices separated by commas): "
   read editor_choice
-  EDITOR_CHOICES=($(parse_choices "${editor_choice:-7}"))
+  EDITOR_CHOICES=($(parse_choices "${editor_choice:-8}"))
 
   echo ""
   ask_vibe_coding
@@ -360,7 +361,7 @@ install_terminal_apps() {
 }
 
 install_editors_and_agents() {
-  if has_choice 7 "${EDITOR_CHOICES[@]}"; then
+  if has_choice 8 "${EDITOR_CHOICES[@]}"; then
     echo "No code editor or agent selected. Skipping."
     return
   fi
@@ -381,6 +382,11 @@ install_editors_and_agents() {
       4) run_vendor_installer "Codex" codex https://chatgpt.com/codex/install.sh sh ;;
       5) run_vendor_installer "OpenCode" opencode https://opencode.ai/v2/install bash ;;
       6) run_vendor_installer "Hermes Agent" hermes https://hermes-agent.nousresearch.com/install.sh bash ;;
+      7)
+        apt_install nodejs npm
+        # ~/.local prefix: no sudo, and ~/.local/bin is on PATH via the dotfiles
+        install_orca "$HOME/.local"
+        ;;
       *) echo "Invalid choice: $choice" ;;
     esac
   done

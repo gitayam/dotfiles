@@ -75,6 +75,34 @@ ask_vibe_coding() {
   fi
 }
 
+# Orca (github.com/happycatlabs/orca, npm "orcastrator"): dispatches Codex,
+# Claude or Cursor work as observable "lanes" for an orchestrator. Pinned: the
+# project is young (one maintainer); bump after reading its changelog. Checked
+# by npm package, not by `orca` on PATH: on Linux that is the GNOME screen reader.
+ORCA_VERSION="0.2.25"
+# Usage: install_orca [npm prefix]  (a prefix avoids sudo for apt's npm)
+install_orca() {
+  local prefix="$1"
+  local -a npm_prefix=()
+  [[ -n "$prefix" ]] && npm_prefix=(--prefix "$prefix")
+  if ! command -v npm &>/dev/null; then
+    is_dry_run || { note_problem "Orca: npm not found (install Node.js first)"; return 1; }
+  fi
+  if command -v npm &>/dev/null && npm ls -g "${npm_prefix[@]}" orcastrator &>/dev/null; then
+    echo "Orca is already installed."
+    return 0
+  fi
+  if is_dry_run; then
+    echo "  [dry-run] npm install -g ${npm_prefix[*]} --ignore-scripts orcastrator@$ORCA_VERSION"
+    return 0
+  fi
+  echo "Installing Orca $ORCA_VERSION..."
+  # --ignore-scripts: it has none today; a later release can't add one silently
+  npm install -g "${npm_prefix[@]}" --ignore-scripts "orcastrator@$ORCA_VERSION" ||
+    { note_problem "Orca: npm install of orcastrator@$ORCA_VERSION failed"; return 1; }
+  note_next_step "Orca: run 'orca agents' to see which of Codex/Claude/Cursor it can drive"
+}
+
 # Symlink src to dst unless something is already there. Never overwrites.
 link_if_missing() {
   local src="$1" dst="$2"

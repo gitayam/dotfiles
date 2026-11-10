@@ -24,6 +24,7 @@ PROTON_CHOICES=()
 INSTALL_MULLVAD=""
 MICROSOFT_CHOICES=()
 DFP_CHOICES=()
+CASK_QUEUE=()
 APPLY_SETTINGS=""
 DISABLE_REMOTE=""
 ENABLE_FILEVAULT="n"
@@ -103,8 +104,47 @@ print("|".join([status, reason, replacement, apps[0] if apps else ""]))
     return 1
   fi
 
-  echo "Installing $token..."
-  run_brew install --cask "$token" || note_problem "cask $token: brew install failed (see output above)"
+  # Queued, then installed in one brew call by install_queued_casks
+  has_choice "$token" "${CASK_QUEUE[@]}" && return 0
+  echo "Queued $token for installation."
+  CASK_QUEUE+=("$token")
+}
+
+# Homebrew 7 runs `sudo --reset-timestamp` once per brew command, so each
+# separate `brew install --cask` of a pkg-based app asked for the password
+# again. One brew call for every cask means one prompt (a Touch ID tap once
+# enable_touchid_sudo has run).
+install_queued_casks() {
+  [[ ${#CASK_QUEUE[@]} -eq 0 ]] && return 0
+  echo "Installing ${#CASK_QUEUE[@]} apps in one batch: ${CASK_QUEUE[*]}"
+  run_brew install --cask "${CASK_QUEUE[@]}"
+  is_dry_run && return 0
+  # brew carries on past a failed cask; find out which ones didn't install
+  local token
+  for token in "${CASK_QUEUE[@]}"; do
+    brew list --cask "$token" &>/dev/null ||
+      note_problem "cask $token: brew install failed (see output above)"
+  done
+  CASK_QUEUE=()
+}
+
+# Touch ID for sudo, so the remaining password prompts are a fingerprint tap.
+# sudo_local survives macOS updates; /etc/pam.d/sudo is reset by them.
+enable_touchid_sudo() {
+  if grep -qs '^auth[[:space:]]*sufficient[[:space:]]*pam_tid.so' /etc/pam.d/sudo_local; then
+    echo "Touch ID for sudo is already enabled."
+    return 0
+  fi
+  if ! bioutil -rs 2>/dev/null | grep -q 'Biometrics functionality: 1'; then
+    echo "No Touch ID sensor found; sudo keeps asking for the password."
+    return 0
+  fi
+  if is_dry_run; then
+    echo "[dry-run] Would enable Touch ID for sudo in /etc/pam.d/sudo_local"
+    return 0
+  fi
+  echo "auth       sufficient     pam_tid.so" | sudo tee -a /etc/pam.d/sudo_local >/dev/null &&
+    echo "✅ Touch ID for sudo enabled (works in local terminals, not over SSH)."
 }
 
 screen_lock_is_immediate() {
@@ -142,8 +182,9 @@ gather_user_preferences() {
   echo "6. OpenCode (CLI)"
   echo "7. Hermes Agent (Nous Research, CLI)"
   echo "8. DeepSeek Harness (desktop app, Apple Silicon only)"
-  echo "9. None"
-  echo -n "Enter your choice (1-9)(Default: 2) (multiple choices separated by commas): "
+  echo "9. Orca (runs Codex/Claude/Cursor as observable lanes for an orchestrator; npm)"
+  echo "10. None"
+  echo -n "Enter your choice (1-10)(Default: 2) (multiple choices separated by commas): "
   read editor_choice
   EDITOR_CHOICES=($(parse_choices "${editor_choice:-2}"))
 
@@ -349,7 +390,7 @@ install_cloud_drives() {
 install_gui_apps() {
   echo "Installing selected GUI applications..."
 
-  if has_choice 9 "${EDITOR_CHOICES[@]}"; then
+  if has_choice 10 "${EDITOR_CHOICES[@]}"; then
     echo "No code editor or agent selected. Skipping."
   else
     for choice in "${EDITOR_CHOICES[@]}"; do
@@ -367,6 +408,10 @@ install_gui_apps() {
           else
             echo "DeepSeek Harness needs Apple Silicon. Skipping."
           fi
+          ;;
+        9)
+          install_formula node
+          install_orca
           ;;
         *) echo "Invalid choice: $choice" ;;
       esac
@@ -663,6 +708,7 @@ main() {
   gather_user_preferences
 
   is_dry_run || start_sudo_keepalive
+  enable_touchid_sudo
 
   echo "Checking if Homebrew is installed..."
   if ! command -v brew &> /dev/null; then
@@ -683,6 +729,7 @@ main() {
   install_cloud_drives
   install_gui_apps
   install_dfp_tools
+  install_queued_casks
   install_vibe_coding
   write_bookmarks_file
   configure_macos_settings
