@@ -59,7 +59,7 @@ SAVEHIST=10000
 
 _sudotouch_enabled() {
   # cat, not grep on both files: BSD grep exits 2 when one is missing, even on a match
-  cat /etc/pam.d/sudo_local /etc/pam.d/sudo 2>/dev/null | grep -q "^auth[[:space:]]*sufficient[[:space:]]*pam_tid.so"
+  cat /etc/pam.d/sudo_local /etc/pam.d/sudo 2>/dev/null | grep -qE "^[[:space:]]*auth[[:space:]].*pam_tid"
 }
 _SUDOTOUCH_DECLINED="$HOME/.config/dotfiles/sudotouch-declined"
 
@@ -71,15 +71,12 @@ sudotouch() {
   fi
 
   # Prompt to enable Touch ID for sudo
-  REPLY="n" # default to no
-  echo -n "Touch ID for sudo is not enabled. Do you want to enable it for Macs with Touch Bar? (y/n):(default:n) "
+  echo -n "Touch ID for sudo is not enabled. Use your fingerprint for sudo? (y/n)(Default: y): "
   read REPLY
-  REPLY=${REPLY:-n}
+  REPLY=${REPLY:-y}
   if [[ $REPLY =~ ^[Yy]$ ]]; then
-    # sudo_local survives macOS updates; edits to /etc/pam.d/sudo are reset by them.
-    # Append, so lines already there (pam_reattach for tmux) are kept.
-    echo "auth       sufficient     pam_tid.so" | sudo tee -a /etc/pam.d/sudo_local >/dev/null
-    echo "Touch ID for sudo has been enabled."
+    # One implementation: sudo_local (survives updates), written safely
+    "$HOME/Git/dotfiles/macos/harden.sh" --touchid
   else
     mkdir -p "${_SUDOTOUCH_DECLINED:h}" && touch "$_SUDOTOUCH_DECLINED"
     echo "Touch ID for sudo not enabled. Run 'sudotouch' to be asked again."

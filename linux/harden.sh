@@ -15,6 +15,9 @@
 # easy to find and remove. sshd and sudoers changes are validated before they
 # take effect and removed again if validation fails.
 
+# sysctl, modprobe, sshd and ufw live in sbin, which non-root PATHs on Debian lack
+PATH="$PATH:/usr/sbin:/sbin"
+
 MODE="check"
 for arg in "$@"; do
   case "$arg" in
@@ -96,6 +99,7 @@ net.ipv6.conf.all.accept_source_route=0
 net.ipv6.conf.default.accept_source_route=0
 net.ipv4.conf.all.rp_filter=$(rp_filter_value)
 net.ipv4.conf.default.rp_filter=$(rp_filter_value)
+net.ipv4.conf.*.rp_filter=$(rp_filter_value)
 net.ipv4.tcp_syncookies=1
 net.ipv4.icmp_echo_ignore_broadcasts=1
 net.ipv4.icmp_ignore_bogus_error_responses=1
@@ -118,28 +122,59 @@ dev.tty.ldisc_autoload=0
 vm.unprivileged_userfaultfd=0
 EOF
 }
-check_sysctl() {
-  local line key want have
+# Keys where a higher value is stricter: an already stricter value is kept
+STRICTER_IS_HIGHER=" kernel.kptr_restrict kernel.dmesg_restrict kernel.unprivileged_bpf_disabled net.core.bpf_jit_harden kernel.yama.ptrace_scope kernel.perf_event_paranoid fs.protected_fifos fs.protected_regular fs.protected_hardlinks fs.protected_symlinks "
+
+# Read a sysctl from /proc/sys. Returns 1 when the key doesn't exist on this
+# kernel and 2 when it exists but can't be read (some are root-only), so an
+# unreadable key is never mistaken for a passing one.
+read_sysctl() {
+  local path="${PROC_SYS:-/proc/sys}/${1//.//}"
+  [[ -e "$path" ]] || return 1
+  if [[ -r "$path" ]] && cat "$path" 2>/dev/null; then return 0; fi
+  sudo -n cat "$path" 2>/dev/null && return 0
+  return 2
+}
+
+# One line per problem: "key=have (want X)" or "key unreadable"
+sysctl_problems() {
+  local line key want have rc iface f
   while IFS= read -r line; do
     [[ "$line" == \#* || -z "$line" ]] && continue
     key=${line%%=*}; want=${line#*=}
-    have=$(sysctl -n "$key" 2>/dev/null) || continue  # key absent on this kernel
-    [[ "$have" == "$want" ]] || return 1
+    if [[ "$key" == *"*"* ]]; then
+      # net.ipv4.conf.*.rp_filter: the kernel uses the higher of "all" and the
+      # interface's own value, so every interface must match too
+      for f in "${PROC_SYS:-/proc/sys}"/net/ipv4/conf/*/rp_filter; do
+        iface=${f%/rp_filter}; iface=${iface##*/}
+        [[ "$iface" == all || "$iface" == default ]] && continue
+        have=$(cat "$f" 2>/dev/null)
+        [[ "$have" == "$want" ]] || echo "net.ipv4.conf.$iface.rp_filter=$have (want $want)"
+      done
+      continue
+    fi
+    have=$(read_sysctl "$key"); rc=$?
+    [[ $rc -eq 1 ]] && continue  # not on this kernel
+    if [[ $rc -eq 2 ]]; then echo "$key unreadable without sudo"; continue; fi
+    if [[ "$STRICTER_IS_HIGHER" == *" $key "* ]]; then
+      [[ "$have" =~ ^[0-9]+$ && "$have" -ge "$want" ]] || echo "$key=$have (want $want or higher)"
+    else
+      [[ "$have" == "$want" ]] || echo "$key=$have (want $want)"
+    fi
   done <<< "$(sysctl_settings)"
 }
+check_sysctl() { [[ -z "$(sysctl_problems)" ]]; }
 apply_sysctl() {
-  sysctl_settings | write_root_file "$SYSCTL_FILE" 0644
-  sudo sysctl --system
-}
-sysctl_mismatches() {
-  local line key want have out=""
+  local line key want have
+  # Never lower a key that is already stricter than ours
   while IFS= read -r line; do
-    [[ "$line" == \#* || -z "$line" ]] && continue
     key=${line%%=*}; want=${line#*=}
-    have=$(sysctl -n "$key" 2>/dev/null) || continue
-    [[ "$have" == "$want" ]] || out+="${key}=${have} (want ${want}) "
-  done <<< "$(sysctl_settings)"
-  echo "$out"
+    if [[ "$line" != \#* && "$STRICTER_IS_HIGHER" == *" $key "* ]]; then
+      have=$(read_sysctl "$key") && [[ "$have" =~ ^[0-9]+$ && "$have" -gt "$want" ]] && line="$key=$have"
+    fi
+    echo "$line"
+  done <<< "$(sysctl_settings)" | write_root_file "$SYSCTL_FILE" 0644
+  sudo sysctl --system
 }
 
 # --- SSH server ------------------------------------------------------------------
@@ -150,16 +185,25 @@ sshd_settings() {
   local major minor kex
   read -r major minor <<< "$(openssh_version)"
   major=${major:-0}; minor=${minor:-0}
-  # ssh-audit's Ubuntu 24.04 list; OpenSSH 10 adds ML-KEM post-quantum key exchange
-  kex="sntrup761x25519-sha512@openssh.com,curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512,diffie-hellman-group-exchange-sha256,diffie-hellman-group16-sha512"
-  [[ $major -ge 10 ]] && kex="mlkem768x25519-sha256,$kex"
+  if [[ $major -ge 10 ]]; then
+    # OpenSSH 10 dropped the finite-field DH groups from its defaults; don't
+    # bring them back. ML-KEM and sntrup are post-quantum hybrids.
+    kex="mlkem768x25519-sha256,sntrup761x25519-sha512,sntrup761x25519-sha512@openssh.com,curve25519-sha256,curve25519-sha256@libssh.org"
+  else
+    # ssh-audit's Ubuntu 24.04 (OpenSSH 9.6) list
+    kex="sntrup761x25519-sha512@openssh.com,curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512,diffie-hellman-group-exchange-sha256,diffie-hellman-group16-sha512"
+  fi
   echo "# Managed by dotfiles linux/harden.sh (ssh-audit.com hardening guides)"
   echo "PermitRootLogin no"
   echo "PasswordAuthentication no"
-  echo "KbdInteractiveAuthentication no"
-  echo "AuthenticationMethods publickey"
+  # A second factor already configured (TOTP, Duo) is kept, not replaced
+  if [[ "$(existing_auth_methods)" != *,* ]]; then
+    echo "KbdInteractiveAuthentication no"
+    echo "AuthenticationMethods publickey"
+  fi
   echo "PermitEmptyPasswords no"
-  echo "MaxAuthTries 3"
+  # MaxAuthTries stays at the default 6: each key an agent offers counts as a
+  # try, and 3 locks out people with several keys loaded
   echo "LoginGraceTime 30"
   echo "X11Forwarding no"
   echo "AllowAgentForwarding no"
@@ -174,10 +218,42 @@ sshd_settings() {
     echo "RequiredRSASize 3072"
   fi
 }
-check_sshd() { [[ -f "$SSHD_FILE" ]]; }
+existing_auth_methods() { sudo -n sshd -T 2>/dev/null | awk '$1 == "authenticationmethods" {print $2}'; }
+
+writable_by_others() {  # group- or world-writable (sshd's StrictModes ignores such files)
+  local mode
+  mode=$(stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1" 2>/dev/null) || return 0
+  (( (8#$mode & 8#022) != 0 ))
+}
+
+# Why the user's keys would not work once passwords are off; empty when they will.
+# sshd ignores keys in a file others can write, and RequiredRSASize 3072
+# rejects smaller RSA keys, so "authorized_keys isn't empty" is not enough.
+ssh_key_problem() {
+  local dir="$TARGET_HOME/.ssh" ak="$TARGET_HOME/.ssh/authorized_keys"
+  [[ "$TARGET_USER" == root ]] && { echo "running as root: run it as your own user with sudo, so root SSH isn't the only way in"; return; }
+  [[ -d /etc/pve ]] && { echo "Proxmox host: its cluster needs root SSH; harden SSH by hand"; return; }
+  [[ -s "$ak" ]] || { echo "no $ak yet"; return; }
+  writable_by_others "$dir" && { echo "$dir is writable by group/others (sshd would ignore the keys)"; return; }
+  writable_by_others "$ak" && { echo "$ak is writable by group/others (sshd would ignore the keys)"; return; }
+  ssh-keygen -lf "$ak" 2>/dev/null | awk '
+    /\((ED25519|ECDSA|ED25519-SK|ECDSA-SK)\)$/ { ok = 1 }
+    /\(RSA\)$/ && $1 >= 3072 { ok = 1 }
+    END { exit !ok }' ||
+    echo "no ed25519/ecdsa key or RSA key of 3072+ bits in $ak"
+}
+
+check_sshd() {
+  local cfg
+  if cfg=$(sudo -n sshd -T 2>/dev/null); then
+    grep -qx 'passwordauthentication no' <<< "$cfg" && grep -qx 'permitrootlogin no' <<< "$cfg"
+  else
+    [[ -f "$SSHD_FILE" ]]  # can't read the effective config without sudo
+  fi
+}
 apply_sshd() {
-  # Never turn off passwords for someone without a key: that locks them out
-  [[ -s "$TARGET_HOME/.ssh/authorized_keys" ]] || return 1
+  # Never turn off passwords for someone whose key won't work: that locks them out
+  [[ -z "$(ssh_key_problem)" ]] || return 1
   sshd_settings | write_root_file "$SSHD_FILE" 0644
   # 10- sorts before cloud images' 50-cloud-init.conf; sshd keeps the first value
   if sudo sshd -t; then
@@ -216,23 +292,38 @@ apply_modules() {
 # --- Core dumps ----------------------------------------------------------------
 
 check_coredumps() {
-  [[ -f /etc/security/limits.d/60-dotfiles-hardening.conf && -f /etc/systemd/coredump.conf.d/60-dotfiles-hardening.conf ]]
+  [[ -f /etc/security/limits.d/60-dotfiles-hardening.conf && -f /etc/systemd/coredump.conf.d/60-dotfiles-hardening.conf ]] || return 1
+  # Ubuntu's apport collects crashes through core_pattern regardless
+  ! systemctl is-enabled apport.service &>/dev/null
 }
 apply_coredumps() {
   printf '%s\n' '# Managed by dotfiles linux/harden.sh (CIS 1.5.x)' '* hard core 0' |
     write_root_file /etc/security/limits.d/60-dotfiles-hardening.conf 0644
   printf '%s\n' '# Managed by dotfiles linux/harden.sh' '[Coredump]' 'Storage=none' 'ProcessSizeMax=0' |
     write_root_file /etc/systemd/coredump.conf.d/60-dotfiles-hardening.conf 0644
+  if systemctl is-enabled apport.service &>/dev/null; then
+    sudo systemctl disable --now apport.service
+  fi
 }
 
 # --- Firewall ------------------------------------------------------------------
 
 check_ufw() { sudo -n ufw status 2>/dev/null | grep -q "Status: active"; }
 apply_ufw() {
-  is_installed ufw || sudo apt-get install -y -qq ufw
-  # Allow SSH before enabling, so a remote session survives
+  is_installed ufw || sudo apt-get install -y -qq ufw || return 1
+  # Allow SSH on the ports sshd really uses before enabling, so a remote session
+  # survives; inserted first, so an older saved deny rule can't win. Never
+  # enable the firewall if allowing SSH failed.
   if is_installed openssh-server; then
-    sudo ufw allow OpenSSH >/dev/null 2>&1 || sudo ufw allow 22/tcp >/dev/null
+    local ports port
+    ports=$(sudo sshd -T 2>/dev/null | awk '$1 == "port" {print $2}')
+    for port in ${ports:-22}; do
+      sudo ufw insert 1 allow "$port/tcp" >/dev/null 2>&1 || sudo ufw allow "$port/tcp" >/dev/null || return 1
+    done
+  fi
+  # Tailscale's recommendation: trust the tailnet interface (Tailscale SSH, peers)
+  if ip link show tailscale0 &>/dev/null; then
+    sudo ufw allow in on tailscale0 >/dev/null || return 1
   fi
   sudo ufw default deny incoming >/dev/null
   sudo ufw default allow outgoing >/dev/null
@@ -253,9 +344,10 @@ apply_auto_updates() {
 
 # --- sudo, logging, misc ---------------------------------------------------------
 
-SUDOERS_FILE=/etc/sudoers.d/60-dotfiles-hardening
+# zz-: sudo applies the last matching Defaults, so this file must sort last
+SUDOERS_FILE=/etc/sudoers.d/zz-dotfiles-hardening
 is_sudo_rs() { sudo --version 2>/dev/null | grep -qi 'sudo-rs'; }
-check_sudoers() { is_sudo_rs || [[ -f "$SUDOERS_FILE" ]]; }
+check_sudoers() { grep -qs '^Defaults use_pty' "$SUDOERS_FILE" && grep -qs '^Defaults logfile=' "$SUDOERS_FILE"; }
 apply_sudoers() {
   local tmp
   tmp=$(mktemp)
@@ -275,7 +367,8 @@ apply_journald() {
 }
 check_ctrl_alt_del() { [[ "$(systemctl is-enabled ctrl-alt-del.target 2>/dev/null)" == "masked" ]]; }
 apply_ctrl_alt_del() { sudo systemctl mask ctrl-alt-del.target; }
-LEGACY_PACKAGES="telnet rsh-client nis talk"
+# telnet is a transitional package on Debian 12+/Ubuntu 24.04; the client is inetutils-telnet
+LEGACY_PACKAGES="telnet inetutils-telnet rsh-client nis talk"
 check_no_legacy() {
   local p
   for p in $LEGACY_PACKAGES; do is_installed "$p" && return 1; done
@@ -287,20 +380,24 @@ apply_no_legacy() {
 }
 
 # Wi-Fi MAC randomization (Privacy Guides). "stable" keeps one address per
-# network, so captive portals don't ask again on every connect.
+# network, so captive portals don't ask again on every connect. Wired
+# connections keep their real MAC (DHCP reservations, port-based access control).
 NM_FILE=/etc/NetworkManager/conf.d/00-dotfiles-macrandomize.conf
 has_wifi() { compgen -G '/sys/class/net/*/wireless' >/dev/null; }
 check_mac_random() { [[ -f "$NM_FILE" ]]; }
 apply_mac_random() {
   printf '%s\n' '# Managed by dotfiles linux/harden.sh' '[device]' 'wifi.scan-rand-mac-address=yes' \
-    '' '[connection]' 'wifi.cloned-mac-address=stable' 'ethernet.cloned-mac-address=stable' |
+    '' '[connection]' 'wifi.cloned-mac-address=stable' |
     write_root_file "$NM_FILE" 0644
 }
 
 run_controls() {
   echo "== Disk and boot"
-  if lsblk -no TYPE 2>/dev/null | grep -q crypt; then
-    report PASS "Full-disk encryption (LUKS) in use"
+  local root_src
+  root_src=$(findmnt -no SOURCE / 2>/dev/null)
+  # The chain under / must include a crypt device (an encrypted USB disk doesn't count)
+  if [[ -n "$root_src" ]] && lsblk -s -no TYPE "$root_src" 2>/dev/null | grep -q crypt; then
+    report PASS "Full-disk encryption (LUKS) on the root filesystem"
   else
     report MANUAL "Full-disk encryption (LUKS)" "not detected; it can't be added in place: back up and reinstall with encryption"
   fi
@@ -325,10 +422,10 @@ run_controls() {
     if check_sysctl; then
       report PASS "[L1/L2, KSPP] Kernel and network sysctls" "applied"
     else
-      report FAIL "[L1/L2, KSPP] Kernel and network sysctls" "still differ: $(sysctl_mismatches)"
+      report FAIL "[L1/L2, KSPP] Kernel and network sysctls" "still differ: $(sysctl_problems | paste -sd ";" - | sed "s/;/; /g")"
     fi
   else
-    report FAIL "[L1/L2, KSPP] Kernel and network sysctls" "$(sysctl_mismatches)"
+    report FAIL "[L1/L2, KSPP] Kernel and network sysctls" "$(sysctl_problems | paste -sd ";" - | sed "s/;/; /g")"
   fi
   control "[L1/L2] Unused filesystems and network protocols blocked" check_modules apply_modules
   control "[L1 1.5.x] Core dumps off" check_coredumps apply_coredumps
@@ -361,10 +458,18 @@ run_controls() {
   echo "== SSH server"
   if ! is_installed openssh-server; then
     report PASS "No SSH server installed"
-  elif [[ -s "$TARGET_HOME/.ssh/authorized_keys" ]]; then
-    control "SSH: keys only, no root, modern algorithms (ssh-audit)" check_sshd apply_sshd
+  elif check_sshd; then
+    report PASS "SSH: keys only, no root login"
   else
-    report FAIL "SSH: keys only" "no $TARGET_HOME/.ssh/authorized_keys yet; passwords left on so you aren't locked out"
+    local key_problem
+    key_problem=$(ssh_key_problem)
+    if [[ -n "$key_problem" ]]; then
+      report MANUAL "SSH: keys only, no root login" "not changed: $key_problem"
+    else
+      control "SSH: keys only, no root, modern algorithms (ssh-audit)" check_sshd apply_sshd
+      [[ "$MODE" == "apply" ]] && check_sshd &&
+        report INFO "SSH changed" "open a NEW ssh session and log in before closing this one"
+    fi
   fi
 
   echo "== Updates"
@@ -377,7 +482,7 @@ run_controls() {
   if is_sudo_rs; then
     report INFO "sudo-rs in use" "use_pty is on by default; it has no logfile option"
   fi
-  control "[L1 5.2.x] sudo uses a pty and logs to /var/log/sudo.log" check_sudoers apply_sudoers
+  is_sudo_rs || control "[L1 5.2.x] sudo uses a pty and logs to /var/log/sudo.log" check_sudoers apply_sudoers
   control "[L1] Persistent, size-capped journal" check_journald apply_journald
   control "[STIG] Ctrl-Alt-Del reboot off" check_ctrl_alt_del apply_ctrl_alt_del
   control "[L1] Legacy clients removed (telnet, rsh, nis, talk)" check_no_legacy apply_no_legacy

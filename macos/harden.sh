@@ -5,6 +5,8 @@
 #   harden.sh --apply    apply the scriptable controls, then re-check them
 #   --keep-remote        keep Remote Login and Screen Sharing (Tailscale/SSH
 #                        access); SSH is hardened instead of turned off
+#   --touchid            only enable Touch ID for sudo (used by the setup
+#                        script before it installs apps)
 #
 # Controls follow the NIST macOS Security Compliance Project (mSCP) baselines
 # for macOS 27 (rule IDs in brackets) and the CIS benchmark levels they map
@@ -21,10 +23,19 @@ for arg in "$@"; do
     --check) MODE="check" ;;
     --apply) MODE="apply" ;;
     --keep-remote) KEEP_REMOTE=1 ;;
+    --touchid) MODE="touchid" ;;
     -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
     *) echo "Unknown option: $arg"; exit 2 ;;
   esac
 done
+
+# Run as yourself: under sudo, $HOME and the per-user settings (Siri, Terminal,
+# Bluetooth) would be root's, and the report would describe the wrong account
+if [[ $EUID -eq 0 ]]; then
+  echo "Run harden.sh as your own user, not with sudo; it asks for sudo itself."
+  exit 2
+fi
+PATH="$PATH:/usr/sbin:/sbin"
 
 FW=/usr/libexec/ApplicationFirewall/socketfilterfw
 PASS=0; FAIL=0; MANUAL=0
@@ -66,12 +77,16 @@ disabled_in_launchd() {  # service label is listed as disabled
 }
 
 listening_on() {  # TCP port has a listener on any interface
-  netstat -anp tcp 2>/dev/null | grep -qE "[.*]$1 .*LISTEN"
+  local out
+  out=$(netstat -anp tcp 2>/dev/null)
+  # No output means netstat failed: count it as listening rather than pass blind
+  [[ -z "$out" ]] && return 0
+  grep -qE "[.*]$1 .*LISTEN" <<< "$out"
 }
 
 # --- System integrity --------------------------------------------------------
 
-check_sip() { csrutil status 2>/dev/null | grep -q "enabled"; }
+check_sip() { csrutil status 2>/dev/null | grep -q "status: enabled\."; }
 check_sealed() { mount | grep ' on / ' | grep -q sealed; }
 check_gatekeeper() { spctl --status 2>/dev/null | grep -q "assessments enabled"; }
 # --master-enable was renamed --global-enable in macOS 15
@@ -79,7 +94,7 @@ apply_gatekeeper() { sudo spctl --global-enable 2>/dev/null || sudo spctl --mast
 check_xprotect() {
   local out
   out=$(xprotect status 2>/dev/null) || return 1
-  ! grep -qi disabled <<< "$out"
+  [[ -n "$out" ]] && ! grep -qi disabled <<< "$out"
 }
 
 # --- Encryption and updates --------------------------------------------------
@@ -124,15 +139,32 @@ check_screenlock() { sysadminctl -screenLock status 2>&1 | grep -qE 'immediate|d
 
 # Touch ID belongs in sudo_local, which survives OS updates; a pam_tid line in
 # /etc/pam.d/sudo itself is wiped by the next update.
-check_touchid_sudo_local() { grep -qs '^auth[[:space:]]*sufficient[[:space:]]*pam_tid.so' /etc/pam.d/sudo_local; }
+# Any active pam_tid line counts, whatever path it uses for the module
+check_touchid_sudo_local() { grep -qsE '^[[:space:]]*auth[[:space:]].*pam_tid' /etc/pam.d/sudo_local; }
+has_touchid() { bioutil -rs 2>/dev/null | grep -q 'Biometrics functionality: 1'; }
+# sudo_local is included at the top of /etc/pam.d/sudo and survives updates.
+# Created whole when absent; otherwise appended after making sure the file ends
+# in a newline: a line glued onto the last one breaks PAM, and sudo, for everyone.
 apply_touchid_sudo_local() {
-  echo "auth       sufficient     pam_tid.so" | sudo tee -a /etc/pam.d/sudo_local >/dev/null
+  local f=/etc/pam.d/sudo_local tmp
+  if [[ ! -e "$f" ]]; then
+    tmp=$(mktemp)
+    printf '%s\n' '# sudo_local: local sudo PAM config that survives macOS updates' \
+      '# Managed by dotfiles macos/harden.sh' 'auth       sufficient     pam_tid.so' > "$tmp"
+    sudo install -m 0444 -o root -g wheel "$tmp" "$f"
+    rm -f "$tmp"
+  else
+    [[ -n "$(tail -c 1 "$f")" ]] && printf '\n' | sudo tee -a "$f" >/dev/null
+    echo 'auth       sufficient     pam_tid.so' | sudo tee -a "$f" >/dev/null
+  fi
 }
-SUDOERS_DROPIN=/etc/sudoers.d/10-hardening
+# zz-: sudo applies the last matching Defaults, so this must sort after other
+# drop-ins (e.g. Amphetamine's)
+SUDOERS_DROPIN=/etc/sudoers.d/zz-dotfiles-hardening
 # Per-terminal tickets and a log line for every sudo command (CIS 5.5, 5.11).
 # The timeout stays at the default 5 minutes: CIS's 0 would prompt on every
 # command and break the setup's own sudo keepalive.
-check_sudoers() { [[ -f "$SUDOERS_DROPIN" ]]; }
+check_sudoers() { grep -qs '^Defaults timestamp_type=tty' "$SUDOERS_DROPIN" && grep -qs '^Defaults log_allowed' "$SUDOERS_DROPIN"; }
 apply_sudoers() {
   local tmp
   tmp=$(mktemp)
@@ -153,10 +185,26 @@ apply_ssh_off() {
 }
 SSHD_DROPIN=/etc/ssh/sshd_config.d/01-hardening.conf
 # Must sort before macOS's 100-macos.conf: sshd keeps the first value it reads
-check_sshd_hardened() { [[ -f "$SSHD_DROPIN" ]]; }
+check_sshd_hardened() {
+  local cfg
+  if cfg=$(sudo -n sshd -T 2>/dev/null); then
+    grep -qx 'passwordauthentication no' <<< "$cfg" && grep -qx 'permitrootlogin no' <<< "$cfg"
+  else
+    [[ -f "$SSHD_DROPIN" ]]  # the effective config needs sudo to read
+  fi
+}
+writable_by_others() { local m; m=$(stat -f %Lp "$1" 2>/dev/null) || return 0; (( (8#$m & 8#022) != 0 )); }
+# Why the user's keys would not work once passwords are off; empty when they will
+ssh_key_problem() {
+  local ak="$HOME/.ssh/authorized_keys"
+  [[ -s "$ak" ]] || { echo "no ~/.ssh/authorized_keys yet"; return; }
+  writable_by_others "$HOME/.ssh" && { echo "~/.ssh is writable by group/others (sshd would ignore the keys)"; return; }
+  writable_by_others "$ak" && { echo "authorized_keys is writable by group/others (sshd would ignore the keys)"; return; }
+  ssh-keygen -lf "$ak" >/dev/null 2>&1 || echo "no valid key in ~/.ssh/authorized_keys"
+}
 apply_sshd_hardened() {
-  # Never turn off passwords for someone without a key: that locks them out
-  [[ -s "$HOME/.ssh/authorized_keys" ]] || return 1
+  # Never turn off passwords for someone whose key won't work: that locks them out
+  [[ -z "$(ssh_key_problem)" ]] || return 1
   printf '%s\n' '# Managed by dotfiles macos/harden.sh' \
     'PasswordAuthentication no' 'KbdInteractiveAuthentication no' 'PermitRootLogin no' |
     sudo tee "$SSHD_DROPIN" >/dev/null
@@ -164,15 +212,15 @@ apply_sshd_hardened() {
   sudo sshd -t || { sudo rm -f "$SSHD_DROPIN"; return 1; }
 }
 check_screensharing_off() { disabled_in_launchd com.apple.screensharing; }
-apply_screensharing_off() { sudo launchctl disable system/com.apple.screensharing; }
+apply_screensharing_off() { sudo launchctl disable system/com.apple.screensharing; sudo launchctl bootout system/com.apple.screensharing 2>/dev/null; return 0; }
 check_ard_off() { ! pgrep -qx ARDAgent; }
 apply_ard_off() {
   sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -deactivate -stop
 }
 check_smbd_off() { disabled_in_launchd com.apple.smbd; }
-apply_smbd_off() { sudo launchctl disable system/com.apple.smbd; }
+apply_smbd_off() { sudo launchctl disable system/com.apple.smbd; sudo launchctl bootout system/com.apple.smbd 2>/dev/null; return 0; }
 check_rae_off() { disabled_in_launchd com.apple.AEServer; }
-apply_rae_off() { sudo launchctl disable system/com.apple.AEServer; }
+apply_rae_off() { sudo launchctl disable system/com.apple.AEServer; sudo launchctl bootout system/com.apple.AEServer 2>/dev/null; return 0; }
 check_printer_sharing_off() { cupsctl 2>/dev/null | grep -q '_share_printers=0'; }
 apply_printer_sharing_off() { cupsctl --no-share-printers; }
 check_bt_sharing_off() {
@@ -206,7 +254,7 @@ check_powernap_off() { [[ "$(pmset_value powernap)" == "0" ]]; }
 apply_powernap_off() { sudo pmset -a powernap 0; }
 # Laptops only: an always-on Mac mini keeps wake-for-network so SSH/Tailscale
 # can wake it
-check_womp_off() { [[ "$(pmset_value womp)" == "0" || -z "$(pmset_value womp)" ]]; }
+check_womp_off() { [[ "$(pmset_value womp)" == "0" ]]; }
 apply_womp_off() { sudo pmset -a womp 0; }
 check_battery_sleep() {
   local sleep
@@ -251,7 +299,11 @@ run_controls() {
   fi
 
   echo "== sudo"
-  control "Touch ID for sudo in sudo_local (survives updates)" check_touchid_sudo_local apply_touchid_sudo_local
+  if has_touchid; then
+    control "Touch ID for sudo in sudo_local (survives updates)" check_touchid_sudo_local apply_touchid_sudo_local
+  else
+    report INFO "No Touch ID sensor" "sudo keeps asking for the password"
+  fi
   if grep -qs '^auth[[:space:]]*sufficient[[:space:]]*pam_tid.so' /etc/pam.d/sudo; then
     report INFO "pam_tid is also in /etc/pam.d/sudo" "macOS updates reset that file; sudo_local is the durable place"
   fi
@@ -261,10 +313,11 @@ run_controls() {
   if [[ $KEEP_REMOTE -eq 1 ]]; then
     if check_ssh_off; then
       report INFO "Remote Login (SSH) is off" "--keep-remote leaves it as is"
-    elif [[ -s "$HOME/.ssh/authorized_keys" ]]; then
+    elif [[ -z "$(ssh_key_problem)" ]]; then
       control "SSH: keys only, no root login" check_sshd_hardened apply_sshd_hardened
+      [[ "$MODE" == "apply" ]] && report INFO "If SSH changed" "open a NEW ssh session and log in before closing this one"
     else
-      report FAIL "SSH: keys only" "no ~/.ssh/authorized_keys yet; passwords left on so you aren't locked out"
+      report MANUAL "SSH: keys only" "not changed: $(ssh_key_problem); passwords stay on so you aren't locked out"
     fi
     report INFO "Screen Sharing / Remote Management left as is (--keep-remote)"
   else
@@ -313,9 +366,25 @@ run_controls() {
   report INFO "Pending updates" "softwareupdate -l (install: sudo softwareupdate -i -a -R)"
 }
 
-if [[ "$MODE" == "apply" ]] && ! sudo -n true 2>/dev/null; then
-  echo "--apply needs sudo. Enter your password:"
+if [[ "$MODE" != "check" ]] && ! sudo -n true 2>/dev/null; then
+  echo "harden.sh --$MODE needs sudo. Enter your password:"
   sudo -v || exit 1
+fi
+
+if [[ "$MODE" == "touchid" ]]; then
+  if ! has_touchid; then
+    echo "No Touch ID sensor found; sudo keeps asking for the password."
+  elif check_touchid_sudo_local; then
+    echo "Touch ID for sudo is already enabled."
+  else
+    apply_touchid_sudo_local
+    if check_touchid_sudo_local; then
+      echo "✅ Touch ID for sudo enabled (works in local terminals, not over SSH)."
+    else
+      echo "⚠️  Could not enable Touch ID for sudo."; exit 1
+    fi
+  fi
+  exit 0
 fi
 
 echo "macOS hardening ($MODE) — macOS $(sw_vers -productVersion), $([[ $IS_LAPTOP -eq 1 ]] && echo laptop || echo desktop)"

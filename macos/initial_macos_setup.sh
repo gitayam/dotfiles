@@ -129,22 +129,13 @@ install_queued_casks() {
 }
 
 # Touch ID for sudo, so the remaining password prompts are a fingerprint tap.
-# sudo_local survives macOS updates; /etc/pam.d/sudo is reset by them.
+# harden.sh --touchid does it safely (sudo_local, survives updates).
 enable_touchid_sudo() {
-  if grep -qs '^auth[[:space:]]*sufficient[[:space:]]*pam_tid.so' /etc/pam.d/sudo_local; then
-    echo "Touch ID for sudo is already enabled."
-    return 0
-  fi
-  if ! bioutil -rs 2>/dev/null | grep -q 'Biometrics functionality: 1'; then
-    echo "No Touch ID sensor found; sudo keeps asking for the password."
-    return 0
-  fi
   if is_dry_run; then
-    echo "[dry-run] Would enable Touch ID for sudo in /etc/pam.d/sudo_local"
+    echo "[dry-run] Would run: $SCRIPT_DIR/harden.sh --touchid"
     return 0
   fi
-  echo "auth       sufficient     pam_tid.so" | sudo tee -a /etc/pam.d/sudo_local >/dev/null &&
-    echo "✅ Touch ID for sudo enabled (works in local terminals, not over SSH)."
+  "$SCRIPT_DIR/harden.sh" --touchid || note_problem "Touch ID for sudo not enabled; run: $SCRIPT_DIR/harden.sh --touchid"
 }
 
 screen_lock_is_immediate() {
