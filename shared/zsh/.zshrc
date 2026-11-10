@@ -88,6 +88,8 @@ sudotouch() {
 # New-machine setup and Touch ID for sudo, per OS (this file is synced to Linux too)
 if [[ "$OSTYPE" == darwin* ]]; then
   alias initial-install="$HOME/Git/dotfiles/macos/initial_macos_setup.sh"
+  # Security report (read-only); `harden --apply` fixes what can be scripted
+  alias harden="$HOME/Git/dotfiles/macos/harden.sh"
   # Ask about Touch ID for sudo once: silent when enabled or declined, and only
   # in an interactive terminal (editors probe with `zsh -i -c env`)
   if [[ -t 0 && ! -e "$_SUDOTOUCH_DECLINED" ]] && ! _sudotouch_enabled; then
@@ -95,6 +97,7 @@ if [[ "$OSTYPE" == darwin* ]]; then
   fi
 else
   alias initial-install="$HOME/Git/dotfiles/linux/initial_linux_setup.sh"
+  alias harden="$HOME/Git/dotfiles/linux/harden.sh"
 fi
 
 # Add local bin and the dotfiles' own commands (claude-switch, cc-lumo, ...) to PATH

@@ -87,6 +87,8 @@ The Linux counterpart is `linux/initial_linux_setup.sh` (Debian/Ubuntu; same ali
 
 Both scripts source `shared/setup/common.sh` (prompt parsing, sudo keepalive, summary, bookmarks file, and the vibe-coding step that clones `git.juntogroups.org/public-repos/vibe-coding` beside this repo and symlinks rules/skills/agents without overwriting existing files). Change shared behaviour there, OS-specific package lists in each script. Both have a DFP (Digital Force Protection) menu based on Irregularpedia's Quick DFP guide and Privacy Guides.
 
+OS hardening lives in `macos/harden.sh` and `linux/harden.sh` (alias `harden`). With no arguments they only read and report PASS/FAIL/MANUAL/INFO per control; `--apply` fixes the scriptable ones and re-checks each. macOS controls map to NIST mSCP macOS 27 / CIS levels; anything macOS only honours via a profile or System Settings is reported MANUAL, never claimed. Linux follows CIS Debian 13 / Ubuntu 24.04, KSPP and ssh-audit, writes only `*dotfiles-hardening*` drop-ins, validates sshd/sudoers before they take effect, and deliberately skips settings that break Flatpak, snaps, Docker or IPv6. SSH is only switched to keys-only when `~/.ssh/authorized_keys` exists. The setup scripts call `--apply` and copy FAIL/MANUAL lines into their summary.
+
 ---
 
 ## Related Docs

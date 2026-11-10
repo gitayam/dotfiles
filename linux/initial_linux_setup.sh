@@ -322,9 +322,11 @@ gather_user_preferences() {
   fi
 
   echo ""
-  echo "Recommended security settings: ufw firewall (deny incoming, allow outgoing;"
-  echo "SSH stays allowed if the SSH server is installed) and automatic security updates."
-  echo -n "Apply them? (y/n)(Default: y): "
+  echo "Recommended security hardening (linux/harden.sh; preview it with: $SCRIPT_DIR/harden.sh):"
+  echo "ufw firewall (SSH stays allowed), automatic security updates, kernel/network sysctls,"
+  echo "SSH keys-only (only once you have ~/.ssh/authorized_keys), unused kernel modules off,"
+  echo "core dumps off, sudo logging, persistent journal, Wi-Fi MAC randomization."
+  echo -n "Apply it? (y/n)(Default: y): "
   read APPLY_SETTINGS
   APPLY_SETTINGS=${APPLY_SETTINGS:-y}
 
@@ -463,22 +465,19 @@ configure_linux_settings() {
     echo "[dry-run] Skipping security settings."
     return
   fi
-  echo "Applying security settings..."
-
-  apt_install ufw unattended-upgrades
-  # Allow SSH before enabling, so a remote session survives
-  if is_deb_installed openssh-server; then
-    sudo ufw allow OpenSSH >/dev/null || sudo ufw allow 22/tcp >/dev/null
-  fi
-  sudo ufw default deny incoming >/dev/null
-  sudo ufw default allow outgoing >/dev/null
-  sudo ufw --force enable || note_problem "ufw could not be enabled"
-
-  # The non-interactive form of dpkg-reconfigure unattended-upgrades
-  echo 'unattended-upgrades unattended-upgrades/enable_auto_updates boolean true' |
-    sudo debconf-set-selections
-  sudo dpkg-reconfigure -f noninteractive unattended-upgrades ||
-    note_problem "automatic security updates not enabled"
+  echo "Applying security hardening..."
+  # linux/harden.sh applies ufw, automatic updates, sysctls, SSH, modules, core
+  # dumps, sudo, journald and more, and re-checks each. Run it with no
+  # arguments any time for a read-only report.
+  local harden_output line
+  harden_output=$("$SCRIPT_DIR/harden.sh" --apply)
+  echo "$harden_output"
+  while IFS= read -r line; do
+    case "$line" in
+      MANUAL*) note_next_step "Hardening: ${line#MANUAL }" ;;
+      FAIL*) note_problem "Hardening: ${line#FAIL   }" ;;
+    esac
+  done <<< "$harden_output"
 
   if [[ "$MAKE_ZSH_DEFAULT" =~ ^[Yy] ]] && command -v zsh &>/dev/null; then
     # sudo, so chsh doesn't ask for the password again
