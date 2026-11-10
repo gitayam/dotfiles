@@ -188,6 +188,32 @@ install_vibe_coding() {
   done
 }
 
+SETUP_SECRETS="n"
+
+# Asked up front with the other questions
+ask_secrets() {
+  echo "Encrypted secrets (secret: sops + age): API keys and .env values stay encrypted in"
+  echo "${SECRETS_DIR:-$HOME/Git/secrets} and are decrypted only into the command that needs them."
+  echo "This creates this device's key (in the Keychain / Secret Service) and the store."
+  echo -n "Set it up now? (y/n)(Default: y): "
+  read SETUP_SECRETS
+  SETUP_SECRETS=${SETUP_SECRETS:-y}
+}
+
+setup_secrets() {
+  [[ "$SETUP_SECRETS" =~ ^[Yy] ]] || return 0
+  echo "Setting up encrypted secrets..."
+  if is_dry_run; then
+    echo "  [dry-run] Would run: $REPO_ROOT/shared/bin/secret init"
+    return 0
+  fi
+  if "$REPO_ROOT/shared/bin/secret" init; then
+    note_next_step "Secrets: keep ${SECRETS_DIR:-~/Git/secrets} in a PRIVATE repo or Syncthing folder; add other devices with secret add-device; move plaintext keys in with secret import (harden.sh lists them)"
+  else
+    note_problem "Encrypted secrets not set up; run: secret init"
+  fi
+}
+
 # Copy a shared config into place only when the user has none. Never overwrites.
 install_config_if_missing() {
   local src="$1" dst="$2" mode="$3"

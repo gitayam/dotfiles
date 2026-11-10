@@ -95,6 +95,33 @@ OS hardening lives in `macos/harden.sh` and `linux/harden.sh` (alias `harden`). 
 
 ---
 
+## Secrets (`secret`: sops + age)
+
+`shared/bin/secret` keeps API keys and `.env` values encrypted in a store (`$SECRETS_DIR`, default `~/Git/secrets`) that belongs in a **private** repo or Syncthing folder, never in this public repo. Values are decrypted only into the one command that needs them.
+
+- **Store:** `devices.txt` (one `name age1…` per device), a generated `.sops.yaml`, and `<profile>.env` files (dotenv; values encrypted, key names readable, so `git diff` stays useful).
+- **Device keys:** one standard age X25519 key per device, in the macOS Keychain, the Linux Secret Service (GNOME Keyring/KeePassXC via `secret-tool`), or `~/.config/sops/age/keys.txt` (600) on headless machines. `init` records the backend it used in `~/.config/sops/age/backend`, and falls back to the file if the keyring can't store it.
+  - Not Secure Enclave keys: sops 3.13 can't encrypt to `age1tag`/`age1se` recipients without a plugin that only exists for macOS, so Linux devices couldn't add devices or edit.
+- **Values never on disk or argv:**
+  - the Keychain is written via `security -i` on stdin;
+  - `import` and `set` encrypt from stdin;
+  - `run` exports in-process and then `exec`s, reading via process substitution because bash writes here-strings to temp files;
+  - the one exception is `secret edit`, which uses sops' private temp file.
+- **Commands:** `init`, `pubkey`, `devices`, `add-device NAME KEY` (re-encrypts everything), `remove-device NAME` (re-encrypts, then rotate values), `reencrypt`, `import PROFILE FILE`, `set`/`unset PROFILE KEY`, `edit`, `list [PROFILE]` (names only), `get PROFILE KEY`, `run P1[,P2] -- cmd`, `env PROFILE` (for sourced loaders; refuses a terminal), `codex-keyring`, `doctor`.
+- **New device:** run `secret init` there and share its public key, then run `secret add-device NAME KEY` on a device that can already decrypt.
+
+How each tool should get its credentials:
+
+| Tool | Do this |
+|---|---|
+| Claude Code, subscription | macOS: nothing (Keychain). Linux: `claude setup-token`, then `secret set ai CLAUDE_CODE_OAUTH_TOKEN`, and start it with `secret run ai -- claude`. |
+| Claude Code, API key | `apiKeyHelper: "secret get ai ANTHROPIC_API_KEY"` in `~/.claude/settings.json`. Opt-in only: it outranks the subscription login, so it switches billing to the API. |
+| `claude-switch` / `cc-*` | Settings stay in `~/.claude-backends.env`. Tokens move to the profiles `claude` (e.g. `LOCAL_AUTH_TOKEN`) and `vibe` (`LITELLM_MASTER_KEY`), which `claude-switch` overlays when they exist. |
+| Codex | `secret codex-keyring` (sets `cli_auth_credentials_store = "keyring"`, with a backup), then log in again. |
+| Vibe, OpenCode, AWS, any `.env` | `secret run PROFILE -- tool`. For OpenCode, don't save an account in the app (it outranks env vars). |
+
+Both setup scripts install sops and age (Linux: pinned sops release, checked against its sha256 list) and offer `secret init`. Both `harden.sh` scripts list plaintext credential files with the right migration route for each. `.stignore` keeps `.env` files, keys and backups out of Syncthing: this repo folder is synced, and Syncthing ignores `.gitignore`.
+
 ## Tests
 
 `tests/run.sh` (`-v` prints failing output) checks: every script parses in bash and zsh, the repo `.zshrc` starts silently and re-sources cleanly over old aliases, every `.zsh_*` loads in bash (Linux loader), `dots --lint` is empty, `git wip` refusals and index restore, `git-inventory` detection and redaction, `ssh-doctor` failure paths, the Linux sysctl and SSH-lockout logic against fakes, `harden.sh --check`, and both setup dry runs. It works in a scratch dir with its own git config and never touches `$HOME`. CI (`.github/workflows/tests.yml`) runs it on macOS and Ubuntu on every push, which is the only place `linux/harden.sh --check` and the Linux setup run on real Linux. Run it before pushing; add a test (and see it fail on the broken code) when you fix a bug.

@@ -339,6 +339,9 @@ gather_user_preferences() {
   fi
 
   echo ""
+  ask_secrets
+
+  echo ""
   echo -n "Replace your shell config files (~/.zshrc, ~/.zsh_*) with links to this repo's versions? Backups are kept. (y/n)(Default: y): "
   read SYNC_ANSWER
   SYNC_ANSWER=${SYNC_ANSWER:-y}
@@ -354,10 +357,38 @@ install_terminal_apps() {
   # Debian/Ubuntu names; kubectl is not in their repos (see the summary)
   apt_install curl zsh git gh jq tree python3 ansible docker.io gnupg age diceware \
     magic-wormhole wireguard-tools ocrmypdf pandoc tesseract-ocr clamav ghostscript imagemagick tmux mosh
+  install_sops
   run_vendor_installer "Tailscale" tailscale https://tailscale.com/install.sh sh
   if ! command -v kubectl &>/dev/null; then
     note_next_step "kubectl is not in Debian/Ubuntu repos: https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/"
   fi
+}
+
+# sops isn't packaged by Debian or Ubuntu: the official release binary, pinned
+# and checked against the release's sha256 list before it is installed
+SOPS_VERSION="3.13.3"
+install_sops() {
+  local arch base tmp name
+  if command -v sops &>/dev/null; then
+    echo "sops is already installed ($(command -v sops))."
+    return 0
+  fi
+  arch=$(dpkg --print-architecture 2>/dev/null || echo amd64)
+  name="sops-v$SOPS_VERSION.linux.$arch"
+  base="https://github.com/getsops/sops/releases/download/v$SOPS_VERSION"
+  if is_dry_run; then
+    echo "  [dry-run] download $name, check it against sops-v$SOPS_VERSION.checksums.txt, install to ~/.local/bin/sops"
+    return 0
+  fi
+  tmp=$(mktemp -d)
+  if curl -fsSL "$base/$name" -o "$tmp/$name" &&
+     curl -fsSL "$base/sops-v$SOPS_VERSION.checksums.txt" -o "$tmp/checksums.txt" &&
+     (cd "$tmp" && grep " $name\$" checksums.txt | sha256sum --check --status -); then
+    install -D -m 0755 "$tmp/$name" "$HOME/.local/bin/sops" && echo "Installed sops $SOPS_VERSION to ~/.local/bin."
+  else
+    note_problem "sops $SOPS_VERSION: download or checksum check failed; not installed"
+  fi
+  rm -rf "$tmp"
 }
 
 install_editors_and_agents() {
@@ -409,6 +440,8 @@ install_desktop_apps() {
     return
   fi
   echo "Installing desktop apps..."
+  # secret-tool: lets `secret` keep its device key in the Secret Service (GNOME Keyring, KeePassXC)
+  apt_install libsecret-tools
   install_signal
   apt_install transmission-gtk
   flatpak_install md.obsidian.Obsidian "Obsidian"
@@ -517,6 +550,7 @@ main() {
   install_dfp_tools
   install_vibe_coding
   setup_shell_tools
+  setup_secrets
   write_bookmarks_file
   configure_linux_settings
 

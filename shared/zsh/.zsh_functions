@@ -972,9 +972,25 @@ _dots_files() {
 # Descriptions come from the comment block directly above a definition or an
 # alias's trailing comment. Names starting with _ and functions defined inside
 # other functions are internal and skipped. Portable awk (macOS awk, mawk).
+# Commands in shared/bin (git-wip, secret, ...): name, kind "command", category
+# "bin", and the first comment line after the shebang as the description
+_dots_bin_index() {
+  local f desc
+  for f in "$HOME"/Git/dotfiles/shared/bin/*; do
+    [[ -f "$f" && -x "$f" ]] || continue
+    # First "# ..." line (or a Python docstring line) after the shebang, minus "name: "
+    desc=$(awk 'NR >= 2 && NR <= 8 && (/^#[^!]/ || /^"""/) {
+                  sub(/^(#+|""")[ \t]*/, ""); if ($0 == "") next; print; exit }' "$f" |
+           sed -E 's/"""$//; s/^[A-Za-z0-9_.-]+(:| —| -) +//')
+    printf '%s\tcommand\tbin\t%s\t1\t\t%s\t\n' "${f##*/}" "$f" "$desc"
+  done
+}
+
 _dots_index() {
   local f
-  _dots_files | while IFS= read -r f; do
+  { _dots_bin_index; _dots_files; } | while IFS= read -r f; do
+    # Lines from _dots_bin_index are finished records; pass them through
+    if [[ "$f" == *$'\t'* ]]; then printf '%s\n' "$f"; continue; fi
     awk -v file="$f" '
       function category(path,   c) {
         c = path; sub(/.*\//, "", c); sub(/^\.zsh_/, "", c)

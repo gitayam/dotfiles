@@ -136,6 +136,26 @@ report_backups() {
   fi
 }
 
+report_plaintext_secrets() {
+  local f found=0
+  # Credential files that tools write in plaintext; `secret import` can take them
+  local how
+  for f in .env .claude-backends.env .vibe/.env .aws/credentials .codex/auth.json .claude/.credentials.json .netrc .git-credentials; do
+    [[ -f "$HOME/$f" ]] || continue
+    case "$f" in
+      .aws/credentials) how="secret set aws AWS_ACCESS_KEY_ID (and _SECRET_), then: secret run aws -- aws ..." ;;
+      .codex/auth.json) how="secret codex-keyring, then log in to Codex again" ;;
+      .claude/.credentials.json) how="claude setup-token, secret set ai CLAUDE_CODE_OAUTH_TOKEN, then: secret run ai -- claude" ;;
+      .netrc|.git-credentials) how="use the OS credential helper instead (git config --global credential.helper osxkeychain or libsecret)" ;;
+      *) how="secret import PROFILE ~/$f, check with secret list PROFILE, then remove the file" ;;
+    esac
+    report INFO "Plaintext credentials: ~/$f" "$how"
+    found=1
+  done
+  [[ $found -eq 0 ]] && report PASS "No plaintext credential files in the usual places"
+  return 0
+}
+
 # --- Firewall ----------------------------------------------------------------
 
 check_firewall() { "$FW" --getglobalstate 2>/dev/null | grep -q "enabled"; }
@@ -313,6 +333,9 @@ run_controls() {
 
   echo "== Backups"
   report_backups
+
+  echo "== Secrets"
+  report_plaintext_secrets
 
   echo "== Firewall"
   control "[L1 2.2.1] Application firewall on" check_firewall apply_firewall

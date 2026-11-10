@@ -1,0 +1,16 @@
+// Syncthing ignore list for this repo (Syncthing does not read .gitignore).
+// Files git keeps out of commits would otherwise still sync to every device
+// that shares the folder. Secrets belong in the `secret` store, not here.
+.env
+.env.*
+.env-backups
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+// local clutter
+(?d).DS_Store
+(?d)__pycache__
+(?d)*.pyc

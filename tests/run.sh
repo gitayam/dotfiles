@@ -185,6 +185,40 @@ if ! [[ -x /usr/bin/7zz || -x /usr/bin/7z || -x /bin/7z ]]; then
   check "secure_zip warns when it falls back to weak ZipCrypto" zip_warns
 fi
 
+echo "== secret (sops + age)"
+if command -v sops >/dev/null && command -v age-keygen >/dev/null; then
+  SEC="$WORK/secret"; mkdir -p "$SEC/h1" "$SEC/h2"
+  d1() { HOME="$SEC/h1" SECRETS_DIR="$SEC/store" SECRET_KEY_BACKEND=file "$REPO/shared/bin/secret" "$@"; }
+  d2() { HOME="$SEC/h2" SECRETS_DIR="$SEC/store" SECRET_KEY_BACKEND=file "$REPO/shared/bin/secret" "$@"; }
+  secret_import() {
+    d1 init >/dev/null || return 1
+    printf '# c\nexport API_TOKEN="abc def"\nPLAIN=x=y\nbad key=1\n' > "$SEC/plain.env"
+    d1 import ai "$SEC/plain.env" >/dev/null 2>&1 || return 1
+    [[ "$(d1 list ai | tr '\n' ' ')" == "API_TOKEN PLAIN " ]] &&
+      ! grep -q 'abc def' "$SEC/store/ai.env" &&
+      [[ "$(d1 get ai API_TOKEN)" == "abc def" && "$(d1 get ai PLAIN)" == "x=y" ]]
+  }
+  check "secret: import normalizes a .env and stores only ciphertext" secret_import
+  secret_run_scoped() {
+    [[ "$(d1 run ai -- sh -c 'echo "$API_TOKEN"')" == "abc def" ]] && [[ -z "${API_TOKEN:-}" ]]
+  }
+  check "secret: run injects values into that command only" secret_run_scoped
+  secret_set_stdin() { printf 'n3w\n' | d1 set ai NEW >/dev/null && [[ "$(d1 get ai NEW)" == "n3w" ]]; }
+  check "secret: set reads the value from stdin" secret_set_stdin
+  secret_devices() {
+    d2 init >/dev/null
+    local p2; p2=$(d2 pubkey)
+    d2 get ai API_TOKEN >/dev/null 2>&1 && return 1            # not a recipient yet
+    d1 add-device h2 "$p2" >/dev/null || return 1
+    [[ "$(d2 get ai API_TOKEN)" == "abc def" ]] || return 1    # can decrypt after add
+    d1 remove-device h2 >/dev/null || return 1
+    ! d2 get ai API_TOKEN >/dev/null 2>&1                      # and not after removal
+  }
+  check "secret: add-device grants, remove-device revokes" secret_devices
+  secret_no_plaintext_files() { ! ls -a "$SEC/store" | grep -qE '^\.tmp|\.dec$|\.plain$'; }
+  check "secret: no plaintext or temp files left in the store" secret_no_plaintext_files
+fi
+
 echo "== git wip"
 wip_setup() {
   local d="$WORK/wip"

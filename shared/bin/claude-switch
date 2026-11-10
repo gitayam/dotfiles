@@ -62,8 +62,22 @@ DEFAULT_CONFIG
   chmod 600 "$CONFIG_FILE"
 fi
 
-# Load config
+# Load config: settings from the file, then tokens from the encrypted `secret`
+# profile "claude" when it exists (values in it win). Keep URLs and model names
+# in the file and move only tokens into the profile:
+#   secret set claude LOCAL_AUTH_TOKEN
+_claude_switch_overlay() {  # load a `secret` profile into this (sourcing) shell
+  local line
+  command -v secret >/dev/null 2>&1 || return 0
+  [ -f "${SECRETS_DIR:-$HOME/Git/secrets}/$1.env" ] || return 0
+  while IFS= read -r line; do
+    case "$line" in
+      [A-Za-z_]*=*) export "${line%%=*}=${line#*=}" ;;
+    esac
+  done < <(secret env "$1")
+}
 source "$CONFIG_FILE"
+_claude_switch_overlay claude
 
 # ── Functions ────────────────────────────────────────────────────────────────
 
@@ -110,6 +124,8 @@ switch_vibe() {
     return 1
   fi
   source "${VIBE_API_KEY_FILE}"
+  # Encrypted profile "vibe" (secret set vibe LITELLM_MASTER_KEY) wins over the file
+  _claude_switch_overlay vibe
   if [ -z "${LITELLM_MASTER_KEY:-}" ]; then
     echo "ERROR: LITELLM_MASTER_KEY not set in ${VIBE_API_KEY_FILE}"
     echo "       cc-vibe routes Claude Code through the local LiteLLM proxy"
