@@ -13,6 +13,7 @@ alias claude-cloud='source claude-switch cloud'
 alias claude-local='source claude-switch local'
 alias claude-ollama='source claude-switch ollama'
 alias claude-vibe='source claude-switch vibe'
+alias claude-deepseek='source claude-switch deepseek'  # DeepSeek API backend (key: secret profile deepseek)
 alias claude-status='source claude-switch status'
 alias cc='claude --dangerously-skip-permissions --teammate-mode auto'
 alias cc-cloud='source claude-switch cloud && claude --dangerously-skip-permissions --teammate-mode auto'
@@ -38,3 +39,5 @@ alias cc-vibe='_cc_mistral vibe'
 alias cc-vibe-think='MODEL=mistral-large MODEL_NAME="Mistral Large 3" _cc_mistral vibe'
 alias cc-vibe-fast='MODEL=devstral-small MODEL_NAME="Devstral Small" _cc_mistral vibe'
 alias cc-vibe-reason='MODEL=magistral-medium MODEL_NAME="Magistral Medium" _cc_mistral vibe'
+alias cc-deepseek='source claude-switch deepseek && claude --dangerously-skip-permissions --teammate-mode auto'  # Claude Code on DeepSeek Flash
+alias cc-deepseek-pro='DEEPSEEK_MODEL=deepseek-v4-pro cc-deepseek'  # Claude Code on DeepSeek V4 Pro

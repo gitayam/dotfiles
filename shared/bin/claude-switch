@@ -5,6 +5,7 @@
 #   source claude-switch.sh cloud       # Use Anthropic cloud (default)
 #   source claude-switch.sh local       # Use self-hosted Mistral Medium via LiteLLM
 #   source claude-switch.sh ollama      # Use local Ollama
+#   source claude-switch.sh deepseek    # DeepSeek API (key: secret profile "deepseek")
 #   source claude-switch.sh status      # Show current config
 #   source claude-switch.sh             # Interactive picker
 #
@@ -81,7 +82,15 @@ _claude_switch_overlay claude
 
 # ── Functions ────────────────────────────────────────────────────────────────
 
+# Model-tier overrides only some backends set; cleared on every switch so they
+# don't leak into the next backend
+_claude_switch_clear_tiers() {
+  unset ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL
+  unset CLAUDE_CODE_SUBAGENT_MODEL CLAUDE_CODE_AUTO_COMPACT_WINDOW
+}
+
 switch_cloud() {
+  _claude_switch_clear_tiers
   unset ANTHROPIC_BASE_URL
   unset ANTHROPIC_AUTH_TOKEN
   unset ANTHROPIC_CUSTOM_MODEL_OPTION
@@ -93,6 +102,7 @@ switch_cloud() {
 }
 
 switch_local() {
+  _claude_switch_clear_tiers
   export ANTHROPIC_BASE_URL="${LOCAL_BASE_URL}"
   export ANTHROPIC_AUTH_TOKEN="${LOCAL_AUTH_TOKEN}"
   export ANTHROPIC_CUSTOM_MODEL_OPTION="${LOCAL_MODEL}"
@@ -106,6 +116,7 @@ switch_local() {
 }
 
 switch_ollama() {
+  _claude_switch_clear_tiers
   export ANTHROPIC_BASE_URL="${OLLAMA_BASE_URL}"
   export ANTHROPIC_AUTH_TOKEN="${OLLAMA_AUTH_TOKEN}"
   export ANTHROPIC_CUSTOM_MODEL_OPTION="${OLLAMA_MODEL}"
@@ -118,6 +129,7 @@ switch_ollama() {
 }
 
 switch_vibe() {
+  _claude_switch_clear_tiers
   # Keys come from the encrypted `secret` profile "vibe"; the plaintext file is
   # read only when there is no profile (it may reference vars that are unset).
   if [ -f "${SECRETS_DIR:-$HOME/Git/secrets}/vibe.env" ]; then
@@ -170,7 +182,49 @@ switch_vibe() {
   echo "  Run: claude"
 }
 
+# DeepSeek's Anthropic-compatible API (api-docs.deepseek.com, Claude Code guide).
+# Key: DEEPSEEK_API_KEY in the secret profile "deepseek". DEEPSEEK_MODEL picks
+# the main model: deepseek-flash (default; V4.1 Flash, vision) or deepseek-v4-pro.
+# Both have 1M context; the [1m] suffix tells Claude Code so.
+switch_deepseek() {
+  _claude_switch_clear_tiers
+  local base="${DEEPSEEK_BASE_URL:-https://api.deepseek.com/anthropic}"
+  local model="${DEEPSEEK_MODEL:-deepseek-flash}"
+  _claude_switch_overlay deepseek
+  if [ -z "${DEEPSEEK_API_KEY:-}" ]; then
+    echo "ERROR: DEEPSEEK_API_KEY is not in the secret profile 'deepseek'"
+    echo "       Store it with: secret set deepseek DEEPSEEK_API_KEY  (hidden prompt)"
+    return 1
+  fi
+  # Pre-flight: one tiny message; the key goes to curl through a header file
+  if ! curl -fsS -o /dev/null -m 15 "${base}/v1/messages" \
+       -H @<(printf 'x-api-key: %s\n' "${DEEPSEEK_API_KEY}") \
+       -H "anthropic-version: 2023-06-01" \
+       -H "Content-Type: application/json" \
+       -d '{"model":"deepseek-flash","max_tokens":1,"messages":[{"role":"user","content":"x"}]}' 2>/dev/null; then
+    echo "ERROR: DeepSeek at ${base} rejected the key or is unreachable; not switching."
+    return 1
+  fi
+  export ANTHROPIC_BASE_URL="${base}"
+  export ANTHROPIC_AUTH_TOKEN="${DEEPSEEK_API_KEY}"
+  export ANTHROPIC_MODEL="${model}[1m]"
+  export ANTHROPIC_CUSTOM_MODEL_OPTION="${model}[1m]"
+  export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="DeepSeek ${model}"
+  export ANTHROPIC_DEFAULT_OPUS_MODEL="deepseek-v4-pro[1m]"
+  export ANTHROPIC_DEFAULT_SONNET_MODEL="deepseek-flash[1m]"
+  export ANTHROPIC_DEFAULT_HAIKU_MODEL="deepseek-flash"
+  export CLAUDE_CODE_SUBAGENT_MODEL="deepseek-flash"
+  export CLAUDE_CODE_AUTO_COMPACT_WINDOW=786432
+  export CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1
+  echo "Switched to: DeepSeek (${model})"
+  echo "  Endpoint: ${base}"
+  echo "  API Key: from the encrypted secret profile 'deepseek'"
+  echo "  Models: ${model} (main), deepseek-v4-pro (opus), deepseek-flash (sonnet/haiku/subagents)"
+  echo "  Run: claude"
+}
+
 switch_vllm() {
+  _claude_switch_clear_tiers
   if [ -z "${VLLM_BASE_URL:-}" ]; then
     echo "ERROR: VLLM_BASE_URL not set in $CONFIG_FILE"
     echo "Uncomment the vLLM section and set your endpoint."
@@ -210,6 +264,7 @@ show_help() {
   echo "  local    Self-hosted via LiteLLM/Open-WebUI"
   echo "  ollama   Local Ollama instance"
   echo "  vibe     Mistral Vibe (Official API)"
+  echo "  deepseek DeepSeek API (DEEPSEEK_MODEL=deepseek-v4-pro for Pro)"
   echo "  vllm     Direct vLLM endpoint"
   echo "  status   Show current backend configuration"
   echo ""
@@ -231,6 +286,7 @@ case "${1:-}" in
   local)    switch_local ;;
   ollama)   switch_ollama ;;
   vibe)     switch_vibe ;;
+  deepseek) switch_deepseek ;;
   vllm)     switch_vllm ;;
   status)   show_status ;;
   -h|--help|help) show_help ;;
@@ -241,14 +297,16 @@ case "${1:-}" in
     echo "  3) Ollama (local)"
     echo "  4) Mistral Vibe (Official API)"
     echo "  5) vLLM (direct)"
+    echo "  6) DeepSeek (API)"
     echo ""
-    read -p "Choice [1-5]: " choice
+    read -p "Choice [1-6]: " choice
     case "$choice" in
       1) switch_cloud ;;
       2) switch_local ;;
       3) switch_ollama ;;
       4) switch_vibe ;;
       5) switch_vllm ;;
+      6) switch_deepseek ;;
       *) echo "Invalid choice" ;;
     esac
     ;;

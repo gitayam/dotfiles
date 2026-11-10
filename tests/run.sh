@@ -255,6 +255,39 @@ if command -v sops >/dev/null && command -v age-keygen >/dev/null; then
     return $rc
   }
   check "claude-switch vibe: profile key, never in curl argv" claude_switch_vibe_profile
+  # deepseek: key from the profile, never in curl argv; Pro via DEEPSEEK_MODEL;
+  # switching back to cloud clears every override it set
+  claude_switch_deepseek() {
+    local fake="$SEC/fakebin" log="$SEC/curl.argv" rc=0 out
+    printf 'ds-test-456' | d1 set deepseek DEEPSEEK_API_KEY >/dev/null || return 1
+    : > "$log"
+    out=$(HOME="$SEC/h1" SECRETS_DIR="$SEC/store" SECRET_KEY_BACKEND=file CLAUDE_BACKENDS_CONFIG="$SEC/backends.env" \
+      PATH="$fake:$REPO/shared/bin:$PATH" zsh -fc '
+        source "$1" deepseek >/dev/null 2>&1 || exit 3
+        echo "flash:$ANTHROPIC_AUTH_TOKEN:$ANTHROPIC_MODEL:$ANTHROPIC_DEFAULT_OPUS_MODEL"
+        DEEPSEEK_MODEL=deepseek-v4-pro source "$1" deepseek >/dev/null 2>&1 || exit 4
+        echo "pro:$ANTHROPIC_MODEL"
+        source "$1" cloud >/dev/null 2>&1
+        echo "cloud:${ANTHROPIC_BASE_URL-}${ANTHROPIC_DEFAULT_OPUS_MODEL-}${CLAUDE_CODE_SUBAGENT_MODEL-}${ANTHROPIC_MODEL-}"' _ "$REPO/shared/bin/claude-switch") ||
+      { echo "switch failed: $out"; return 1; }
+    [[ "$out" == *"flash:ds-test-456:deepseek-flash[1m]:deepseek-v4-pro[1m]"* ]] || { echo "flash: $out"; rc=1; }
+    [[ "$out" == *"pro:deepseek-v4-pro[1m]"* ]] || { echo "pro: $out"; rc=1; }
+    [[ "$out" == *$'cloud:\n'* || "$out" == *"cloud:" ]] || { echo "cloud left overrides: $out"; rc=1; }
+    grep -q 'api.deepseek.com/anthropic/v1/messages' "$log" || { echo "preflight never ran"; rc=1; }
+    ! grep -q 'ds-test-456' "$log" || { echo "key on curl's command line"; rc=1; }
+    return $rc
+  }
+  # Output goes to a file and is checked by structure only
+  secret_aws_credentials() {
+    printf 'AKIATESTTESTTESTTEST' | d1 set awst AWS_ACCESS_KEY_ID >/dev/null &&
+      printf 'sec/ret+x' | d1 set awst AWS_SECRET_ACCESS_KEY >/dev/null || return 1
+    d1 aws-credentials awst > "$SEC/aws.json" 2>/dev/null || return 1
+    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d=={"Version":1,"AccessKeyId":"AKIATESTTESTTESTTEST","SecretAccessKey":"sec/ret+x"} else 1)' "$SEC/aws.json" || return 1
+    printf 'x' | d1 set awsbad AWS_ACCESS_KEY_ID >/dev/null || return 1
+    ! d1 aws-credentials awsbad > "$SEC/aws-bad.json" 2>/dev/null && [[ ! -s "$SEC/aws-bad.json" ]]
+  }
+  check "secret: aws-credentials prints credential_process JSON, fails without both keys" secret_aws_credentials
+  command -v zsh >/dev/null && check "claude-switch deepseek: profile key, Pro model, cloud clears it" claude_switch_deepseek
   secret_no_plaintext_files() { ! ls -a "$SEC/store" | grep -qE '^\.tmp|\.dec$|\.plain$'; }
   check "secret: no plaintext or temp files left in the store" secret_no_plaintext_files
 fi

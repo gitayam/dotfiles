@@ -107,7 +107,7 @@ OS hardening lives in `macos/harden.sh` and `linux/harden.sh` (alias `harden`). 
   - `import` and `set` encrypt from stdin;
   - `run` exports in-process and then `exec`s, reading via process substitution because bash writes here-strings to temp files;
   - the one exception is `secret edit`, which uses sops' private temp file.
-- **Commands:** `init`, `pubkey`, `devices`, `add-device NAME KEY` (re-encrypts everything), `remove-device NAME` (re-encrypts, then rotate values), `reencrypt`, `import PROFILE FILE`, `set`/`unset PROFILE KEY`, `edit`, `list [PROFILE]` (names only), `get PROFILE KEY`, `run P1[,P2] -- cmd`, `env PROFILE` (for sourced loaders; refuses a terminal), `codex-keyring`, `doctor`.
+- **Commands:** `init`, `pubkey`, `devices`, `add-device NAME KEY` (re-encrypts everything), `remove-device NAME` (re-encrypts, then rotate values), `reencrypt`, `import PROFILE FILE`, `set`/`unset PROFILE KEY`, `edit`, `list [PROFILE]` (names only), `get PROFILE KEY`, `run P1[,P2] -- cmd`, `env PROFILE` (for sourced loaders; refuses a terminal), `aws-credentials PROFILE` (AWS `credential_process` JSON; refuses a terminal), `codex-keyring`, `doctor`.
 - **New device:** run `secret init` there and share its public key, then run `secret add-device NAME KEY` on a device that can already decrypt.
 
 How each tool should get its credentials:
@@ -117,6 +117,8 @@ How each tool should get its credentials:
 | Claude Code, subscription | macOS: nothing (Keychain). Linux: `claude setup-token`, then `secret set ai CLAUDE_CODE_OAUTH_TOKEN`, and start it with `secret run ai -- claude`. |
 | Claude Code, API key | `apiKeyHelper: "secret get ai ANTHROPIC_API_KEY"` in `~/.claude/settings.json`. Opt-in only: it outranks the subscription login, so it switches billing to the API. |
 | `claude-switch` / `cc-*` | Settings stay in `~/.claude-backends.env`. Tokens move to the profiles `claude` (e.g. `LOCAL_AUTH_TOKEN`) and `vibe` (`LITELLM_MASTER_KEY`), which `claude-switch` overlays when they exist. |
+| `cc-deepseek` / `cc-deepseek-pro` | `secret set deepseek DEEPSEEK_API_KEY`; `claude-switch deepseek` points Claude Code at `api.deepseek.com/anthropic` (Flash main, V4 Pro for the opus tier) and `cloud` clears it again. |
+| AWS CLI / SDKs | One profile per AWS profile (`aws-irregularchat` with `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`), and in `~/.aws/config` `credential_process = /full/path/shared/bin/secret aws-credentials aws-irregularchat`, so `AWS_PROFILE=…` keeps working with no `~/.aws/credentials`. |
 | Codex | `secret codex-keyring` (sets `cli_auth_credentials_store = "keyring"`, with a backup), then log in again. |
 | Vibe, OpenCode, AWS, any `.env` | `secret run PROFILE -- tool`. For OpenCode, don't save an account in the app (it outranks env vars). |
 

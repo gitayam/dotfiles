@@ -414,7 +414,7 @@ report_plaintext_secrets() {
   for f in .env .claude-backends.env .vibe/.env .aws/credentials .codex/auth.json .claude/.credentials.json .netrc .git-credentials; do
     [[ -f "$HOME/$f" ]] || continue
     case "$f" in
-      .aws/credentials) how="secret set aws AWS_ACCESS_KEY_ID (and _SECRET_), then: secret run aws -- aws ..." ;;
+      .aws/credentials) how="per AWS profile: secret set aws-NAME AWS_ACCESS_KEY_ID (and AWS_SECRET_ACCESS_KEY), credential_process = ~/Git/dotfiles/shared/bin/secret aws-credentials aws-NAME in ~/.aws/config, then remove the keys from ~/.aws/credentials" ;;
       .codex/auth.json) how="secret codex-keyring, then log in to Codex again" ;;
       .claude/.credentials.json) how="claude setup-token, secret set ai CLAUDE_CODE_OAUTH_TOKEN, then: secret run ai -- claude" ;;
       .netrc|.git-credentials) how="use the OS credential helper instead (git config --global credential.helper osxkeychain or libsecret)" ;;
