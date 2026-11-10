@@ -126,6 +126,38 @@ fi
 expect "vcheck checks without converting" '\[false\]' env -i HOME="$H" PATH=/usr/bin:/bin bash -c \
   'source ~/.zsh_functions; check_video_format() { echo "[$2]"; }; vcheck x.mp4'
 
+echo "== shell functions"
+mac_ok() {
+  local fn; fn=$(sed -n '/^gen_mac_addr() {/,/^}/p' "$REPO/shared/zsh/.zsh_network")
+  bash -c "_has_python_mac_manager(){ return 1; }; $fn"$'\n''for i in $(seq 200); do m=$(gen_mac_addr); b=$((16#${m:0:2})); (( (b & 1) == 0 && (b & 2) == 2 )) || exit 1; done'
+}
+check "random MACs are unicast and locally administered" mac_ok
+media_name() { env -i HOME="$H" PATH=/usr/bin:/bin bash -c 'source ~/.zsh_transfer; clean_media_name "Show_Name_S01E02_720p_HDTV.mp4"'; }
+expect "clean_media_name works with the system sed/perl" '^Show_Name_S01E02$' media_name
+password_once() {
+  local out err
+  out=$(env -i HOME="$H" PATH=/usr/bin:/bin bash -c 'source ~/.zsh_encryption; generate_password -p chars -l 20' 2>"$WORK/gp.err")
+  [[ ${#out} -eq 20 ]] && ! grep -qF -- "$out" "$WORK/gp.err"
+}
+check "generate_password prints the password once (not also on stderr)" password_once
+ugr_safe() {
+  local d="$WORK/ugr"; mkdir -p "$d/root"
+  git init -q --bare "$d/r.git"
+  local n; for n in a 'b$(touch PWNED)'; do
+    git clone -q "$d/r.git" "$d/root/$n" 2>/dev/null; git -C "$d/root/$n" commit -q --allow-empty -m i
+    git -C "$d/root/$n" push -q origin HEAD 2>/dev/null
+  done
+  local out
+  out=$(cd "$d" && env -i HOME="$H" PATH=/usr/bin:/bin GIT_CONFIG_GLOBAL="$GIT_CONFIG_GLOBAL" GIT_CONFIG_NOSYSTEM=1 bash -c \
+    'source ~/.zsh_developer >/dev/null 2>&1; start=$PWD; update_git_repos --search-path "$1" 2>&1; [[ "$PWD" == "$start" ]] && echo CWD-KEPT' _ "$d/root")
+  # It must actually have run (both repos), not merely have done nothing harmful
+  [[ $(grep -c 'Updating repository' <<< "$out") -eq 2 ]] && grep -q CWD-KEPT <<< "$out" &&
+    [[ ! -e "$d/PWNED" && ! -e "$d/root/PWNED" ]] &&
+    # ask git: the file stores it as [safe] directory = ..., not "safe.directory"
+    [[ -z "$(git config --global --get-all safe.directory)" ]]
+}
+check "update_git_repos: no code from folder names, cwd kept, no safe.directory pile-up" ugr_safe
+
 echo "== git wip"
 wip_setup() {
   local d="$WORK/wip"

@@ -2,6 +2,9 @@
 # File Transfer Functions
 # ----------------------
 
+# Settings saved by transfer_file
+[[ -r "$HOME/.config/dotfiles/transfer.env" ]] && . "$HOME/.config/dotfiles/transfer.env"
+
 # Clean and sanitize media filenames
 clean_media_name() {
     local filename="$1"
@@ -55,54 +58,57 @@ clean_media_name() {
     # Apply all cleaning patterns
     for pattern in "${patterns[@]}"; do
         # Use perl-style regex for more complex patterns
-        clean_name=$(echo "$clean_name" | sed -E "s/${pattern}//gi" 2>/dev/null || echo "$clean_name")
+        # perl, not sed: the case-insensitive flag, \b and \s are GNU-only in sed,
+        # and macOS sed rejected the script (the "name" became its error message)
+        clean_name=$(printf '%s\n' "$clean_name" | P="$pattern" perl -pe 's/$ENV{P}//gi' 2>/dev/null || echo "$clean_name")
     done
     
     # Additional cleaning with simpler patterns
-    clean_name=$(echo "$clean_name" | sed -E '
+    clean_name=$(printf '%s\n' "$clean_name" | perl -pe '
         # Remove quality indicators without dots
-        s/2160p|1080p|720p|480p|360p//gi
-        s/4K|UHD|HD|SD//gi
-        s/BluRay|BRRip|BDRip|WEBRip|WEB-DL|WEBDL//gi
-        s/HDRip|DVDRip|DVDSCR|CAM|TS|TC//gi
-        s/HDTV|PDTV|DSR//gi
+        s/2160p|1080p|720p|480p|360p//gi;
+        # Longer tags first: removing "HD" first left "TV" from "HDTV"
+        s/HDTV|PDTV|DSR//gi;
+        s/HDRip|DVDRip|DVDSCR|CAM|TS|TC//gi;
+        s/BluRay|BRRip|BDRip|WEBRip|WEB-DL|WEBDL//gi;
+        s/4K|UHD|HD|SD//gi;
         
         # Remove codecs without dots
-        s/x264|x265|h264|h265|HEVC|10bit//gi
-        s/AAC|AC3|DTS|DD5\.1|TrueHD|Atmos//gi
-        s/FLAC|MP3//gi
+        s/x264|x265|h264|h265|HEVC|10bit//gi;
+        s/AAC|AC3|DTS|DD5\.1|TrueHD|Atmos//gi;
+        s/FLAC|MP3//gi;
         
         # Remove other tags
-        s/DUAL|DUBBED|SUBBED|MultiSub//gi
-        s/REPACK|PROPER|EXTENDED|UNRATED//gi
-        s/Directors Cut|THEATRICAL|REMUX//gi
-        s/iNTERNAL|EXTERNAL//gi
+        s/DUAL|DUBBED|SUBBED|MultiSub//gi;
+        s/REPACK|PROPER|EXTENDED|UNRATED//gi;
+        s/Directors Cut|THEATRICAL|REMUX//gi;
+        s/iNTERNAL|EXTERNAL//gi;
         
         # Remove years in various formats
-        s/\b(19|20)[0-9]{2}\b//g
+        s/\b(19|20)[0-9]{2}\b//g;
         
         # Remove any remaining bracketed content
-        s/\[[^\]]*\]//g
-        s/\([^\)]*\)//g
-        s/\{[^\}]*\}//g
+        s/\[[^\]]*\]//g;
+        s/\([^\)]*\)//g;
+        s/\{[^\}]*\}//g;
         
         # Clean up file size indicators
-        s/[0-9]+(\.[0-9]+)?\s?(GB|MB|gb|mb)//gi
+        s/[0-9]+(\.[0-9]+)?\s?(GB|MB|gb|mb)//gi;
         
         # Remove resolution indicators
-        s/[0-9]{3,4}x[0-9]{3,4}//g
+        s/[0-9]{3,4}x[0-9]{3,4}//g;
         
         # Remove multiple dots, dashes, underscores
-        s/\.+/./g
-        s/\-+/-/g
-        s/_+/_/g
+        s/\.+/./g;
+        s/\-+/-/g;
+        s/_+/_/g;
         
         # Remove dots used as spaces
-        s/\./ /g
+        s/\./ /g;
         
         # Remove leading/trailing spaces, dots, dashes
-        s/^[\s\.\-_]+//
-        s/[\s\.\-_]+$//
+        s/^[\s\.\-_]+//;
+        s/[\s\.\-_]+$//;
     ')
     
     # Final cleanup: 
@@ -230,11 +236,17 @@ transfer_file() {
     echo -n "Save these settings for future use? (y/n): "
     read save_config
     if [[ "$save_config" == "y" ]]; then
-        echo "# Transfer file configuration" >> ~/.zshrc
-        echo "export TRANSFER_REMOTE_HOST='$REMOTE_HOST'" >> ~/.zshrc
-        echo "export TRANSFER_REMOTE_USER='$REMOTE_USER'" >> ~/.zshrc
-        echo "export TRANSFER_REMOTE_PATH='$REMOTE_BASE_PATH'" >> ~/.zshrc
-        echo "Settings saved to ~/.zshrc"
+        # Its own file, not ~/.zshrc: on Linux ~/.zshrc is a link into the
+        # dotfiles repo, and %q keeps quotes in a value from breaking the file
+        local conf="$HOME/.config/dotfiles/transfer.env"
+        mkdir -p "${conf%/*}"
+        {
+            echo "# transfer_file settings (written by transfer_file)"
+            printf 'export TRANSFER_REMOTE_HOST=%q\n' "$REMOTE_HOST"
+            printf 'export TRANSFER_REMOTE_USER=%q\n' "$REMOTE_USER"
+            printf 'export TRANSFER_REMOTE_PATH=%q\n' "$REMOTE_BASE_PATH"
+        } > "$conf"
+        echo "Settings saved to $conf"
     fi
 }
 

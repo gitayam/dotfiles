@@ -310,17 +310,52 @@ matrix_setup_user(){
         echo "Error: Hosts file not found at $hosts_file"
         return 1
     fi
-    # run the ansible playbook to register the user
-    sudo ansible-playbook -i "$hosts_file" setup.yml \
-        --extra-vars="username=${username} password='${password}' admin=${admin}" \
-        --tags=register-user
-    # login to the matrix server and obtain the access token
-    curl -XPOST -d "{
-        \"identifier\": { \"type\": \"m.id.user\", \"user\": \"${username}\" },
-        \"password\": \"${password}\",
-        \"type\": \"m.login.password\",
-        \"device_id\": \"${device_id}\"
-    }" 'https://matrix.irregularchat.com/_matrix/client/r0/login'
+    local generated=false
+    [[ -z "${2:-}" ]] && generated=true
+
+    # The password goes to ansible and curl through mode-600 JSON files built
+    # with json.dumps (quotes in it are safe), never on a command line that
+    # `ps` shows. Values reach python through the environment, not argv.
+    local vars login token_file
+    vars=$(mktemp) && login=$(mktemp) || return 1
+    chmod 600 "$vars" "$login"
+    MX_USER="$username" MX_PASS="$password" MX_ADMIN="$admin" MX_DEVICE="$device_id" python3 -c '
+import json, os, sys
+e = os.environ
+json.dump({"username": e["MX_USER"], "password": e["MX_PASS"], "admin": e["MX_ADMIN"]}, open(sys.argv[1], "w"))
+json.dump({"identifier": {"type": "m.id.user", "user": e["MX_USER"]}, "password": e["MX_PASS"],
+           "type": "m.login.password", "device_id": e["MX_DEVICE"]}, open(sys.argv[2], "w"))
+' "$vars" "$login" || { rm -f "$vars" "$login"; return 1; }
+
+    # The playbook lives two levels above inventory/hosts; run it from there
+    ( cd "$(dirname "$(dirname "$hosts_file")")" &&
+      sudo ansible-playbook -i "$hosts_file" setup.yml --extra-vars "@$vars" --tags=register-user )
+    local rc=$?
+    rm -f "$vars"
+    if [[ $rc -ne 0 ]]; then
+        rm -f "$login"
+        echo "Error: registering $username failed (ansible exit $rc)."
+        return 1
+    fi
+
+    # Log in once to get an access token; keep it in a private file, not the terminal
+    token_file="$HOME/.config/dotfiles/matrix/${username}.token"
+    mkdir -p "${token_file%/*}" && chmod 700 "${token_file%/*}"
+    curl -fsS -X POST --data "@$login" -H 'Content-Type: application/json' \
+        'https://matrix.irregularchat.com/_matrix/client/v3/login' |
+        python3 -c 'import json, sys; print(json.load(sys.stdin)["access_token"])' > "$token_file.tmp"
+    rc=$?
+    rm -f "$login"
+    if [[ $rc -eq 0 && -s "$token_file.tmp" ]]; then
+        mv "$token_file.tmp" "$token_file" && chmod 600 "$token_file"
+        echo "Registered $username (device $device_id). Access token saved to $token_file"
+    else
+        rm -f "$token_file.tmp"
+        echo "Registered $username, but logging in for a token failed."
+    fi
+    if $generated; then
+        echo "Generated password (shown once; store it in your password manager): $password"
+    fi
 }
 
 # Disk usage aliases

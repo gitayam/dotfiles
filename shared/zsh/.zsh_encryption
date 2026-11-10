@@ -146,7 +146,7 @@ generate_password() {
                     fi
                     
                     if ! $quiet_mode; then
-                        echo "Generated passphrase: $password" >&2
+                        : # (no echo: the password is printed once, below, or copied)
                     fi
                 else
                     # Use macOS's built-in word list as a fallback if diceware isn't available
@@ -171,7 +171,7 @@ generate_password() {
                     fi
                     
                     if ! $quiet_mode; then
-                        echo "Generated passphrase: $password" >&2
+                        : # (no echo: the password is printed once, below, or copied)
                     fi
                 fi
                 ;;
@@ -212,7 +212,7 @@ generate_password() {
                 fi
                 
                 if ! $quiet_mode; then
-                    echo "Generated password: $password" >&2
+                    : # (no echo: the password is printed once, below, or copied)
                 fi
                 ;;
                 
@@ -220,7 +220,7 @@ generate_password() {
                 # Generate a random numeric password
                 password=$(LC_ALL=C < /dev/urandom tr -dc '0-9' | head -c "$char_length")
                 if ! $quiet_mode; then
-                    echo "Generated numeric password: $password" >&2
+                    : # (no echo: the password is printed once, below, or copied)
                 fi
                 ;;
                 
@@ -228,7 +228,7 @@ generate_password() {
                 # Generate a random hexadecimal password
                 password=$(LC_ALL=C < /dev/urandom tr -dc 'a-f0-9' | head -c "$char_length")
                 if ! $quiet_mode; then
-                    echo "Generated hex password: $password" >&2
+                    : # (no echo: the password is printed once, below, or copied)
                 fi
                 ;;
                 
@@ -241,18 +241,26 @@ generate_password() {
         esac
     fi
     
-    # Copy to clipboard if requested - use pbcopy on macOS
+    # -c: copy instead of printing, and clear the clipboard after 45 s if it
+    # still holds this password. pbcopy on macOS, wl-copy or xclip on Linux.
     if $copy_to_clipboard && [[ -n "$password" ]]; then
-        echo -n "$password" | pbcopy
-        if ! $quiet_mode; then
-            echo "Password copied to clipboard." >&2
+        # Arrays: zsh doesn't split an unquoted "$cmd" into words
+        local -a copy_cmd=() paste_cmd=()
+        if command -v pbcopy &>/dev/null; then copy_cmd=(pbcopy); paste_cmd=(pbpaste)
+        elif command -v wl-copy &>/dev/null; then copy_cmd=(wl-copy); paste_cmd=(wl-paste -n)
+        elif command -v xclip &>/dev/null; then copy_cmd=(xclip -selection clipboard); paste_cmd=(xclip -selection clipboard -o)
         fi
+        if [[ ${#copy_cmd[@]} -gt 0 ]]; then
+            printf '%s' "$password" | "${copy_cmd[@]}"
+            # Double fork: no job notice, and it outlives this function
+            ( ( sleep 45; [[ "$("${paste_cmd[@]}" 2>/dev/null)" == "$password" ]] && printf '' | "${copy_cmd[@]}" ) >/dev/null 2>&1 & )
+            $quiet_mode || echo "Copied to the clipboard; it clears in 45 seconds. Save it in your password manager." >&2
+            return 0
+        fi
+        $quiet_mode || echo "No clipboard tool found (pbcopy, wl-copy, xclip); printing instead." >&2
     fi
-    
-    if ! $quiet_mode; then
-        echo "Save this password securely!" >&2
-    fi
-    
+
+    $quiet_mode || echo "Save this password securely!" >&2
     # Return the password as the function result
     echo "$password"
 }
@@ -1468,12 +1476,10 @@ secure_delete() {
         $verbose && echo "Securely deleting: $file"
         
         # Get file size for progress indication
+        # wc -c works everywhere; BSD `stat -f %z` means "filesystem" to GNU
+        # stat, so on Linux it returned the wrong size and too little was overwritten
         local filesize
-        if command -v stat &>/dev/null; then
-            filesize=$(stat -f "%z" "$file" 2>/dev/null) || filesize=0
-        else
-            filesize=$(wc -c < "$file" 2>/dev/null) || filesize=0
-        fi
+        filesize=$(wc -c < "$file" 2>/dev/null | tr -d ' ') || filesize=0
         
         # Perform multiple overwrite passes
         local pass_success=true

@@ -73,29 +73,28 @@ update_git_repos(){
         esac
     done
 
-    # Build the find command
-    find_cmd="find \"$search_path\" -type d -name \".git\""
-
+    # find arguments as an array (no eval: a path is never run as code);
+    # -name .git without -type d also finds linked worktrees, whose .git is a file
+    local -a find_args=("$search_path" -name .git)
+    local exclude
     for exclude in "${exclude_paths[@]}"; do
-        find_cmd+=" ! -path \"$exclude/*\""
+        find_args+=(! -path "$exclude/*")
     done
 
-    find_cmd+=" -print"
-
-    # Execute the find command and update repositories
-    eval "$find_cmd" | while IFS= read -r gitdir; do
+    local gitdir repo_dir
+    while IFS= read -r gitdir; do
         repo_dir=$(dirname "$gitdir")
 
-        # Ensure the directory is marked safe for Git operations
-        git config --global --add safe.directory "$repo_dir"
+        # Only when git would refuse the repo (owned by another user), and only once
+        if git -C "$repo_dir" status --porcelain 2>&1 | grep -q 'dubious ownership' &&
+           ! git config --global --get-all safe.directory | grep -qxF "$repo_dir"; then
+            git config --global --add safe.directory "$repo_dir"
+        fi
 
         echo "Updating repository in $repo_dir"
-        cd "$repo_dir" || {
-            echo "Failed to access $repo_dir"
-            continue
-        }
-        git pull --rebase || echo "Failed to update $repo_dir"
-    done
+        # git -C, not cd: the calling shell stays where it was
+        git -C "$repo_dir" pull --rebase || echo "Failed to update $repo_dir"
+    done < <(find "${find_args[@]}" 2>/dev/null)
 }
 
 ## Git Clone Function
@@ -188,7 +187,8 @@ git_clone(){
         # Handle 'gh repo clone user/repo' style
         if [[ "$input" =~ ^gh[[:space:]]+repo[[:space:]]+clone[[:space:]]+([a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)$ ]]; then
             if command -v gh &> /dev/null; then
-                user_repo=${BASH_REMATCH[1]}
+                # First capture group: zsh puts it in match[1], bash in BASH_REMATCH[1]
+                if [[ -n "$ZSH_VERSION" ]]; then user_repo="${match[1]}"; else user_repo="${BASH_REMATCH[1]}"; fi
                 repo_name=$(basename "$user_repo")
                 
                 # Determine target directory
@@ -226,7 +226,8 @@ git_clone(){
             repo_url="$input"
             repo_name=$(basename "$input")
             repo_name="${repo_name%.git}"
-            ssh_host="${BASH_REMATCH[1]}"
+            # First capture group: zsh puts it in match[1], bash in BASH_REMATCH[1]
+            if [[ -n "$ZSH_VERSION" ]]; then ssh_host="${match[1]}"; else ssh_host="${BASH_REMATCH[1]}"; fi
             # Only check known_hosts if file exists
             if [[ -f "$HOME/.ssh/known_hosts" ]]; then
                 if ! ssh-keygen -F "$ssh_host" > /dev/null; then
