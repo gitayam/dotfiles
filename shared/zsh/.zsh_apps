@@ -1,6 +1,6 @@
 alias kp="keepassxc"  # Open the KeePassXC password manager
+unalias run-kp 2>/dev/null  # was an alias; re-sourcing would expand it in the definition
 # Open a KeePassXC database file in the app: run-kp vault.kdbx
-unalias run-kp 2>/dev/null  # was an alias; re-sourcing would expand it here
 run-kp() { keepassxc "$@"; }
 
 # ----------------------

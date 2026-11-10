@@ -1,0 +1,92 @@
+#!/bin/bash
+# git wip [message]: save everything in this checkout as a "wip" commit and
+# push it, so work in progress exists somewhere other than this machine.
+#
+# Refuses when what would be committed looks like a secret: .env files, keys,
+# keystores by name, and token or private-key shapes in the added lines
+# (AWS, GitHub, GitLab, Slack, Anthropic, OpenAI, PEM). It prints file names
+# and the kind of match, never the value. Hooks run as usual (no --no-verify).
+#
+#   git wip                   commit as "wip: <time> on <host>" and push
+#   git wip "fix parser"      commit as "wip: fix parser" and push
+#   git wip --no-push         commit only
+#   git wip --dry-run         show what would be committed and the scan result
+
+set -u
+PUSH=1; DRY=0; MSG=""
+for arg in "$@"; do
+  case "$arg" in
+    --no-push) PUSH=0 ;;
+    -n|--dry-run) DRY=1 ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+    -*) echo "git wip: unknown option $arg" >&2; exit 2 ;;
+    *) MSG="$arg" ;;
+  esac
+done
+
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "git wip: not inside a git checkout" >&2; exit 1; }
+branch=$(git symbolic-ref --quiet --short HEAD) || { echo "git wip: detached HEAD; check out a branch first" >&2; exit 1; }
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+if [[ -z "$(git status --porcelain)" ]]; then
+  echo "git wip: nothing to commit."
+else
+  # Stage everything, remembering the index so a refusal can put it back exactly
+  saved_index=$(git write-tree) || exit 1
+  git add -A || exit 1
+
+  # Secret-looking file names among staged additions and changes
+  name_hits=$(git diff --cached --name-only --diff-filter=ACMR | grep -E \
+    '(^|/)(\.env(\.[^/]*)?|[^/]*\.(pem|key|p12|pfx|jks|keystore|kdbx|ovpn)|id_(rsa|dsa|ecdsa|ed25519)(_[^/]*)?|credentials(\.[a-z]+)?|\.npmrc|\.pypirc|\.netrc)$' |
+    grep -vE '(^|/)\.env\.(example|sample|template|dist)$')
+
+  # Token and key shapes in added lines (names of the files, not the values)
+  content_hits=$(git diff --cached -U0 --diff-filter=ACMR | awk '
+    /^\+\+\+ b\// { file = substr($0, 7); next }
+    /^\+/ {
+      kind = ""
+      if ($0 ~ /AKIA[0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z]/) kind = "AWS access key id"
+      else if ($0 ~ /-----BEGIN [A-Z ]*PRIVATE KEY-----/) kind = "private key"
+      else if ($0 ~ /(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]/ || $0 ~ /github_pat_/) kind = "GitHub token"
+      else if ($0 ~ /glpat-[A-Za-z0-9_-][A-Za-z0-9_-][A-Za-z0-9_-][A-Za-z0-9_-][A-Za-z0-9_-][A-Za-z0-9_-][A-Za-z0-9_-][A-Za-z0-9_-][A-Za-z0-9_-][A-Za-z0-9_-][A-Za-z0-9_-][A-Za-z0-9_-][A-Za-z0-9_-][A-Za-z0-9_-][A-Za-z0-9_-][A-Za-z0-9_-]/) kind = "GitLab token"
+      else if ($0 ~ /xox[abprs]-[A-Za-z0-9-][A-Za-z0-9-][A-Za-z0-9-][A-Za-z0-9-][A-Za-z0-9-][A-Za-z0-9-][A-Za-z0-9-][A-Za-z0-9-][A-Za-z0-9-][A-Za-z0-9-]/) kind = "Slack token"
+      else if ($0 ~ /sk-ant-[A-Za-z0-9_-][A-Za-z0-9_-][A-Za-z0-9_-][A-Za-z0-9_-][A-Za-z0-9_-][A-Za-z0-9_-][A-Za-z0-9_-][A-Za-z0-9_-][A-Za-z0-9_-][A-Za-z0-9_-]/) kind = "Anthropic key"
+      else if ($0 ~ /sk-(proj-)?[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]/) kind = "OpenAI-style key"
+      if (kind != "") print "  " file ": " kind
+    }' | sort -u)
+
+  if [[ $DRY -eq 1 || -n "$name_hits$content_hits" ]]; then
+    git diff --cached --stat | tail -15
+  fi
+  if [[ -n "$name_hits$content_hits" ]]; then
+    git read-tree "$saved_index"  # unstage exactly what git wip staged
+    echo "" >&2
+    echo "git wip: refusing; this would commit what looks like a secret:" >&2
+    [[ -n "$name_hits" ]] && sed 's/^/  /' <<< "$name_hits" >&2
+    [[ -n "$content_hits" ]] && echo "$content_hits" >&2
+    echo "Add it to .gitignore (or remove the value), then run git wip again." >&2
+    exit 1
+  fi
+  if [[ $DRY -eq 1 ]]; then
+    git read-tree "$saved_index"
+    echo "git wip --dry-run: no secrets found; nothing committed."
+    exit 0
+  fi
+
+  git commit -q -m "wip: ${MSG:-$(date '+%Y-%m-%d %H:%M') on $(hostname -s)}" || {
+    git read-tree "$saved_index"
+    echo "git wip: commit failed (a hook may have refused it); changes are unstaged as before." >&2
+    exit 1
+  }
+  echo "Committed: $(git log -1 --format='%h %s')"
+fi
+
+[[ $PUSH -eq 1 ]] || exit 0
+if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
+  git push -q && echo "Pushed $branch."
+elif git remote get-url origin >/dev/null 2>&1; then
+  git push -q -u origin "$branch" && echo "Pushed $branch to origin (now tracking)."
+else
+  echo "git wip: no remote to push to; the commit is only on this machine." >&2
+  exit 1
+fi

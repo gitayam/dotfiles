@@ -30,3 +30,34 @@ alias gs="git_status"
 alias gd="git_diff"
 alias gl="git_log"
 alias gp="git_push"
+
+# Sign commits and tags with your SSH key (shown as Verified on GitHub/GitLab)
+git_sign_setup() {
+  # Usage: git_sign_setup [path/to/key.pub]   (default: first of id_ed25519, id_ecdsa, id_rsa)
+  local key="${1:-}" k email signers="$HOME/.config/git/allowed_signers"
+  if [[ -z "$key" ]]; then
+    for k in "$HOME/.ssh/id_ed25519.pub" "$HOME/.ssh/id_ecdsa.pub" "$HOME/.ssh/id_rsa.pub"; do
+      [[ -f "$k" ]] && { key="$k"; break; }
+    done
+  fi
+  if [[ ! -f "$key" || "$key" != *.pub ]]; then
+    echo "Usage: git_sign_setup [path/to/key.pub]  (no SSH public key given or found)"
+    return 1
+  fi
+  email=$(git config --global user.email)
+  [[ -n "$email" ]] || { echo "Set your email first: git config --global user.email you@example.com"; return 1; }
+  # allowed_signers lets `git log --show-signature` verify your own signatures locally
+  mkdir -p "${signers%/*}"
+  grep -qF "$(awk '{print $2}' "$key")" "$signers" 2>/dev/null ||
+    echo "$email namespaces=\"git\" $(awk '{print $1, $2}' "$key")" >> "$signers"
+  git config --global gpg.format ssh
+  git config --global user.signingkey "$key"
+  git config --global gpg.ssh.allowedSignersFile "$signers"
+  git config --global commit.gpgsign true
+  git config --global tag.gpgsign true
+  echo "Commits and tags are now signed with $key."
+  echo "Add the same key as a *signing* key so forges show Verified:"
+  echo "  GitHub: Settings > SSH and GPG keys > New SSH key > Key type: Signing Key"
+  echo "  GitLab: Preferences > SSH Keys > Usage type: Signing"
+  echo "Check: git log --show-signature -1"
+}

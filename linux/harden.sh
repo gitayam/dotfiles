@@ -391,6 +391,22 @@ apply_mac_random() {
     write_root_file "$NM_FILE" 0644
 }
 
+# Backups: whether a backup job exists. Its recency can't be read without the
+# tool's credentials, so it is reported for you to verify, never passed.
+report_backups() {
+  local jobs
+  jobs=$( { systemctl list-timers --all --no-legend 2>/dev/null; systemctl --user list-timers --all --no-legend 2>/dev/null;
+            crontab -l 2>/dev/null; sudo -n crontab -l 2>/dev/null; } |
+          grep -oiE 'restic|borg|borgmatic|rsnapshot|timeshift|deja-dup|duplicity|kopia|snapper|backup' | sort -u | paste -sd, -)
+  if [[ -n "$jobs" ]]; then
+    report INFO "Backups: scheduled job found ($jobs)" "check a recent snapshot and do a test restore"
+  elif command -v timeshift &>/dev/null || command -v deja-dup &>/dev/null; then
+    report MANUAL "Backups: a backup app is installed but nothing is scheduled" "schedule it, then test a restore"
+  else
+    report MANUAL "Backups: none found" "set up restic, borg, Timeshift or Deja Dup, and test a restore"
+  fi
+}
+
 run_controls() {
   echo "== Disk and boot"
   local root_src
@@ -413,6 +429,9 @@ run_controls() {
   else
     report FAIL "[L1] AppArmor enabled" "install apparmor and apparmor-utils"
   fi
+
+  echo "== Backups"
+  report_backups
 
   echo "== Kernel and network"
   if check_sysctl; then

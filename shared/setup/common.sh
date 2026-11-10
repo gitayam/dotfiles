@@ -188,6 +188,45 @@ install_vibe_coding() {
   done
 }
 
+# Copy a shared config into place only when the user has none. Never overwrites.
+install_config_if_missing() {
+  local src="$1" dst="$2" mode="$3"
+  if [[ -e "$dst" || -L "$dst" ]]; then
+    echo "  kept existing ${dst/#$HOME/~}"
+    return 0
+  fi
+  if is_dry_run; then
+    echo "  [dry-run] Would copy ${src/#$REPO_ROOT/dotfiles} to ${dst/#$HOME/~}"
+    return 0
+  fi
+  mkdir -p "$(dirname "$dst")"
+  cp "$src" "$dst" && chmod "$mode" "$dst" && echo "  installed ${dst/#$HOME/~}"
+}
+
+# SSH client, git and tmux defaults from shared/ (ssh-doctor checks the result)
+setup_shell_tools() {
+  echo "Setting up SSH, git and tmux defaults..."
+  if ! is_dry_run; then
+    # ControlPath sockets and per-host files; ssh refuses group/world-writable dirs
+    mkdir -p "$HOME/.ssh/sockets" "$HOME/.ssh/config.d"
+    chmod 700 "$HOME/.ssh" "$HOME/.ssh/sockets" "$HOME/.ssh/config.d"
+  fi
+  install_config_if_missing "$REPO_ROOT/shared/ssh/config.template" "$HOME/.ssh/config" 600
+  install_config_if_missing "$REPO_ROOT/shared/tmux/.tmux.conf" "$HOME/.tmux.conf" 644
+
+  # Shared git settings (git wip, git inventory, per-forge identity), appended
+  # last so its includeIf identities win over the [user] defaults
+  if git config --global --get-all include.path 2>/dev/null | grep -qF "shared/.gitconfig"; then
+    echo "  kept existing git include of shared/.gitconfig"
+  elif is_dry_run; then
+    echo "  [dry-run] Would add include.path $REPO_ROOT/shared/.gitconfig to ~/.gitconfig"
+  else
+    git config --global --add include.path "$REPO_ROOT/shared/.gitconfig" &&
+      echo "  git now includes $REPO_ROOT/shared/.gitconfig"
+  fi
+  note_next_step "SSH: check your setup with ssh-doctor; sign commits with git_sign_setup"
+}
+
 # Write the community bookmarks as a standard bookmarks file that every browser
 # can import. Writing browser databases directly is unsafe while the browser
 # runs, and adding them again on every re-run creates duplicates.

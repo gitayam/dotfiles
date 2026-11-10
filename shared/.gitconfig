@@ -1,18 +1,34 @@
-[gpg]
-	program = /opt/homebrew/bin/gpg
-[user]
-	email = github.ayam@slmail.me
-	name = gitayam
-[safe]
-	directory = /Users/sac/Documents/Git/google_scraper
-	directory = /Users/sac/Documents/Git/alfarenxyz
-	directory = /Users/sac/Git/redOSR
-[credential "https://github.com"]
-	helper =
-	helper = !/opt/homebrew/bin/gh auth git-credential
-[credential "https://gist.github.com"]
-	helper =
-	helper = !/opt/homebrew/bin/gh auth git-credential
+# Shared git settings, included from ~/.gitconfig:
+#   [include]
+#       path = ~/Git/dotfiles/shared/.gitconfig
+# (the setup scripts add that line; `git config --global --get-all include.path` shows it)
+#
+# Only settings that are the same on every machine live here. Identity,
+# credential helpers, gpg.program and safe.directory stay in ~/.gitconfig.
+
+# Per-forge identity: commits in a repo whose remote is on that forge use the
+# name/email in the matching file. Missing files are skipped silently, so
+# create only the ones you need, e.g. ~/.gitconfig-github:
+#   [user]
+#       name = gitayam
+#       email = you@example.com
+[includeIf "hasconfig:remote.*.url:https://github.com/**"]
+	path = ~/.gitconfig-github
+[includeIf "hasconfig:remote.*.url:git@github.com:*/**"]
+	path = ~/.gitconfig-github
+[includeIf "hasconfig:remote.*.url:https://git.juntogroups.org/**"]
+	path = ~/.gitconfig-gitlab
+[includeIf "hasconfig:remote.*.url:https://git.irregularchat.com/**"]
+	path = ~/.gitconfig-gitlab
+[includeIf "hasconfig:remote.*.url:ssh://git@*:2224/**"]
+	path = ~/.gitconfig-gitlab
+
+[alias]
+	# Save and push everything as a wip commit; refuses secret-looking files
+	wip = !\"$HOME/Git/dotfiles/shared/bin/git-wip\"
+	# Every repo's unsaved state under ~/Git and ~/Code
+	inventory = !\"$HOME/Git/dotfiles/shared/bin/git-inventory\"
+
 [filter "lfs"]
 	smudge = git-lfs smudge -- %f
 	process = git-lfs filter-process

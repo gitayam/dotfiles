@@ -91,6 +91,21 @@ OS hardening lives in `macos/harden.sh` and `linux/harden.sh` (alias `harden`). 
 
 ---
 
+## Workstation tools (git, SSH, tmux, Tailscale)
+
+| Tool | Where | Does |
+|---|---|---|
+| `git-inventory` / `git inventory` | `shared/bin/git-inventory` | Per repository under `~/Git` and `~/Code`: commits on no remote (per branch), stashes, uncommitted files per checkout incl. linked worktrees anywhere, remotes (credentials redacted). Read-only (`GIT_OPTIONAL_LOCKS=0`). `--attention`, `--fetch`, `--ignored`, `--json FILE` (mode 600). Exit 1 if anything needs attention. Run before migrating or wiping a machine. |
+| `git wip [msg]` | `shared/bin/git-wip` | `add -A`, commit `wip: …`, push. Refuses (and restores the index exactly) when staged names look like secrets (.env, keys, keystores) or added lines contain AWS/GitHub/GitLab/Slack/Anthropic/OpenAI/PEM shapes. Hooks run. `--dry-run`, `--no-push`. |
+| `shared/.gitconfig` | included last from `~/.gitconfig` | Aliases `wip`/`inventory`, per-forge identity via `includeIf hasconfig:remote.*.url` (`~/.gitconfig-github`, `~/.gitconfig-gitlab`), LFS. No identity, credential helpers or paths: those stay machine-local. |
+| `git_sign_setup [key.pub]` | `.zsh_git` | SSH commit/tag signing + `allowed_signers`. |
+| `shared/ssh/config.template` | copied to `~/.ssh/config` only if absent | `Include ~/.ssh/config.d/*.conf`, `IgnoreUnknown UseKeychain` first (Linux), `ForwardAgent no`, keep-alives, ControlMaster sockets in `~/.ssh/sockets/%C`. |
+| `ssh-doctor [host]` | `.zsh_network` | Permissions as ssh enforces them, config parses, agent has keys, `IdentitiesOnly yes` with missing IdentityFile; with a host, resolved settings + key-only login test. `SSH_DOCTOR_CONFIG=file` checks another config. |
+| `ts-expiry [days]` | `.zsh_network` | This machine's and peers' Tailscale key expiry (online/offline, last seen). Finds the CLI inside Tailscale.app too. |
+| `tm [name]` | `.zsh_utils` | `tmux new -A -s main`; config in `shared/tmux/.tmux.conf` (copied only if absent). tmux and mosh are installed by both setup scripts. |
+
+Both setup scripts run `setup_shell_tools` (in `shared/setup/common.sh`) for the SSH/tmux/git pieces; both `harden.sh` scripts report backups (Time Machine age on macOS; scheduled restic/borg/Timeshift/… on Linux, reported as INFO since recency needs the tool's credentials).
+
 ## Finding commands (`dots`)
 
 `dots` (in `shared/zsh/.zsh_functions`) indexes every function and alias in the loaded `~/.zsh_*` files plus `claude-aliases.zsh`, straight from the source, so it never goes stale:

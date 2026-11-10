@@ -107,6 +107,35 @@ check_auto_updates() {
   done
 }
 
+# --- Backups -----------------------------------------------------------------
+
+# This Mac is often the machine everything is recovered from, so a backup that
+# exists and is recent matters. Only Time Machine's date can be read without
+# credentials; other tools are reported for you to verify.
+report_backups() {
+  local dests latest age_days
+  dests=$(tmutil destinationinfo 2>/dev/null)
+  if [[ -z "$dests" || "$dests" == *"No destinations"* ]]; then
+    if pgrep -qf 'restic|borg|arq|backblaze|carbonite' || launchctl list 2>/dev/null | grep -qiE 'restic|borg|arq|backblaze'; then
+      report INFO "Backups: no Time Machine, but another backup tool is running" "check a recent snapshot and a test restore"
+    else
+      report MANUAL "Backups: none found" "set up Time Machine (System Settings > General > Time Machine) or restic, and test a restore"
+    fi
+    return
+  fi
+  latest=$(tmutil latestbackup 2>/dev/null | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{6}' | tail -1)
+  if [[ -z "$latest" ]]; then
+    report INFO "Backups: Time Machine is set up, last backup date unreadable" "destination not connected, or the terminal lacks Full Disk Access; check System Settings > Time Machine"
+    return
+  fi
+  age_days=$(( ( $(date +%s) - $(date -j -f '%Y-%m-%d-%H%M%S' "$latest" +%s) ) / 86400 ))
+  if [[ $age_days -le 7 ]]; then
+    report PASS "Backups: last Time Machine backup ${age_days} day(s) ago"
+  else
+    report FAIL "Backups: last Time Machine backup ${age_days} days ago" "connect the backup disk, or check why backups stopped"
+  fi
+}
+
 # --- Firewall ----------------------------------------------------------------
 
 check_firewall() { "$FW" --getglobalstate 2>/dev/null | grep -q "enabled"; }
@@ -281,6 +310,9 @@ run_controls() {
   else
     report MANUAL "[L1 1.2-1.5] Automatic updates on" "System Settings > General > Software Update > Automatic updates (MDM-only on macOS 27)"
   fi
+
+  echo "== Backups"
+  report_backups
 
   echo "== Firewall"
   control "[L1 2.2.1] Application firewall on" check_firewall apply_firewall

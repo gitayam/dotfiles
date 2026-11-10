@@ -227,7 +227,7 @@ findex(){
 
 # Matrix server functions
 
-# Matrix setup
+# Run the matrix-docker-ansible-deploy playbook (full, normal or restart)
 matrix_setup(){
     # for a list of tags see https://github.com/spantaleev/matrix-docker-ansible-deploy/blob/a1efb78bcbc3a9205a59de3364f47192b6232f0f/docs/playbook-tags.md#L4
     ## Usage: matrix_setup {full|1|normal|restart} {vars_directory_path}
@@ -326,3 +326,5 @@ matrix_setup_user(){
 # Disk usage aliases
 alias du='du -h -d 1'  # Show disk usage in human-readable format
 alias df='df -h'                # Show free disk space in human-readable format 
+# Attach to the "main" tmux session, or start it (work survives SSH drops)
+tm() { tmux new-session -A -s "${1:-main}"; }

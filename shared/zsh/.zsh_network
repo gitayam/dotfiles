@@ -998,3 +998,138 @@ restore_original_mac() {
         return 1
     fi
 }
+# Check SSH client setup: permissions, config, agent keys, and per-host identity files
+ssh-doctor() {
+  # Usage: ssh-doctor [host]   (with a host: also show its resolved settings and try a connection)
+  # SSH_DOCTOR_CONFIG=file checks another config instead of ~/.ssh/config
+  local problems=0 mode f host hosts idfiles io found key
+  local cfg="${SSH_DOCTOR_CONFIG:-$HOME/.ssh/config}" cfgdir="$HOME/.ssh/config.d"
+  _ssh_doctor_say() { printf '%-5s %s\n' "$1" "$2"; [[ "$1" == FAIL ]] && problems=$((problems + 1)); return 0; }
+  _ssh_doctor_mode() { stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1" 2>/dev/null; }
+
+  # What ssh/sshd enforce: no group/world write on ~/.ssh, config and
+  # authorized_keys; private keys readable by you only
+  if [[ -d "$HOME/.ssh" ]]; then
+    mode=$(_ssh_doctor_mode "$HOME/.ssh")
+    (( (8#$mode & 8#022) == 0 )) && _ssh_doctor_say ok "~/.ssh is not writable by others ($mode)" ||
+      _ssh_doctor_say FAIL "~/.ssh is $mode (writable by others); fix: chmod 700 ~/.ssh"
+    # find, not a glob: zsh aborts on a glob that matches nothing
+    for f in $(find "$HOME/.ssh" -maxdepth 1 -type f \( -name 'id_*' ! -name '*.pub' -o -name config -o -name authorized_keys \) 2>/dev/null); do
+      mode=$(_ssh_doctor_mode "$f")
+      if [[ "${f##*/}" == id_* ]]; then
+        (( (8#$mode & 8#077) == 0 )) ||
+          _ssh_doctor_say FAIL "private key ${f/#$HOME/~} is $mode (ssh refuses it); fix: chmod 600 ${f/#$HOME/~}"
+      else
+        (( (8#$mode & 8#022) == 0 )) ||
+          _ssh_doctor_say FAIL "${f/#$HOME/~} is $mode (writable by others); fix: chmod 600 ${f/#$HOME/~}"
+      fi
+    done
+  else
+    _ssh_doctor_say FAIL "no ~/.ssh folder"
+  fi
+
+  # The config must parse, or every ssh/scp/git-over-ssh call fails
+  if [[ -f "$cfg" ]]; then
+    if ssh -F "$cfg" -G ssh-doctor-probe >/dev/null 2>&1; then
+      _ssh_doctor_say ok "${cfg/#$HOME/~} parses"
+    else
+      _ssh_doctor_say FAIL "${cfg/#$HOME/~} does not parse: $(ssh -F "$cfg" -G ssh-doctor-probe 2>&1 | head -1)"
+    fi
+    if grep -qiE '^[[:space:]]*ControlPath[[:space:]]+~/\.ssh/sockets' "$cfg" && [[ ! -d "$HOME/.ssh/sockets" ]]; then
+      _ssh_doctor_say FAIL "ControlPath uses ~/.ssh/sockets, which doesn't exist; fix: mkdir -m 700 ~/.ssh/sockets"
+    fi
+  else
+    _ssh_doctor_say info "no ~/.ssh/config (template: ~/Git/dotfiles/shared/ssh/config.template)"
+  fi
+
+  # Agent: "no identities" made a remote dev host unreachable before
+  if [[ -z "${SSH_AUTH_SOCK:-}" ]]; then
+    _ssh_doctor_say FAIL "no SSH agent (SSH_AUTH_SOCK is unset)"
+  elif [[ ! -S "$SSH_AUTH_SOCK" ]]; then
+    _ssh_doctor_say FAIL "SSH_AUTH_SOCK points to a missing socket: $SSH_AUTH_SOCK"
+  else
+    ssh-add -l >/dev/null 2>&1
+    case $? in
+      0) _ssh_doctor_say ok "agent has $(ssh-add -l 2>/dev/null | wc -l | tr -d ' ') key(s) loaded" ;;
+      1) _ssh_doctor_say FAIL "agent is running but has no keys; add one: ssh-add ~/.ssh/id_ed25519 (or unlock KeePassXC/1Password)" ;;
+      *) _ssh_doctor_say FAIL "can't talk to the agent at $SSH_AUTH_SOCK" ;;
+    esac
+  fi
+
+  # Every named host: its identity files must exist. With IdentitiesOnly yes a
+  # missing file also hides the agent's keys, so the login fails outright.
+  hosts=$({ cat "$cfg" 2>/dev/null; find "$cfgdir" -name '*.conf' -type f -exec cat {} + 2>/dev/null; } |
+    awk 'tolower($1) == "host" { for (i = 2; i <= NF; i++) if ($i !~ /[*?!]/) print $i }' | sort -u)
+  for host in $hosts; do
+    idfiles=$(ssh -F "$cfg" -G "$host" 2>/dev/null | awk '$1 == "identityfile" {print $2}')
+    io=$(ssh -F "$cfg" -G "$host" 2>/dev/null | awk '$1 == "identitiesonly" {print $2}')
+    found=0
+    for key in $idfiles; do
+      key="${key/#\~/$HOME}"
+      [[ -f "$key" ]] && found=1
+    done
+    if [[ "$io" == yes && $found -eq 0 ]]; then
+      _ssh_doctor_say FAIL "Host $host: IdentitiesOnly yes, but none of its IdentityFile(s) exist"
+    fi
+  done
+  [[ -n "$hosts" ]] && _ssh_doctor_say ok "checked identity files for $(echo "$hosts" | wc -l | tr -d ' ') named host(s)"
+
+  if [[ -n "${1:-}" ]]; then
+    echo ""
+    echo "Resolved settings for $1:"
+    ssh -F "$cfg" -G "$1" 2>/dev/null | grep -E '^(hostname|user|port|identityfile|identitiesonly|forwardagent|proxyjump|controlpath) ' | sed 's/^/  /'
+    if ssh -F "$cfg" -o BatchMode=yes -o ConnectTimeout=8 "$1" true 2>/dev/null; then
+      _ssh_doctor_say ok "logged in to $1 with a key (no password prompt)"
+    else
+      _ssh_doctor_say FAIL "could not log in to $1 without a password; details: ssh -v $1"
+    fi
+  fi
+
+  echo ""
+  [[ $problems -eq 0 ]] && echo "ssh-doctor: no problems found." || echo "ssh-doctor: $problems problem(s)."
+  unset -f _ssh_doctor_say _ssh_doctor_mode
+  [[ $problems -eq 0 ]]
+}
+
+# Warn about Tailscale node keys that expire soon (an expired key needs a browser re-login on that machine)
+ts-expiry() {
+  # Usage: ts-expiry [days]   (default 14; lists this machine and peers expiring within that window)
+  local days="${1:-14}" ts
+  ts=$(command -v tailscale || echo /Applications/Tailscale.app/Contents/MacOS/Tailscale)
+  [[ -x "$ts" ]] || { echo "ts-expiry: tailscale CLI not found"; return 1; }
+  "$ts" status --json 2>/dev/null | python3 -c '
+import json, sys
+from datetime import datetime, timezone
+days = int(sys.argv[1])
+try:
+    d = json.load(sys.stdin)
+except ValueError:
+    sys.exit("ts-expiry: could not read tailscale status (is Tailscale running?)")
+now = datetime.now(timezone.utc)
+def left(node):
+    exp = node.get("KeyExpiry")
+    if not exp:
+        return None
+    return (datetime.fromisoformat(exp.replace("Z", "+00:00")) - now).days
+def name(node):
+    return (node.get("DNSName") or node.get("HostName") or "?").split(".")[0]
+self_node = d.get("Self", {})
+n = left(self_node)
+print(f"This machine ({name(self_node)}): " + ("key expiry disabled" if n is None else
+      f"key expires in {n} day(s)" if n >= 0 else f"KEY EXPIRED {-n} day(s) ago"))
+soon = []
+no_expiry = 0
+for p in (d.get("Peer") or {}).values():
+    n = left(p)
+    if n is None:
+        no_expiry += 1
+    elif n <= days:
+        seen = "online" if p.get("Online") else "offline, last seen " + (p.get("LastSeen") or "?")[:10]
+        soon.append((n, name(p), seen))
+for n, host, seen in sorted(soon):
+    print(f"  {host}: " + (f"expires in {n} day(s)" if n >= 0 else f"EXPIRED {-n} day(s) ago") + f" ({seen})")
+print(f"{len(soon)} peer(s) expire within {days} days; {no_expiry} have key expiry disabled.")
+print("Renew: run tailscale up --force-reauth on that machine, or disable key expiry for servers in the admin console.")
+sys.exit(1 if soon or (left(self_node) or days + 1) <= days else 0)
+' "$days"
+}

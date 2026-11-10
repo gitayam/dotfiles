@@ -353,7 +353,7 @@ gather_user_preferences() {
 install_terminal_apps() {
   # Debian/Ubuntu names; kubectl is not in their repos (see the summary)
   apt_install curl zsh git gh jq tree python3 ansible docker.io gnupg age diceware \
-    magic-wormhole wireguard-tools ocrmypdf pandoc tesseract-ocr clamav ghostscript imagemagick
+    magic-wormhole wireguard-tools ocrmypdf pandoc tesseract-ocr clamav ghostscript imagemagick tmux mosh
   run_vendor_installer "Tailscale" tailscale https://tailscale.com/install.sh sh
   if ! command -v kubectl &>/dev/null; then
     note_next_step "kubectl is not in Debian/Ubuntu repos: https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/"
@@ -516,6 +516,7 @@ main() {
   install_desktop_apps
   install_dfp_tools
   install_vibe_coding
+  setup_shell_tools
   write_bookmarks_file
   configure_linux_settings
 

@@ -340,7 +340,7 @@ gather_user_preferences() {
 }
 
 install_terminal_apps() {
-  terminal_apps=("coreutils" "diceware" "git" "gh" "jq" "tree" "python" "ansible" "docker" "kubectl" "gnupg" "age" "magic-wormhole" "wireguard-tools" "ocrmypdf" "pandoc" "tesseract" "clamav" "ghostscript" "imagemagick")
+  terminal_apps=("coreutils" "diceware" "git" "gh" "jq" "tree" "python" "ansible" "docker" "kubectl" "gnupg" "age" "magic-wormhole" "wireguard-tools" "ocrmypdf" "pandoc" "tesseract" "clamav" "ghostscript" "imagemagick" "tmux" "mosh")
   for app in "${terminal_apps[@]}"; do
     install_formula "$app"
   done
@@ -722,6 +722,7 @@ main() {
   install_dfp_tools
   install_queued_casks
   install_vibe_coding
+  setup_shell_tools
   write_bookmarks_file
   configure_macos_settings
 

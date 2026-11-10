@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+"""git-inventory: what would be lost if this machine disappeared?
+
+Lists every git checkout under the given roots (default ~/Git and ~/Code)
+with the state that lives only here: commits on no remote (per branch),
+stashes, uncommitted and untracked files, ignored files, linked worktrees,
+remotes and the identity commits are made with. Read-only and metadata only:
+no file contents, and remote URLs have embedded credentials redacted.
+
+Run it before migrating to another machine or dev host, and keep the JSON
+(--json) as the migration record. Exit status 1 when any repo needs attention.
+
+    git-inventory                      table for ~/Git and ~/Code
+    git-inventory --attention          only repos with something unsaved
+    git-inventory --json inv.json      also write the full record
+    git-inventory --fetch              fetch first, so "not on a remote" is current
+    git-inventory --ignored            also count ignored files (.env, local config)
+    git-inventory DIR [DIR...]         other roots
+"""
+import argparse
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+
+SKIP_DIRS = {"node_modules", ".venv", "venv", "__pycache__", ".cache", "vendor", "dist", "build"}
+# Never take index.lock or refresh the index: inventory must not change repos
+ENV = dict(os.environ, GIT_OPTIONAL_LOCKS="0", GIT_TERMINAL_PROMPT="0")
+
+
+def git(path, *args, check=False):
+    r = subprocess.run(["git", "-C", path, *args], capture_output=True, text=True, env=ENV)
+    if check and r.returncode != 0:
+        raise RuntimeError(r.stderr.strip())
+    return r.stdout
+
+
+def redact(url):
+    # https://user:token@host/... -> https://***@host/...
+    return re.sub(r"(//)[^/@\s]+@", r"\1***@", url)
+
+
+def find_repos(roots, depth):
+    for root in roots:
+        root = os.path.expanduser(root)
+        if not os.path.isdir(root):
+            continue
+        for dirpath, dirnames, _ in os.walk(root):
+            if os.path.exists(os.path.join(dirpath, ".git")):  # dir, or file for a worktree
+                yield dirpath
+                dirnames[:] = []  # nested repos are reported by their parent's status
+                continue
+            if dirpath[len(root):].count(os.sep) >= depth:
+                dirnames[:] = []
+                continue
+            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
+
+
+def worktree_state(path, count_ignored):
+    """State that lives in one checkout: its branch and uncommitted files."""
+    st = {"path": path}
+    st["branch"] = git(path, "rev-parse", "--abbrev-ref", "HEAD").strip() or "(no commits)"
+    staged = modified = untracked = 0
+    # "normal": an untracked folder counts once; "all" walks every file in it (slow)
+    entries = git(path, "status", "--porcelain=v1", "-z", "--untracked-files=normal", check=True).split("\0")
+    i = 0
+    while i < len(entries):
+        e = entries[i]
+        if len(e) >= 3:
+            x, y = e[0], e[1]
+            if x == "?":
+                untracked += 1
+            else:
+                staged += x not in " "
+                modified += y not in " "
+            if x in "RC":
+                i += 1  # rename/copy: the next entry is the source path
+        i += 1
+    st["staged"], st["modified"], st["untracked"] = staged, modified, untracked
+    st["dirty"] = bool(staged or modified or untracked)
+    # Ignored files (.env, local configs, build output) are never on a remote;
+    # counting them walks node_modules and the like, so it is opt-in
+    if count_ignored:
+        ignored = git(path, "status", "--porcelain=v1", "-z", "--ignored=matching",
+                      "--untracked-files=normal", check=True)
+        st["ignored"] = sum(1 for e in ignored.split("\0") if e.startswith("!! "))
+    return st
+
+
+def inspect(paths, fetch, count_ignored):
+    """One repository: shared state once, plus every checkout (worktree) of it."""
+    # The main checkout (a .git folder) holds the repository; linked worktrees have a .git file
+    mains = [p for p in paths if os.path.isdir(os.path.join(p, ".git"))]
+    path = mains[0] if mains else paths[0]
+    rec = {"path": path, "errors": []}
+    if fetch:
+        r = subprocess.run(["git", "-C", path, "fetch", "--all", "--prune", "--quiet"],
+                           capture_output=True, text=True, env=ENV, timeout=120)
+        if r.returncode != 0:
+            rec["errors"].append("fetch failed")
+    rec["identity"] = (git(path, "config", "user.name").strip() + " <" +
+                       git(path, "config", "user.email").strip() + ">")
+
+    remotes = {}
+    for line in git(path, "remote", "-v").splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[-1] == "(fetch)":
+            remotes[parts[0]] = redact(parts[1])
+    rec["remotes"] = remotes
+
+    # Commits that exist on no remote, per local branch
+    branches = []
+    has_remote_refs = bool(git(path, "for-each-ref", "--count=1", "refs/remotes").strip())
+    not_remote = ["--not", "--remotes"] if has_remote_refs else []
+    for line in git(path, "for-each-ref", "--format=%(refname:short)\t%(upstream:short)",
+                    "refs/heads", check=True).splitlines():
+        name, _, upstream = line.partition("\t")
+        n = git(path, "rev-list", "--count", name, *not_remote, check=True).strip()
+        branches.append({"name": name, "upstream": upstream or None, "not_on_any_remote": int(n or 0)})
+    rec["branches"] = branches
+    # Distinct commits: branches share history, so per-branch counts can't be summed
+    rec["unpushed_commits"] = int(git(path, "rev-list", "--count", "--branches", *not_remote,
+                                      check=True).strip() or 0) if branches else 0
+    rec["branches_unpushed"] = [b["name"] for b in branches if b["not_on_any_remote"]]
+    rec["stashes"] = len(git(path, "stash", "list", check=True).splitlines())
+
+    # Every checkout of this repository, including worktrees outside the roots
+    checkouts, prunable = [], []
+    for block in git(path, "worktree", "list", "--porcelain").strip().split("\n\n"):
+        wt = dict(l.split(" ", 1) if " " in l else (l, True) for l in block.splitlines())
+        if not wt.get("worktree") or "bare" in wt:
+            continue
+        if "prunable" in wt or not os.path.isdir(wt["worktree"]):
+            prunable.append(wt["worktree"])
+        else:
+            checkouts.append(wt["worktree"])
+    rec["checkouts"] = [worktree_state(c, count_ignored) for c in checkouts]
+    rec["prunable_worktrees"] = prunable
+    main = next((c for c in rec["checkouts"] if os.path.realpath(c["path"]) == os.path.realpath(path)), None)
+    rec["branch"] = main["branch"] if main else "?"
+    dirty = [c for c in rec["checkouts"] if c["dirty"]]
+
+    reasons = []
+    if not remotes:
+        reasons.append("no remote")
+    if rec["unpushed_commits"]:
+        names = rec["branches_unpushed"]
+        shown = ", ".join(names[:3]) + (f", +{len(names) - 3} more" if len(names) > 3 else "")
+        reasons.append(f"{rec['unpushed_commits']} commit(s) on no remote in {len(names)} branch(es): {shown}")
+    if dirty:
+        reasons.append(f"uncommitted files in {len(dirty)} of {len(rec['checkouts'])} checkout(s)")
+    if rec["stashes"]:
+        reasons.append(f"{rec['stashes']} stash(es)")
+    if prunable:
+        reasons.append(f"{len(prunable)} stale worktree record(s) (git worktree prune)")
+    rec["attention"] = reasons
+    return rec
+
+
+def common_dir(path):
+    out = git(path, "rev-parse", "--path-format=absolute", "--git-common-dir").strip()
+    return os.path.realpath(out) if out else os.path.realpath(path)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("roots", nargs="*", default=["~/Git", "~/Code"])
+    ap.add_argument("--depth", type=int, default=3, help="folder depth to search under each root (default 3)")
+    ap.add_argument("--fetch", action="store_true", help="git fetch every repo first (network)")
+    ap.add_argument("--json", metavar="FILE", help="write the full inventory as JSON")
+    ap.add_argument("--attention", action="store_true", help="only show repos that need attention")
+    ap.add_argument("--ignored", action="store_true",
+                    help="also count ignored files (.env, local config; slow in big repos)")
+    args = ap.parse_args()
+
+    # Group checkouts by repository: linked worktrees share branches and stashes
+    groups = {}
+    for path in sorted(set(find_repos(args.roots, args.depth))):
+        groups.setdefault(common_dir(path), []).append(path)
+
+    def run(paths):
+        try:
+            return inspect(paths, args.fetch, args.ignored)
+        except Exception as e:  # one broken repo must not hide the others, nor pass as clean
+            return {"path": paths[0], "errors": [str(e)], "attention": [f"could not be read: {str(e)[:80]}"]}
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        records = sorted(pool.map(run, groups.values()), key=lambda r: r["path"])
+
+    home = os.path.expanduser("~")
+    tilde = lambda p: p.replace(home, "~", 1)
+    shown = [r for r in records if r.get("attention")] if args.attention else records
+    for r in shown:
+        state = "; ".join(r.get("attention", [])) or "clean, everything on a remote"
+        print(f"{'!!' if r.get('attention') else 'ok'}  {tilde(r['path'])}  [{r.get('branch', '?')}]  {state}")
+        for c in r.get("checkouts", []):
+            if c["dirty"] and os.path.realpath(c["path"]) != os.path.realpath(r["path"]):
+                print(f"      worktree {tilde(c['path'])} [{c['branch']}]: "
+                      f"{c['staged']} staged, {c['modified']} modified, {c['untracked']} untracked")
+            elif c["dirty"]:
+                print(f"      this checkout: {c['staged']} staged, {c['modified']} modified, {c['untracked']} untracked")
+    need = sum(1 for r in records if r.get("attention"))
+    checkouts = sum(len(r.get("checkouts", [])) for r in records)
+    print(f"\n{len(records)} repositories ({checkouts} checkouts), {need} need attention before this machine can be wiped."
+          f"{'' if args.fetch else ' (Remote state as of the last fetch; --fetch to refresh.)'}")
+    print("Not covered: tags not pushed, git-lfs objects, files outside these repos"
+          + ("." if args.ignored else ", ignored files such as .env (--ignored counts them)."))
+
+    if args.json:
+        doc = {"host": socket.gethostname(), "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+               "roots": args.roots, "fetched": args.fetch, "repos": records}
+        fd = os.open(args.json, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(doc, f, indent=2)
+        print(f"Wrote {args.json}")
+    return 1 if need else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
