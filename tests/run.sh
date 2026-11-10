@@ -135,11 +135,19 @@ check "random MACs are unicast and locally administered" mac_ok
 media_name() { env -i HOME="$H" PATH=/usr/bin:/bin bash -c 'source ~/.zsh_transfer; clean_media_name "Show_Name_S01E02_720p_HDTV.mp4"'; }
 expect "clean_media_name works with the system sed/perl" '^Show_Name_S01E02$' media_name
 password_once() {
-  local out err
-  out=$(env -i HOME="$H" PATH=/usr/bin:/bin bash -c 'source ~/.zsh_encryption; generate_password -p chars -l 20' 2>"$WORK/gp.err")
+  local out pid
+  # SIGPIPE ignored, as on CI runners: `tr < /dev/urandom | head` then never
+  # ended. A watchdog turns a hang back into a failure.
+  env -i HOME="$H" PATH=/usr/bin:/bin bash -c 'trap "" PIPE; source ~/.zsh_encryption
+    for t in chars numbers hex; do generate_password -p $t -l 20 -q >/dev/null; done
+    generate_password -p chars -l 20' > "$WORK/gp.out" 2>"$WORK/gp.err" &
+  pid=$!
+  ( sleep 20; kill $pid 2>/dev/null ) >/dev/null 2>&1 &
+  wait $pid || return 1
+  out=$(cat "$WORK/gp.out")
   [[ ${#out} -eq 20 ]] && ! grep -qF -- "$out" "$WORK/gp.err"
 }
-check "generate_password prints the password once (not also on stderr)" password_once
+check "generate_password ends with SIGPIPE ignored and prints the password once" password_once
 ugr_safe() {
   local d="$WORK/ugr"; mkdir -p "$d/root"
   git init -q --bare "$d/r.git"

@@ -46,7 +46,7 @@ process_single_image() {
   # Generate a random name if requested
   if [[ "$random_name" == true ]]; then
     # Generate a random 8-character name
-    local random_str=$(cat /dev/urandom | LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 8 | head -n 1)
+    local random_str=$(head -c 2048 /dev/urandom | LC_ALL=C tr -dc 'a-zA-Z0-9' | head -c 8)  # bounded read: see _rand_chars
     filename="${random_str}"
   # Use sanitized name if requested
   elif [[ "$name" == true ]]; then

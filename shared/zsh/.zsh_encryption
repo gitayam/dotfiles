@@ -4,6 +4,18 @@
 # Password and Encryption Functions
 # ----------------------
 
+# Random characters from a tr set: _rand_chars 'a-zA-Z0-9' 20
+# Reads a bounded amount of /dev/urandom: `tr < /dev/urandom | head` relies on
+# SIGPIPE to stop tr, and where SIGPIPE is ignored (CI runners, some launchers)
+# BSD tr reads forever.
+_rand_chars() {
+  local set="$1" n="$2" out=""
+  while [[ ${#out} -lt $n ]]; do
+    out+=$(head -c $(( n * 64 + 256 )) /dev/urandom | LC_ALL=C tr -dc "$set")
+  done
+  printf '%s' "${out:0:$n}"
+}
+
 # Generate secure passwords
 generate_password() {
     # Default password type is phrases using diceware
@@ -180,15 +192,15 @@ generate_password() {
                 # Generate a random character password with letters, numbers, and symbols
                 if $include_special; then
                     # On macOS, use built-in tools for random generation
-                    password=$(LC_ALL=C < /dev/urandom tr -dc 'a-zA-Z0-9!@#$%^&*()_+=-' | head -c "$char_length")
+                    password=$(_rand_chars 'a-zA-Z0-9!@#$%^&*()_+=-' "$char_length")
                     
                     # Ensure at least one of each character type for better password strength
                     if [[ ${#password} -ge 4 ]]; then
                         # Get one of each type
-                        local lower=$(LC_ALL=C < /dev/urandom tr -dc 'a-z' | head -c 1)
-                        local upper=$(LC_ALL=C < /dev/urandom tr -dc 'A-Z' | head -c 1)
-                        local number=$(LC_ALL=C < /dev/urandom tr -dc '0-9' | head -c 1)
-                        local special=$(LC_ALL=C < /dev/urandom tr -dc '!@#$%^&*()_+=-' | head -c 1)
+                        local lower=$(_rand_chars 'a-z' 1)
+                        local upper=$(_rand_chars 'A-Z' 1)
+                        local number=$(_rand_chars '0-9' 1)
+                        local special=$(_rand_chars '!@#$%^&*()_+=-' 1)
                         
                         # Replace first 4 characters with our guaranteed types
                         password="${lower}${upper}${number}${special}${password:4}"
@@ -198,13 +210,13 @@ generate_password() {
                     fi
                 else
                     # Standard character set
-                    password=$(LC_ALL=C < /dev/urandom tr -dc 'a-zA-Z0-9' | head -c "$char_length")
+                    password=$(_rand_chars 'a-zA-Z0-9' "$char_length")
                     
                     # Ensure at least one lowercase, one uppercase, and one number
                     if [[ ${#password} -ge 3 ]]; then
-                        local lower=$(LC_ALL=C < /dev/urandom tr -dc 'a-z' | head -c 1)
-                        local upper=$(LC_ALL=C < /dev/urandom tr -dc 'A-Z' | head -c 1)
-                        local number=$(LC_ALL=C < /dev/urandom tr -dc '0-9' | head -c 1)
+                        local lower=$(_rand_chars 'a-z' 1)
+                        local upper=$(_rand_chars 'A-Z' 1)
+                        local number=$(_rand_chars '0-9' 1)
                         
                         password="${lower}${upper}${number}${password:3}"
                         password=$(echo "$password" | fold -w1 | sort -R | tr -d '\n' | head -c "$char_length")
@@ -218,7 +230,7 @@ generate_password() {
                 
             numbers)
                 # Generate a random numeric password
-                password=$(LC_ALL=C < /dev/urandom tr -dc '0-9' | head -c "$char_length")
+                password=$(_rand_chars '0-9' "$char_length")
                 if ! $quiet_mode; then
                     : # (no echo: the password is printed once, below, or copied)
                 fi
@@ -226,7 +238,7 @@ generate_password() {
                 
             hex)
                 # Generate a random hexadecimal password
-                password=$(LC_ALL=C < /dev/urandom tr -dc 'a-f0-9' | head -c "$char_length")
+                password=$(_rand_chars 'a-f0-9' "$char_length")
                 if ! $quiet_mode; then
                     : # (no echo: the password is printed once, below, or copied)
                 fi
