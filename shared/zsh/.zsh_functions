@@ -1136,6 +1136,10 @@ dots() {
       [[ -n "$usage" ]] && echo "  Usage: $usage"
       [[ "$kind" == "alias" ]] && echo "  Runs: $target"
       echo ""
+      if [[ "$kind" == "command" ]]; then
+        # The script's header comment is its usage; reading it never runs the command
+        awk 'NR == 1 { next } /^#/ || /^"""/ { sub(/^(#|""")[ ]?/, ""); print; n++; next } { if (n) exit }' "$file" | head -40
+      fi
       if [[ "$kind" == "function" ]]; then
         # The loaded definition, which is what actually runs
         if [[ -n "$ZSH_VERSION" ]]; then whence -f "$name"; else declare -f "$name"; fi

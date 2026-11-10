@@ -123,6 +123,7 @@ expect "dots -s shows a function's description" "without converting it" env -i H
 if command -v zsh >/dev/null; then
   expect "dots -s works in zsh too" "without converting it" env -i HOME="$H" PATH=/usr/bin:/bin zsh -c 'source ~/.zsh_functions; dots -s vcheck'
 fi
+expect "dots -s on a shared/bin command shows its usage" 'secret run PROFILE' env -i HOME="$H" PATH=/usr/bin:/bin bash -c 'source ~/.zsh_functions; dots -s secret'
 expect "vcheck checks without converting" '\[false\]' env -i HOME="$H" PATH=/usr/bin:/bin bash -c \
   'source ~/.zsh_functions; check_video_format() { echo "[$2]"; }; vcheck x.mp4'
 
@@ -215,6 +216,19 @@ if command -v sops >/dev/null && command -v age-keygen >/dev/null; then
     ! d2 get ai API_TOKEN >/dev/null 2>&1                      # and not after removal
   }
   check "secret: add-device grants, remove-device revokes" secret_devices
+  secret_skips_references() {
+    printf 'REAL=v\nREF=${OTHER}\nLIT='"'"'a$b'"'"'\n' > "$SEC/refs.env"
+    d1 import refs "$SEC/refs.env" 2>"$SEC/refs.err" >/dev/null || return 1
+    grep -q 'skipped REF' "$SEC/refs.err" && [[ "$(d1 list refs | tr '\n' ' ')" == "REAL LIT " ]] && [[ "$(d1 get refs LIT)" == 'a$b' ]]
+  }
+  check "secret: import skips \${VAR} references (stored as text before)" secret_skips_references
+  secret_git_history() {
+    command -v git >/dev/null || return 0
+    git -C "$SEC/store" log --format=%s | grep -q '^secret: import ai' &&
+      git -C "$SEC/store" log --format=%s | grep -q '^secret: set ai NEW' &&
+      [[ -z "$(git -C "$SEC/store" status --porcelain)" ]]
+  }
+  check "secret: every change is committed in the store's git history" secret_git_history
   secret_no_plaintext_files() { ! ls -a "$SEC/store" | grep -qE '^\.tmp|\.dec$|\.plain$'; }
   check "secret: no plaintext or temp files left in the store" secret_no_plaintext_files
 fi

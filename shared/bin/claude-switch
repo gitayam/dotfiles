@@ -118,13 +118,15 @@ switch_ollama() {
 }
 
 switch_vibe() {
-  if [ ! -f "${VIBE_API_KEY_FILE}" ]; then
-    echo "ERROR: Mistral Vibe API key file not found at ${VIBE_API_KEY_FILE}"
-    echo "Run: source ~/.vibe/.env to configure it."
+  # Keys come from the encrypted `secret` profile "vibe" and/or the plaintext
+  # file; the profile wins. With the profile in place the file can be deleted.
+  if [ -f "${VIBE_API_KEY_FILE}" ]; then
+    source "${VIBE_API_KEY_FILE}"
+  elif [ ! -f "${SECRETS_DIR:-$HOME/Git/secrets}/vibe.env" ]; then
+    echo "ERROR: no Mistral Vibe keys: neither ${VIBE_API_KEY_FILE} nor the secret profile 'vibe'"
+    echo "       Store them with: secret set vibe LITELLM_MASTER_KEY (and DF_API_KEY)"
     return 1
   fi
-  source "${VIBE_API_KEY_FILE}"
-  # Encrypted profile "vibe" (secret set vibe LITELLM_MASTER_KEY) wins over the file
   _claude_switch_overlay vibe
   if [ -z "${LITELLM_MASTER_KEY:-}" ]; then
     echo "ERROR: LITELLM_MASTER_KEY not set in ${VIBE_API_KEY_FILE}"
@@ -157,7 +159,11 @@ switch_vibe() {
   unset CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS  # Allow experimental features
   echo "Switched to: Mistral Vibe (${VIBE_MODEL_NAME})"
   echo "  Endpoint: ${VIBE_BASE_URL}"
-  echo "  API Key: from ${VIBE_API_KEY_FILE}"
+  if [ -f "${SECRETS_DIR:-$HOME/Git/secrets}/vibe.env" ]; then
+    echo "  API Key: from the encrypted secret profile 'vibe'"
+  else
+    echo "  API Key: from ${VIBE_API_KEY_FILE}"
+  fi
   echo "  Model: ${VIBE_MODEL}"
   echo "  Run: claude"
 }
