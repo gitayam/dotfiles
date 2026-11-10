@@ -12,14 +12,24 @@ unalias ccopy cpaste clipls clipcat clippwd clipip fhist sanitize_filename downl
 # Disable glob expansion for these aliases to allow URLs with special characters
 # This prevents "no matches found" errors when using URLs with ? or * characters
 # Now you can use: dl https://example.com/video?id=123 (without quotes!)
-alias dl='noglob download_video'
-alias dlvid='noglob download_video'
-alias dlaudio='noglob download_video --audio-only'
-alias dl720='noglob download_video --quality 720p'
-alias dl1080='noglob download_video --quality 1080p'
+# noglob is zsh-only; bash (the Linux loader) gets plain aliases, so quote URLs there
+if [[ -n "$ZSH_VERSION" ]]; then
+  alias dl='noglob download_video'
+  alias dlvid='noglob download_video'
+  alias dlaudio='noglob download_video --audio-only'
+  alias dl720='noglob download_video --quality 720p'
+  alias dl1080='noglob download_video --quality 1080p'
+  alias dlfix='noglob download_video --check-format'
+else
+  alias dl='download_video'
+  alias dlvid='download_video'
+  alias dlaudio='download_video --audio-only'
+  alias dl720='download_video --quality 720p'
+  alias dl1080='download_video --quality 1080p'
+  alias dlfix='download_video --check-format'
+fi
 
 # Download with automatic format checking for QuickTime/macOS compatibility
-alias dlfix='noglob download_video --check-format'
 
 # Video format checking aliases (Signal/iOS/Android compatible)
 alias vcheck='check_video_format'  # Check only (no fix)
@@ -306,8 +316,7 @@ check_video_format() {
   # Check if output already exists
   if [[ -f "$output_file" ]]; then
     echo "⚠️  Output file already exists: $output_file"
-    read -p "Overwrite? (y/n) " -n 1 -r
-    echo
+    printf '%s' "Overwrite? (y/n) "; read -r REPLY  # not read -p: zsh reads a coprocess
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
       echo "Aborted."
       return 1
@@ -435,10 +444,9 @@ download_video() {
     echo "❌ Neither yt-dlp nor youtube-dl could be found"
     echo "yt-dlp is the recommended modern replacement for youtube-dl"
     # Prompt the user to install yt-dlp
-    read -p "Do you want to install yt-dlp? (y/n) " -n 1 -r
-    echo
+    printf '%s' "Do you want to install yt-dlp? (y/n) "; read -r REPLY  # not read -p: zsh reads a coprocess
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-      brew install yt-dlp
+      HOMEBREW_NO_ASK=1 brew install yt-dlp
       downloader="yt-dlp"
     else
       return 1

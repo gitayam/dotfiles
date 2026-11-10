@@ -58,7 +58,7 @@ _qwen_check_deps() {
         echo "❌ Node.js not installed"
         if [[ "$install_missing" == "true" ]]; then
             echo "   Installing Node.js..."
-            brew install node
+            HOMEBREW_NO_ASK=1 brew install node
         fi
         all_ok=false
     else
@@ -106,7 +106,7 @@ _qwen_check_deps() {
         echo "⚠️  Ollama not installed (optional, for local models)"
         if [[ "$install_missing" == "true" ]]; then
             echo "   Installing Ollama..."
-            brew install ollama
+            HOMEBREW_NO_ASK=1 brew install ollama
         fi
     else
         echo "✅ Ollama $(ollama --version 2>/dev/null | awk '{print $NF}' || echo 'installed')"
@@ -436,7 +436,7 @@ update_all(){
         read install_mas
         if [[ $install_mas =~ ^[Yy]$ ]]; then
             echo "Installing mas..."
-            brew install mas
+            HOMEBREW_NO_ASK=1 brew install mas
             if command -v mas >/dev/null 2>&1; then
                 echo "mas installed successfully. Updating App Store apps..."
                 mas upgrade

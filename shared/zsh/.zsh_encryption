@@ -127,7 +127,7 @@ generate_password() {
                     fi
                     read install_diceware
                     if [[ "$install_diceware" =~ ^[Yy]$ ]]; then
-                        brew install diceware
+                        HOMEBREW_NO_ASK=1 brew install diceware
                         has_diceware=true
                     else
                         if ! $quiet_mode; then
@@ -766,40 +766,49 @@ decrypt_file() {
                 is_base64=true
             fi
             
-            # Try different ciphers
-            local ciphers=("aes-256-gcm" "aes-256-cbc")
+            # openssl enc has no AEAD (GCM) support, so files from these helpers
+            # are AES-256-CBC. Try the 100000 PBKDF2 iterations the encrypt
+            # helpers use, then openssl's default (10000) for older files.
+            local ciphers=("aes-256-cbc")
+            local iterations_to_try=(100000 10000)
             local success=false
-            
+            local password iter
+            # Ask once; the password goes to openssl on stdin, never in argv
+            printf '%s' "Password for '$encrypted_file': " >&2
+            read -rs password
+            echo >&2
+
             for cipher in "${ciphers[@]}"; do
-                $verbose && echo "Trying cipher: $cipher"
-                
-                local openssl_args=(enc "-d" "-$cipher" -pbkdf2)
-                
+              for iter in "${iterations_to_try[@]}"; do
+                $verbose && echo "Trying cipher: $cipher, $iter iterations"
+
+                local openssl_args=(enc "-d" "-$cipher" -pbkdf2 -iter "$iter" -pass stdin)
+
                 if $is_base64; then
                     openssl_args+=(-a)
                 fi
-                
+
                 openssl_args+=(-in "$encrypted_file")
-                
+
                 if $test_only; then
-                    echo "Testing OpenSSL decryption of '$encrypted_file' with $cipher..."
-                    if openssl "${openssl_args[@]}" >/dev/null 2>&1; then
-                        echo "Decryption test successful - file can be decrypted with $cipher."
+                    if printf '%s' "$password" | openssl "${openssl_args[@]}" >/dev/null 2>&1; then
+                        echo "Decryption test successful - file can be decrypted with $cipher ($iter iterations)."
                         return 0
                     fi
                 else
                     openssl_args+=(-out "$output_file")
-                    
-                    if openssl "${openssl_args[@]}" 2>/dev/null; then
-                        echo "File decrypted successfully: $output_file (using $cipher)"
-                        # Set secure permissions
-                        chmod 600 "$output_file"
+
+                    # umask 077: the plaintext is never readable by others, even briefly
+                    if (umask 077; printf '%s' "$password" | openssl "${openssl_args[@]}" 2>/dev/null); then
+                        echo "File decrypted successfully: $output_file (using $cipher, $iter iterations)"
                         success=true
-                        break
+                        break 2
                     fi
                 fi
+              done
             done
-            
+            unset password
+
             if $test_only; then
                 echo "Decryption test failed with all ciphers."
                 return 1

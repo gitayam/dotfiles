@@ -49,7 +49,7 @@ install_package() {
     case "$OS_TYPE" in
         macos)
             if command -v brew &> /dev/null; then
-                brew install "${packages[@]}"
+                HOMEBREW_NO_ASK=1 brew install "${packages[@]}"
             else
                 echo "Error: Homebrew not installed"
                 return 1
@@ -502,21 +502,24 @@ backup_system() {
     echo "Timestamp: $timestamp"
 
     # Create backup directory
-    sudo mkdir -p "$backup_dir"
+    # The /etc tarball holds /etc/shadow: keep the directory root-only
+    sudo mkdir -p "$backup_dir" && sudo chmod 700 "$backup_dir"
 
     # Backup system configs
     echo "Backing up /etc..."
-    sudo tar -czf "$backup_dir/etc_$timestamp.tar.gz" /etc 2>/dev/null
+    sudo sh -c 'umask 077; tar -czf "$1" /etc 2>/dev/null' _ "$backup_dir/etc_$timestamp.tar.gz"
 
     # Backup user configs
     echo "Backing up user configs..."
-    tar -czf "$backup_dir/user_configs_$timestamp.tar.gz" \
-        ~/.zsh* ~/.bash* ~/.ssh/config ~/.gitconfig 2>/dev/null
+    # Read as you, written by root into the root-only directory
+    tar -czf - ~/.zsh* ~/.bash* ~/.ssh/config ~/.gitconfig 2>/dev/null |
+        sudo sh -c 'umask 077; cat > "$1"' _ "$backup_dir/user_configs_$timestamp.tar.gz"
 
     # Backup databases if they exist
     if command -v mysqldump &>/dev/null; then
         echo "Backing up MySQL databases..."
-        sudo mysqldump --all-databases > "$backup_dir/mysql_$timestamp.sql" 2>/dev/null
+        # The redirect must run as root too, or it fails in the root-only directory
+        sudo sh -c 'umask 077; mysqldump --all-databases > "$1" 2>/dev/null' _ "$backup_dir/mysql_$timestamp.sql"
     fi
 
     if command -v pg_dumpall &>/dev/null; then
@@ -643,7 +646,6 @@ fi
 alias svc='service_manage'
 alias logs='analyze_logs'
 alias secscan='security_scan'
-alias backup='backup_system'
 alias perfcheck='performance_check'
 alias containers='container_stats'
 alias diskusage='disk_analysis'

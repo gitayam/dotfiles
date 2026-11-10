@@ -9,9 +9,8 @@ alias dcs="docker compose stop"
 alias dcrm="docker compose rm"
 alias docker-compose="dc" # alias for docker compose instead of docker-compose
 alias dcu="dcp && dc up -d" # pull and start the docker compose services
-alias dcd="dcs;dcrm;dc down --volumes" # stop the docker compose services
+alias dcd="dcs;dcrm;dc down" # stop the docker compose services (volumes kept)
 # docker compose down and remove the containers, networks, and volumes for that compose file
-alias dcdr="dcd --volumes; docker network rm \$(docker network ls -q); docker volume rm \$(docker volume ls -q)" # remove all docker networks and volumes
 alias dcb="dcu --build" # build the docker compose services
 alias dcr="dcd && dcu" # stop and start the docker compose services
 
@@ -23,8 +22,9 @@ alias dcpur="dcd && dcp && dcnet && dcvol" # stop and pull the docker compose se
 # Docker container management
 alias d="docker" # alias for docker
 alias dps="d ps"
-alias dbash="d exec -it \$1 /bin/bash"
-alias dsh="d exec -it \$1 /bin/sh" 
+unalias dbash dsh 2>/dev/null
+dbash() { docker exec -it "$1" /bin/bash; }
+dsh() { docker exec -it "$1" /bin/sh; }
 
 # Docker exec helper
 
@@ -40,7 +40,12 @@ dexec() {
   local container="$1"
   shift
   if [[ -z "$container" ]]; then
-    mapfile -t containers < <(docker ps --format '{{.Names}}')
+    # Not mapfile (bash-only): this file is loaded by zsh too
+    local -a containers=()
+    local name
+    while IFS= read -r name; do
+      [[ -n "$name" ]] && containers+=("$name")
+    done < <(docker ps --format '{{.Names}}')
     if [[ ${#containers[@]} -eq 0 ]]; then
       echo "No running containers found."
       return 1
@@ -62,12 +67,10 @@ dexec() {
   docker exec -it "$container" $cmd
 }
 # Docker auto for docker compose up -d --build if a docker-compose.yml file is found in the current directory
+# Runs docker compose up -d --build if a compose file is found in the current
+# directory, then prints a clickable localhost:PORT link if a port can be
+# detected from the compose file.
 docker_auto() {
-    """
-    This function will automatically run docker compose up -d --build if a docker-compose.yml file is found in the current directory.
-    If a Dockerfile is also found, it will run docker compose up -d --build
-    Additionally, after starting, it will print a clickable localhost:PORT link if a port can be detected from the compose file.
-    """
     # Helper: Try to extract a port from a compose file
     print_localhost_link() {
         local compose_file=""

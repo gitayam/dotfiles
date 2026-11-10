@@ -8,8 +8,7 @@ alias dcs="docker compose stop"
 alias dcrm="docker compose rm"
 alias docker-compose="dc"             # alias for docker compose instead of docker-compose
 alias dcu="dcp && dc up -d"           # pull and start the docker compose services
-alias dcd="dcs;dcrm;dc down --volumes" # stop the docker compose services
-alias dcdr='dcd --volumes; docker network rm $(docker network ls -q) 2>/dev/null; docker volume rm $(docker volume ls -q) 2>/dev/null' # remove all docker networks and volumes
+alias dcd="dcs;dcrm;dc down" # stop the docker compose services (volumes kept)
 alias dcb="dcu --build"               # build the docker compose services
 alias dcr="dcd && dcu"                # stop and start the docker compose services
 

@@ -156,7 +156,7 @@ git_clone(){
         echo "Would you like to install it? (y/n): "
         read install_gh
         if [[ $install_gh =~ ^[Yy]$ ]]; then
-            brew install gh
+            HOMEBREW_NO_ASK=1 brew install gh
         fi
         return 1
     fi
@@ -478,7 +478,7 @@ create_repo(){
         echo -n "Do you want to install GitHub CLI? (y/n):(default:y) "
         read install_gh
         if [[ $install_gh =~ ^[Yy]$ ]]; then
-            brew install gh
+            HOMEBREW_NO_ASK=1 brew install gh
             echo "GitHub CLI installed, continuing with repo creation"
         else
             echo "GitHub CLI not installed, you can install it with 'brew install gh' before running this function again"
@@ -705,7 +705,7 @@ cdproj() {
         echo "Would you like to install it? (y/n): "
         read install_fzf
         if [[ $install_fzf =~ ^[Yy]$ ]]; then
-            brew install fzf
+            HOMEBREW_NO_ASK=1 brew install fzf
         fi
         return 1
     fi
@@ -950,7 +950,7 @@ claude_checks() {
         read install_node
         if [[ $install_node =~ ^[Yy]$ ]]; then
             echo "Installing Node.js via Homebrew..."
-            brew install node
+            HOMEBREW_NO_ASK=1 brew install node
         else
             echo "Please install Node.js 18+ before proceeding."
             return 1

@@ -81,12 +81,13 @@ echo "----------------------------"
 echo "----LibreOffice Macros------"
 if [[ -d "/Applications/LibreOffice.app" ]]; then
     echo "✓ LibreOffice is installed"
-    LIBREOFFICE_PYTHON_DIR="/Applications/LibreOffice.app/Contents/Resources/Scripts/python"
-    if [ -d "$LIBREOFFICE_PYTHON_DIR" ]; then
-        echo "Copying python macros..."
-        cp "$SCRIPT_DIR/../scripts"/*.py "$LIBREOFFICE_PYTHON_DIR/"
-        echo "✓ Copied python macros."
-    fi
+    # The user profile, not the signed app bundle; the macros live in libreoffice/
+    # (scripts/*.py are unrelated helper scripts)
+    LIBREOFFICE_PYTHON_DIR="$HOME/Library/Application Support/LibreOffice/4/user/Scripts/python"
+    mkdir -p "$LIBREOFFICE_PYTHON_DIR"
+    echo "Copying python macros..."
+    cp "$SCRIPT_DIR/../libreoffice"/*.py "$LIBREOFFICE_PYTHON_DIR/"
+    echo "✓ Copied python macros to $LIBREOFFICE_PYTHON_DIR."
 else
     echo "⚠️ LibreOffice is not installed. Skipping macro installation."
 fi

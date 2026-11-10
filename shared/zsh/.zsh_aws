@@ -8,34 +8,36 @@
 # Unalias existing aws aliases to prevent conflicts
 unalias aws_check_profile aws_list_profiles aws_use_profile aws_ssm_session 2>/dev/null
 
-# Centralized function to manage AWS profile and region for commands
-# Usage: _aws_env [--profile <p>] [--region <r>]
-# It sets the correct AWS_PROFILE and AWS_REGION for the command to be executed.
-_aws_env() {
-    export _AWS_PROFILE=${AWS_PROFILE:-default}
-    export _AWS_REGION=${AWS_REGION:-$(aws configure get region 2>/dev/null || echo "us-east-1")}
+# No aws binary (this Mac has none): run the official CLI through uvx
+unset -f aws 2>/dev/null
+if ! command -v aws &>/dev/null && command -v uvx &>/dev/null; then
+    aws() { uvx --quiet --from awscli aws "$@"; }
+fi
 
+# Read --profile/--region from a helper's arguments, at call time, so a later
+# `export AWS_PROFILE=...` counts. Leaves the other arguments in _AWS_ARGS:
+# every helper runs `_aws_env "$@"; set -- "${_AWS_ARGS[@]}"`.
+# No default profile: an unset profile is passed to the CLI as unset, never
+# forced to "default" (on this Mac that is the Muse account).
+_aws_env() {
+    _AWS_PROFILE=${AWS_PROFILE:-}
+    _AWS_REGION=${AWS_REGION:-}
+    _AWS_ARGS=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --profile)
-                export _AWS_PROFILE="$2"
-                shift 2
-                ;; 
-            --region)
-                export _AWS_REGION="$2"
-                shift 2
-                ;; 
-            *)
-                # Preserve other arguments
-                shift
-                ;; 
+            --profile) _AWS_PROFILE="$2"; shift 2 ;;
+            --region) _AWS_REGION="$2"; shift 2 ;;
+            *) _AWS_ARGS+=("$1"); shift ;;
         esac
     done
 }
 
-# Wrapper for all AWS CLI calls to automatically handle profile and region
-aws() {
-    command aws --profile "$_AWS_PROFILE" --region "$_AWS_REGION" "$@"
+# AWS CLI call with the profile and region chosen by _aws_env, if any
+_aws() {
+    local -a opts=()
+    [[ -n "$_AWS_PROFILE" ]] && opts+=(--profile "$_AWS_PROFILE")
+    [[ -n "$_AWS_REGION" ]] && opts+=(--region "$_AWS_REGION")
+    aws "${opts[@]}" "$@"
 }
 
 # ==============================================================================
@@ -44,9 +46,9 @@ aws() {
 
 # List available AWS profiles from ~/.aws/config and ~/.aws/credentials
 aws_list_profiles() {
-    _aws_env "$@"
+    _aws_env "$@"; set -- "${_AWS_ARGS[@]}"
     echo "👤 Available AWS Profiles:"
-    profiles=$(aws configure list-profiles)
+    profiles=$(_aws configure list-profiles)
     
     if [[ -z "$profiles" ]]; then
         echo "   No profiles found."
@@ -55,7 +57,7 @@ aws_list_profiles() {
     
     while read -r profile; do
         if [[ "$profile" == "$_AWS_PROFILE" ]]; then
-            echo "   [bold green]✓ $profile (active)[/bold green]"
+            echo "   ✓ $profile (active)"
         else
             echo "     $profile"
         fi
@@ -64,37 +66,37 @@ aws_list_profiles() {
 
 # Switch active AWS profile
 aws_use_profile() {
-    _aws_env "$@"
+    _aws_env "$@"; set -- "${_AWS_ARGS[@]}"
     if [[ -z "$1" ]]; then
         echo "Usage: aws_use_profile <profile_name>"
         aws_list_profiles
         return 1
     fi
     export AWS_PROFILE="$1"
-    echo "✅ Switched to AWS profile: [bold cyan]$AWS_PROFILE[/bold cyan]"
+    echo "✅ Switched to AWS profile: $AWS_PROFILE"
     aws_check_profile
 }
 
 # Check the status of the current or specified profile
 aws_check_profile() {
-    _aws_env "$@"
-    echo "\n🔍 Checking status for profile: [bold cyan]$_AWS_PROFILE[/bold cyan] in region [bold cyan]$_AWS_REGION[/bold cyan]..."
+    _aws_env "$@"; set -- "${_AWS_ARGS[@]}"
+    echo "\n🔍 Checking status for profile: $_AWS_PROFILE in region $_AWS_REGION..."
     
-    if ! aws sts get-caller-identity --query "Account" --output text &>/dev/null; then
-        echo "[bold red]Error:[/bold red] Failed to authenticate with profile '$_AWS_PROFILE'."
-        echo "Please check your credentials or run 'aws configure --profile $_AWS_PROFILE'."
+    if ! _aws sts get-caller-identity --query "Account" --output text &>/dev/null; then
+        echo "Error: Failed to authenticate with profile '$_AWS_PROFILE'."
+        echo "Please check your credentials or run 'aws configure --profile ${_AWS_PROFILE:-<name>}'."
         return 1
     fi
     
-    local identity=$(aws sts get-caller-identity)
+    local identity=$(_aws sts get-caller-identity)
     local account=$(echo "$identity" | jq -r .Account)
     local user_id=$(echo "$identity" | jq -r .UserId)
     local arn=$(echo "$identity" | jq -r .Arn)
     
-    echo "[bold green]✓ Authentication successful![/bold green]"
-    echo "   [bold]Account:[/bold] $account"
-    echo "   [bold]UserID:[/bold]  $user_id"
-    echo "   [bold]ARN:[/bold]     $arn"
+    echo "✓ Authentication successful!"
+    echo "   Account: $account"
+    echo "   UserID:  $user_id"
+    echo "   ARN:     $arn"
 }
 
 # ==============================================================================
@@ -103,15 +105,15 @@ aws_check_profile() {
 
 # List EC2 instances with a clean, readable table format
 aws_ec2_instances() {
-    _aws_env "$@"
-    echo "Listing EC2 instances in region [bold cyan]$_AWS_REGION[/bold cyan]..."
+    _aws_env "$@"; set -- "${_AWS_ARGS[@]}"
+    echo "Listing EC2 instances in region $_AWS_REGION..."
     
-    aws ec2 describe-instances --query 'Reservations[*].Instances[*].[InstanceId,InstanceType,State.Name,PublicIpAddress,PrivateIpAddress,Tags[?Key==`Name`].Value|[0]]' --output text | column -t -s $'	' | sed '1s/^/ID\tTYPE\tSTATE\tPUBLIC_IP\tPRIVATE_IP\tNAME\n/'
+    _aws ec2 describe-instances --query 'Reservations[*].Instances[*].[InstanceId,InstanceType,State.Name,PublicIpAddress,PrivateIpAddress,Tags[?Key==`Name`].Value|[0]]' --output text | column -t -s $'	' | sed '1s/^/ID\tTYPE\tSTATE\tPUBLIC_IP\tPRIVATE_IP\tNAME\n/'
 }
 
 # Start an interactive SSM session with an EC2 instance
 aws_ssm_session() {
-    _aws_env "$@"
+    _aws_env "$@"; set -- "${_AWS_ARGS[@]}"
     if [[ -z "$1" ]]; then
         echo "Usage: aws_ssm_session <instance_id>"
         echo "Starts an interactive shell session with an EC2 instance using SSM."
@@ -120,8 +122,8 @@ aws_ssm_session() {
     fi
     
     local instance_id="$1"
-    echo "Starting SSM session with [bold cyan]$instance_id[/bold cyan]..."
-    aws ssm start-session --target "$instance_id"
+    echo "Starting SSM session with $instance_id..."
+    _aws ssm start-session --target "$instance_id"
 }
 
 # ==============================================================================
@@ -130,24 +132,24 @@ aws_ssm_session() {
 
 # A more user-friendly 'ls' for S3 buckets and objects
 aws_s3_ls() {
-    _aws_env "$@"
+    _aws_env "$@"; set -- "${_AWS_ARGS[@]}"
     local s3_path="$1"
     
     if [[ -z "$s3_path" ]]; then
         echo "Listing all S3 buckets..."
-        aws s3 ls
+        _aws s3 ls
         return
     fi
 
     # Ensure path ends with a slash if it's a "directory"
     if [[ "$s3_path" != */ && -n "$s3_path" ]]; then
-        if aws s3 ls "$s3_path/" &>/dev/null; then
+        if _aws s3 ls "$s3_path/" &>/dev/null; then
             s3_path="$s3_path/"
         fi
     fi
     
-    echo "Listing contents of [bold cyan]$s3_path[/bold cyan]..."
-    aws s3 ls "$s3_path"
+    echo "Listing contents of $s3_path..."
+    _aws s3 ls "$s3_path"
 }
 
 # ==============================================================================
@@ -156,11 +158,11 @@ aws_s3_ls() {
 
 # Fetch and follow logs from a CloudWatch log group
 aws_cw_logs() {
-    _aws_env "$@"
+    _aws_env "$@"; set -- "${_AWS_ARGS[@]}"
     if [[ -z "$1" ]]; then
         echo "Usage: aws_cw_logs <log_group_name> [--follow]"
         echo "\nAvailable log groups:"
-        aws logs describe-log-groups --query 'logGroups[*].logGroupName' --output text | tr '\t' '\n'
+        _aws logs describe-log-groups --query 'logGroups[*].logGroupName' --output text | tr '\t' '\n'
         return 1
     fi
     
@@ -170,8 +172,8 @@ aws_cw_logs() {
         follow_flag="--follow"
     fi
     
-    echo "Fetching logs for [bold cyan]$log_group[/bold cyan]..."
-    aws logs tail "$log_group" $follow_flag
+    echo "Fetching logs for $log_group..."
+    _aws logs tail "$log_group" $follow_flag
 }
 
 
@@ -180,29 +182,27 @@ aws_cw_logs() {
 # ==============================================================================
 
 aws_help() {
-    echo "[bold green]AWS Power Functions for Zsh[/bold green]"
+    echo "AWS Power Functions for Zsh"
     echo "A collection of helper functions to make working with the AWS CLI easier."
     echo ""
-    echo "[bold]Profile & Session Management:[/bold]"
-    echo "  [cyan]aws_list_profiles[/cyan]              - List all configured AWS profiles."
-    echo "  [cyan]aws_use_profile <profile>[/cyan]     - Switch the active AWS profile for the current session."
-    echo "  [cyan]aws_check_profile[/cyan]              - Check authentication status for the current profile."
+    echo "Profile & Session Management:"
+    echo "  aws_list_profiles              - List all configured AWS profiles."
+    echo "  aws_use_profile <profile>     - Switch the active AWS profile for the current session."
+    echo "  aws_check_profile              - Check authentication status for the current profile."
     echo ""
-    echo "[bold]EC2 Instance Management:[/bold]"
-    echo "  [cyan]aws_ec2_instances[/cyan]              - List EC2 instances with a clean, readable table format."
-    echo "  [cyan]aws_ssm_session <instance_id>[/cyan] - Start an interactive SSM session with an instance."
+    echo "EC2 Instance Management:"
+    echo "  aws_ec2_instances              - List EC2 instances with a clean, readable table format."
+    echo "  aws_ssm_session <instance_id> - Start an interactive SSM session with an instance."
     echo ""
-    echo "[bold]S3 Bucket Management:[/bold]"
-    echo "  [cyan]aws_s3_ls [s3://path][/cyan]          - List S3 buckets or objects in a bucket."
+    echo "S3 Bucket Management:"
+    echo "  aws_s3_ls [s3://path]          - List S3 buckets or objects in a bucket."
     echo ""
-    echo "[bold]CloudWatch Logs:[/bold]"
-    echo "  [cyan]aws_cw_logs <group> [--follow][/cyan]- Fetch and optionally follow logs from a CloudWatch log group."
+    echo "CloudWatch Logs:"
+    echo "  aws_cw_logs <group> [--follow]- Fetch and optionally follow logs from a CloudWatch log group."
     echo ""
-    echo "[bold]Note:[/bold] Most commands accept [cyan]--profile <p>[/cyan] and [cyan]--region <r>[/cyan] arguments."
+    echo "Note: Most commands accept --profile <p> and --region <r> arguments."
 }
 
 # Initial message to let the user know the functions are loaded.
 echo "⚡️ AWS Power Functions loaded. Type 'aws_help' for a list of commands."
 
-# Set default environment
-_aws_env

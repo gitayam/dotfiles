@@ -3,7 +3,12 @@
 # ----------------------
 
 # Network diagnostics
-alias ports='netstat -tulanp'  # List open ports
+# List listening ports (netstat -tulanp is Linux-only)
+if [[ "$OSTYPE" == darwin* ]]; then
+  alias ports='lsof -nP -iTCP -sTCP:LISTEN -iUDP'
+else
+  alias ports='ss -tulpn'
+fi
 alias myip='curl ifconfig.me'  # Check external IP address
 alias http="curl -I"           # Check HTTP headers
 
@@ -15,6 +20,7 @@ check_ip() {
 }
 
 # flush DNS cache
+unalias flushdns 2>/dev/null  # .zsh_linux_compat defines it as an alias
 flushdns() {
     # flush DNS cache -  can be helpful when you have a new IP address
     sudo killall -HUP mDNSResponder
@@ -631,7 +637,7 @@ scan_ports() {
         echo -n "Do you want to install nmap? (y/n): " 
         read -r install_nmap
         if [[ $install_nmap =~ ^[Yy]$ ]]; then
-            brew install nmap
+            HOMEBREW_NO_ASK=1 brew install nmap
             echo "nmap installed, continuing with scan"
         else
             return 1
@@ -682,6 +688,8 @@ pyserver() {
 
 # Tailscale funnel for sharing files or services over the internet
 funnel() {
+    # Traps set below end with the function (zsh); bash clears them in cleanup
+    [[ -n "$ZSH_VERSION" ]] && setopt localoptions localtraps
     local port=${FUNNEL_PORT:-8080}
     local use_python=true
     local direct_service=false
@@ -739,21 +747,29 @@ EOF
         echo "Tailscale started successfully. Continuing..."
     fi
 
-    # Use current directory if no target is specified
+    # Funnel publishes to the internet: require an explicit target. The old
+    # default (the current directory) published ~/.ssh, ~/.aws and ~/.env when
+    # run from home.
     if [ -z "$1" ]; then
-        echo "No target specified. Using current directory as target."
-        target="."
-    else
-        target="$*"
+        echo "Error: name what to share, e.g. 'funnel file.txt' or 'funnel -d -p 3000'."
+        return 1
+    fi
+    target="$*"
+    if ! $direct_service; then
+        local resolved
+        resolved=$(cd "$target" 2>/dev/null && pwd -P)
+        if [[ "$resolved" == "/" || "$resolved" == "$(cd "$HOME" && pwd -P)" ]]; then
+            echo "Error: refusing to publish $resolved. Share a file or a dedicated folder."
+            return 1
+        fi
     fi
 
-    # Kill any existing Python HTTP servers on our port
+    # Never kill someone else's process: pick another port instead
     local existing_pid
     existing_pid=$(lsof -ti:"$port")
     if [[ -n "$existing_pid" ]]; then
-        echo "Killing existing process on port $port (PID: $existing_pid)"
-        kill -9 "$existing_pid" 2>/dev/null
-        sleep 1
+        echo "Error: port $port is in use (PID: $existing_pid). Use -p to pick another port."
+        return 1
     fi
 
     # Function to clean up background processes
@@ -784,7 +800,8 @@ EOF
         if [[ -n "$original_dir" ]]; then
             cd "$original_dir" || return 1
         fi
-        
+
+        trap - INT TERM EXIT
         return 0
     }
 
@@ -855,7 +872,7 @@ EOF
         
         if $use_python; then
             # Start the python server
-            python3 -m http.server "$port" &
+            python3 -m http.server --bind 127.0.0.1 "$port" &  # loopback only; tailscale funnel proxies it
             server_pid=$!
             
             # Wait a moment to ensure server starts
@@ -878,7 +895,7 @@ EOF
         # Use current dir
         if $use_python; then
             # Start the python server
-            python3 -m http.server "$port" &
+            python3 -m http.server --bind 127.0.0.1 "$port" &  # loopback only; tailscale funnel proxies it
             server_pid=$!
             
             # Wait a moment to ensure server starts

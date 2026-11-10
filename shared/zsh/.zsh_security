@@ -25,8 +25,14 @@ setup_age(){
     echo "You will see a public key output to the screen that you can share with others"
     echo "For more information on age see https://github.com/FiloSottile/age"
     sleep 1
-    # generate keys
-    age-keygen -a -o ~/.age/keys/$key_name.key
+    # generate keys: the directory must exist and stay private; age-keygen has no -a
+    mkdir -p ~/.age/keys && chmod 700 ~/.age ~/.age/keys
+    if [[ -e ~/.age/keys/$key_name.key ]]; then
+        echo "Error: ~/.age/keys/$key_name.key already exists; not overwriting it."
+        return 1
+    fi
+    (umask 077; age-keygen -o ~/.age/keys/"$key_name".key) || return 1
+    age-keygen -y ~/.age/keys/"$key_name".key > ~/.age/keys/"$key_name".pub
     ls -l ~/.age/keys
 }
 
@@ -62,7 +68,7 @@ encrypt_file(){
         echo -n "Do you want to install 'age'? (y/n):(default:y) "
         read install_age
         if [[ $install_age =~ ^[Yy]$ || -z "$install_age" ]]; then
-            brew install age
+            HOMEBREW_NO_ASK=1 brew install age
             has_age=true
         else
             return 1
@@ -228,16 +234,16 @@ clean_file(){
         return 1
     fi
 
-    # Use the provided file path
-    local path="$1"
-    # get full path
-    local full_path=$(realpath "$path")
+    # Not `path`: in zsh that is the PATH array
+    local full_path
+    full_path=$(realpath "$1") || return 1
 
-    # Remove spaces and special characters from the file name
-    local clean_file=$(echo "$full_path" | tr -cd '[:alnum:]_.-')
+    # Remove spaces and special characters from the file name, not the directory
+    local clean_file
+    clean_file="$(dirname "$full_path")/$(basename "$full_path" | tr -cd '[:alnum:]_.-')"
 
     # Move the file to the new name
-    mv "$full_path" "$clean_file"
+    [[ "$full_path" == "$clean_file" ]] || mv -n "$full_path" "$clean_file"
 
     # Return the cleaned file name with full path
     echo "$clean_file"
@@ -450,7 +456,8 @@ virus_scan() {
     echo "📝 Scan log saved to: $log_file"
     
     clamscan --recursive=yes --infected "${files_to_scan[@]}" | tee -a "$log_file"
-    local scan_status=$?
+    # clamscan's status, not tee's (zsh: pipestatus, bash: PIPESTATUS)
+    local scan_status=${pipestatus[1]:-${PIPESTATUS[0]}}
     
     # Report results
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -481,14 +488,14 @@ clamav_maintenance() {
     echo "=== ClamAV Maintenance ==="
     # Check if clamav is installed
     echo "Checking if clamav is installed"
-    if ! command -v clamav &> /dev/null; then
+    if ! command -v clamscan &> /dev/null; then
         echo "Error: clamav is not installed"
         #prompt to install if yes install and continue else return 1
         install_clamav="n"
         echo -n "Do you want to install clamav? (y/n): " 
         read install_clamav
         if [[ $install_clamav =~ ^[Yy]$ ]]; then
-            brew install clamav
+            HOMEBREW_NO_ASK=1 brew install clamav
             echo "clamav installed, continuing with maintenance"
         else
             return 1
@@ -501,7 +508,7 @@ clamav_maintenance() {
         new_config=$(find /opt/homebrew -type f -name freshclam.conf 2>/dev/null | head -n 1)
         if [ -n "$new_config" ]; then
             echo "Found config file at: $new_config"
-            read -p "Use this config file? (y/n): " use_new_config
+            printf '%s' "Use this config file? (y/n): "; read -r use_new_config
             if [[ "$use_new_config" =~ ^[Yy] ]]; then
                 CONFIG="$new_config"
                 echo "Using config: $CONFIG"
@@ -541,7 +548,7 @@ clamav_maintenance() {
         new_db_dir=$(find /opt/homebrew -type d -name clamav 2>/dev/null | head -n 1)
         if [ -n "$new_db_dir" ]; then
             echo "Found potential database directory: $new_db_dir"
-            read -p "Use this directory? (y/n): " use_new_db
+            printf '%s' "Use this directory? (y/n): "; read -r use_new_db
             if [[ "$use_new_db" =~ ^[Yy] ]]; then
                 DB_DIR="$new_db_dir"
                 echo "Using database directory: $DB_DIR"

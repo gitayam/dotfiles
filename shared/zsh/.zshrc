@@ -1,10 +1,13 @@
-export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
-alias age_pub='/private/tmp/age-py/age.sh'
 # ~/.zshrc
+# PATH entries are prepended further down; no reset here, so /etc/paths.d and
+# ~/.zprofile entries survive. typeset -U drops duplicates.
+typeset -U path
 # Set GPG TTY
 export GPG_TTY=$(tty)
-# Set the default gpg program
-git config --global gpg.program $(which gpg)
+# Set the default gpg program, only when it changed (this runs on every shell)
+if command -v gpg >/dev/null 2>&1 && [[ "$(git config --global gpg.program)" != "$(command -v gpg)" ]]; then
+  git config --global gpg.program "$(command -v gpg)"
+fi
 
 # Set the default prompt
 export PS1="%n@%m %1~ %# "
@@ -54,11 +57,15 @@ SAVEHIST=10000
 
 # export PS1="%n@%m %1~ [%D{%L:%M:%S}] ${vcs_info_msg_0_} %# "
 
+_sudotouch_enabled() {
+  # cat, not grep on both files: BSD grep exits 2 when one is missing, even on a match
+  cat /etc/pam.d/sudo_local /etc/pam.d/sudo 2>/dev/null | grep -q "^auth[[:space:]]*sufficient[[:space:]]*pam_tid.so"
+}
+_SUDOTOUCH_DECLINED="$HOME/.config/dotfiles/sudotouch-declined"
+
 # Function to enable Touch ID for sudo
 sudotouch() {
-  # Check if Touch ID is already enabled for sudo
-  # cat, not grep on both files: BSD grep exits 2 when one is missing, even on a match
-  if cat /etc/pam.d/sudo_local /etc/pam.d/sudo 2>/dev/null | grep -q "^auth[[:space:]]*sufficient[[:space:]]*pam_tid.so"; then
+  if _sudotouch_enabled; then
     echo "Touch ID for sudo is already enabled."
     return
   fi
@@ -69,24 +76,32 @@ sudotouch() {
   read REPLY
   REPLY=${REPLY:-n}
   if [[ $REPLY =~ ^[Yy]$ ]]; then
-    # sudo_local survives macOS updates; edits to /etc/pam.d/sudo are reset by them
-    echo "auth       sufficient     pam_tid.so" | sudo tee /etc/pam.d/sudo_local >/dev/null
+    # sudo_local survives macOS updates; edits to /etc/pam.d/sudo are reset by them.
+    # Append, so lines already there (pam_reattach for tmux) are kept.
+    echo "auth       sufficient     pam_tid.so" | sudo tee -a /etc/pam.d/sudo_local >/dev/null
     echo "Touch ID for sudo has been enabled."
-  else 
-    echo "Touch ID for sudo not enabled. Passwords will be required for sudo."
+  else
+    mkdir -p "${_SUDOTOUCH_DECLINED:h}" && touch "$_SUDOTOUCH_DECLINED"
+    echo "Touch ID for sudo not enabled. Run 'sudotouch' to be asked again."
   fi
 }
 # New-machine setup and Touch ID for sudo, per OS (this file is synced to Linux too)
 if [[ "$OSTYPE" == darwin* ]]; then
   alias initial-install="$HOME/Git/dotfiles/macos/initial_macos_setup.sh"
-  # call sudotouch to enable Touch ID for sudo if not already enabled
-  sudotouch
+  # Ask about Touch ID for sudo once: silent when enabled or declined, and only
+  # in an interactive terminal (editors probe with `zsh -i -c env`)
+  if [[ -t 0 && ! -e "$_SUDOTOUCH_DECLINED" ]] && ! _sudotouch_enabled; then
+    sudotouch
+  fi
 else
   alias initial-install="$HOME/Git/dotfiles/linux/initial_linux_setup.sh"
 fi
 
-# Add local bin to PATH
+# Add local bin and the dotfiles' own commands (claude-switch, cc-lumo, ...) to PATH
 export PATH="$HOME/.local/bin:$PATH"
+[[ -d "$HOME/Git/dotfiles/shared/bin" ]] && export PATH="$HOME/Git/dotfiles/shared/bin:$PATH"
+# uv / uvx environment, when installed
+[[ -r "$HOME/.local/bin/env" ]] && . "$HOME/.local/bin/env"
 export PATH="/opt/homebrew/sbin:$PATH"
 export PATH="/opt/homebrew/bin:$PATH"
 

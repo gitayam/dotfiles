@@ -191,9 +191,9 @@ transfer_file() {
     fi
     
     # Iterate through all paths provided
-    for path in "$@"; do
-        if [[ ! -e "$path" ]]; then
-            echo "Error: '$path' does not exist"
+    for src in "$@"; do
+        if [[ ! -e "$src" ]]; then
+            echo "Error: '$src' does not exist"
             continue
         fi
         
@@ -202,26 +202,26 @@ transfer_file() {
         # Use the clean_media_name function for better sanitization
         local safe_name=$(clean_media_name "$basename")
         
-        if [[ -d "$path" ]]; then # if the path is a directory
+        if [[ -d "$src" ]]; then # if the path is a directory
             # create the directory on the remote host if it doesn't exist
             ssh -p "$REMOTE_PORT" "$REMOTE_USER@$REMOTE_HOST" "mkdir -p '$REMOTE_BASE_PATH/$safe_name'"
             # transfer the directory to the remote host
-            rsync -avP -e "ssh -p $REMOTE_PORT" "$path/" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_BASE_PATH/$safe_name/" || echo "Failed to transfer directory '$path'"
-        elif [[ -f "$path" ]]; then # if the path is a file
+            rsync -avP -e "ssh -p $REMOTE_PORT" "$src/" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_BASE_PATH/$safe_name/" || echo "Failed to transfer directory '$src'"
+        elif [[ -f "$src" ]]; then # if the path is a file
             # For media files, create a folder with the sanitized name
             local ext="${basename##*.}"
             if [[ "$ext" =~ ^(mkv|mp4|avi|mov|MKV|MP4|AVI|MOV)$ ]]; then
                 # create the directory on the remote host if it doesn't exist
                 ssh -p "$REMOTE_PORT" "$REMOTE_USER@$REMOTE_HOST" "mkdir -p '$REMOTE_BASE_PATH/$safe_name'"
                 # transfer the file to the remote host in its own folder
-                rsync -avP -e "ssh -p $REMOTE_PORT" -- "$path" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_BASE_PATH/$safe_name/" || echo "Failed to transfer file '$path'"
+                rsync -avP -e "ssh -p $REMOTE_PORT" -- "$src" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_BASE_PATH/$safe_name/" || echo "Failed to transfer file '$src'"
             else
                 # For non-media files, transfer directly to base path
                 ssh -p "$REMOTE_PORT" "$REMOTE_USER@$REMOTE_HOST" "mkdir -p '$REMOTE_BASE_PATH'"
-                rsync -avP -e "ssh -p $REMOTE_PORT" -- "$path" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_BASE_PATH/" || echo "Failed to transfer file '$path'"
+                rsync -avP -e "ssh -p $REMOTE_PORT" -- "$src" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_BASE_PATH/" || echo "Failed to transfer file '$src'"
             fi
         else
-            echo "Error: '$path' is neither a file nor a directory"
+            echo "Error: '$src' is neither a file nor a directory"
         fi
     done
     

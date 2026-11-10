@@ -22,7 +22,10 @@ alias l='ls -lA $LS_OPTIONS'         # Short list view with hidden files
 alias lt='ls -strhal $LS_OPTIONS'    # Sort by date, most recent last
 
 # Grep aliases and functions
-alias grep='grep -i --color=auto "$@"' # Ignore case and colorize output and pass all arguments to grep in quotes
+# No -i or "$@": aliases expand inside every function defined later, so "$@"
+# injected each function's own arguments into its greps
+alias grep='grep --color=auto'
+alias grepi='grep -i --color=auto' # case-insensitive
 alias grepv='grep -vi --color=auto' # Ignore case, invert match, and colorize output
 
 # Find aliases and functions

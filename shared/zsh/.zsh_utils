@@ -324,5 +324,5 @@ matrix_setup_user(){
 }
 
 # Disk usage aliases
-alias du='du -h --max-depth=1'  # Show disk usage in human-readable format
+alias du='du -h -d 1'  # Show disk usage in human-readable format
 alias df='df -h'                # Show free disk space in human-readable format 

@@ -118,10 +118,9 @@ process_single_image() {
     echo "🔍 Applying OCR..."
     if ! command -v tesseract &> /dev/null; then
       echo "❌ Error: Tesseract OCR not installed."
-      read -p "Do you want to install it? (y/n) " -n 1 -r
-      echo
+      printf '%s' "Do you want to install it? (y/n) "; read -r REPLY  # not read -p: zsh reads a coprocess
       if [[ $REPLY =~ ^[Yy]$ ]]; then
-        brew install tesseract
+        HOMEBREW_NO_ASK=1 brew install tesseract
       else
         return 1
       fi
@@ -137,10 +136,9 @@ process_single_image() {
     echo "📝 Extracting text..."
     if ! command -v tesseract &> /dev/null; then
       echo "❌ Error: Tesseract OCR not installed."
-      read -p "Do you want to install it? (y/n) " -n 1 -r
-      echo
+      printf '%s' "Do you want to install it? (y/n) "; read -r REPLY  # not read -p: zsh reads a coprocess
       if [[ $REPLY =~ ^[Yy]$ ]]; then
-        brew install tesseract
+        HOMEBREW_NO_ASK=1 brew install tesseract
       else
         return 1
       fi
@@ -196,10 +194,9 @@ handle_image() {
   # Check if required tools are installed
   if ! command -v convert &> /dev/null; then
     echo "❌ Error: ImageMagick not installed. "
-    read -p "Do you want to install it? (y/n) " -n 1 -r
-    echo
+    printf '%s' "Do you want to install it? (y/n) "; read -r REPLY  # not read -p: zsh reads a coprocess
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-      brew install imagemagick
+      HOMEBREW_NO_ASK=1 brew install imagemagick
     else
       return 1
     fi
@@ -207,10 +204,9 @@ handle_image() {
   
   if ! command -v exiftool &> /dev/null; then
     echo "❌ Error: ExifTool not installed. "
-    read -p "Do you want to install it? (y/n) " -n 1 -r
-    echo
+    printf '%s' "Do you want to install it? (y/n) "; read -r REPLY  # not read -p: zsh reads a coprocess
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-      brew install exiftool
+      HOMEBREW_NO_ASK=1 brew install exiftool
     else
       return 1
     fi
@@ -337,19 +333,20 @@ handle_image() {
       
       # Find all image files in the directory
       local image_files=()
-      local find_cmd="find \"$item\""
-      
+      # An argument array, not eval: a directory name is never run as code.
+      # -iname, not -regex: BSD find's regex has no \| alternation.
+      local -a find_args=("$item")
       if [[ "$recursive" != true ]]; then
-        find_cmd+=" -maxdepth 1"
+        find_args+=(-maxdepth 1)
       fi
-      
-      find_cmd+=" -type f -regex \".*\.\(jpg\|jpeg\|png\|tiff\|gif\|bmp\|ico\|webp\)\""
-      
+      find_args+=(-type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.tiff' \
+        -o -iname '*.gif' -o -iname '*.bmp' -o -iname '*.ico' -o -iname '*.webp' \))
+
       while IFS= read -r img_file; do
         if [[ -n "$img_file" ]]; then
           image_files+=("$img_file")
         fi
-      done < <(eval $find_cmd)
+      done < <(find "${find_args[@]}")
       
       if [[ ${#image_files[@]} -eq 0 ]]; then
         echo "⚠️ No image files found in directory: $item"
@@ -791,10 +788,10 @@ handle_pdf() {
                                 fi
                             fi
                         else
-                            # Default: delete original without prompting
-                            rm -f "$item"
+                            # Default: keep the original. This converter writes a minimal
+                            # hand-built PDF; deleting the source without asking lost data.
                             if [[ "$quiet_mode" != true ]]; then
-                                echo "🗑️ Original file deleted."
+                                echo "💾 Original file kept (use the prompt mode to delete it)."
                             fi
                         fi
                     elif [[ "$quiet_mode" != true ]]; then
@@ -925,7 +922,7 @@ handle_pdf() {
                         fi
                         
                         local rotate_temp="${temp_dir}/rotated.pdf"
-                        gs -q -dSAFER -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -sOutputFile="$rotate_temp" \
+                        command gs -q -dSAFER -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -sOutputFile="$rotate_temp" \
                            -c "<</Orientation $rotate_degrees>> setpagedevice" -f "$temp_output"
                         
                         if [[ -f "$rotate_temp" ]]; then
@@ -995,7 +992,7 @@ handle_pdf() {
                         fi
                         
                         local compress_temp="${temp_dir}/compressed.pdf"
-                        gs -q -dSAFER -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dPDFSETTINGS=/ebook \
+                        command gs -q -dSAFER -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dPDFSETTINGS=/ebook \
                            -dCompatibilityLevel=1.4 -sOutputFile="$compress_temp" "$temp_output"
                         
                         if [[ -f "$compress_temp" ]]; then
@@ -1249,7 +1246,7 @@ handle_pdf() {
         echo "📦 Combining PDFs into: $combined_output"
         
         # Use Ghostscript to combine the PDFs
-        gs -q -dSAFER -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -sOutputFile="$combined_output" "${files[@]}" || {
+        command gs -q -dSAFER -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -sOutputFile="$combined_output" "${files[@]}" || {
             echo "❌ Failed to combine PDFs."
             return 1
         }
@@ -1373,17 +1370,17 @@ convert_to_pdf() {
                 echo "📦 Installing $tool..."
                 case "$tool" in
                     pandoc)
-                        brew install pandoc
+                        HOMEBREW_NO_ASK=1 brew install pandoc
                         ;;
                     mactex)
                         echo "ℹ️ MacTeX is needed for best PDF output with Pandoc."
                         echo "ℹ️ For full installation (3GB+): brew install --cask mactex"
                         echo "ℹ️ For smaller installation (100MB): brew install --cask basictex"
                         echo "ℹ️ After installing, you may need to run: sudo tlmgr update --self && sudo tlmgr install collection-fontsrecommended"
-                        read -p "Install MacTeX now? (y/n): " install_mactex
+                        printf '%s' "Install BasicTeX now? (y/n): "; read -r install_mactex
                         if [[ "$install_mactex" =~ ^[Yy]$ ]]; then
                             echo "Installing BasicTeX (smaller package)..."
-                            brew install --cask mactex # Install mactex
+                            HOMEBREW_NO_ASK=1 brew install --cask basictex # BasicTeX: ~100 MB instead of MacTeX's ~5 GB
                             eval "$(/usr/libexec/path_helper)" # Update PATH
                             echo "✅ After installation completes, you'll need to restart your terminal or run 'source ~/.zshrc'"
                         fi
