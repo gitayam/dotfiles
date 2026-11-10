@@ -7,7 +7,11 @@ This repo is **dual-purpose**:
 
 The two halves are independent. Local install runs `./install.sh` per platform; remote ops runs `ansible-playbook`.
 
-> ⚠️ **This fleet is NOT the same as `ai-coding-env`'s fleet.** This ansible manages home-LAN hosts (`proxmox-main`, `irregularchat-information`, `econ_*`). The johncloud colo Proxmox (`100.87.20.88`), Obelisk (`192.168.1.19`), GCP MX relay (`35.185.0.35`), and Mac mini (`100.76.128.36`) are managed via `~/Git/ai-coding-env/scripts/` (SSH-driven), not by this ansible. If you intend to bring them under ansible, it requires adding inventory + likely a `macos-upgrade.yml` playbook (Homebrew/softwareupdate aren't in `system_management.yml`).
+> ⚠️ **Check the target before any ansible run (verified 2026-11-09).**
+> - `ansible/inventory/tailscale.yml` points `proxmox-main` at `100.107.228.108`, which is **not on the current tailnet** (inventory unchanged since 2025-12-16).
+> - The online Proxmox is `100.87.20.88` (the johncloud colo host that `ai-coding-env` and the `host-upgrades` skill manage). Decide which machine you mean and fix the inventory deliberately; don't point this playbook at the colo host by accident.
+> - Obelisk (`192.168.1.19`) was decommissioned on 2026-06-22. The Mac mini (`100.76.128.36`) is on the tailnet but usually offline. `ai-coding-env/scripts/` has no Mac mini or GCP relay scripts; those hosts are managed by hand.
+> - Bringing macOS hosts under ansible would need inventory plus a playbook (Homebrew/softwareupdate aren't in `system_management.yml`).
 
 ---
 
@@ -18,13 +22,13 @@ The two halves are independent. Local install runs `./install.sh` per platform; 
 **Inventory** (`ansible/inventory/`):
 | File | Hosts | Notes |
 |---|---|---|
-| `tailscale.yml` | `proxmox-main` (100.107.228.108) | Default — Tailscale-routed |
+| `tailscale.yml` | `proxmox-main` (100.107.228.108) | Default — Tailscale-routed. **Address not on the tailnet as of 2026-11-09; see the warning above** |
 | `local_network.yml` | `proxmox-main` (192.168.4.222), `irregularchat-information` (192.168.4.4), `econ_proxmox` (192.168.4.164), `econ_matrix` (192.168.4.3) | LAN-direct |
 | `proxmox-upgrade.yml` | special-purpose for Proxmox OS upgrades | Different IP — read first before using |
 | `custom/services.yaml` | 47 docker-compose services, ~8 disabled | Drives the `docker_compose_update` task |
 | `custom/vars.yaml` | `ssh_keys`, `log_path`, `search_path` (default `/home`), `exclude_path` (default `/home/discourse`), `authentik_version` | Required — see `vars.yaml.template` |
 
-**Live state notes** (as of writing): `proxmox-main` is the only consistently online host on Tailscale; `irregularchat-information` has been intermittently offline (DNS-related — see `ansible/USAGE_GUIDE.md`). Verify with `ansible <host> -m ping` before running anything heavy.
+**Live state notes** (verified 2026-11-09): the inventory's `proxmox-main` address is not on the tailnet, so `ansible <host> -m ping` will fail until the inventory is fixed; `irregularchat-information` has been intermittently offline (DNS-related — see `ansible/USAGE_GUIDE.md`). Always `ansible <host> -m ping` before anything heavy.
 
 ### Task → tag mapping
 

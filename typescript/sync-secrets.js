@@ -5,7 +5,7 @@
  * Usage: npm run secrets:sync
  */
 
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -19,14 +19,18 @@ function parseEnvFile() {
   const envContent = fs.readFileSync(ENV_FILE, 'utf8');
   const secrets = {};
   
-  const lines = envContent.split('\\n');
+  const lines = envContent.split(/\r?\n/);
   for (const line of lines) {
     const trimmed = line.trim();
     if (trimmed && !trimmed.startsWith('#')) {
-      const [key, ...valueParts] = trimmed.split('=');
-      if (key && valueParts.length > 0) {
-        secrets[key] = valueParts.join('=');
+      const [rawKey, ...valueParts] = trimmed.split('=');
+      const key = rawKey.replace(/^export\s+/, '').trim();
+      if (!/^[A-Z_][A-Z0-9_]*$/i.test(key) || valueParts.length === 0) {
+        console.log(`⚠️  Skipping a line that is not KEY=value`);
+        continue;
       }
+      // Strip one pair of surrounding quotes, as shells and dotenv do
+      secrets[key] = valueParts.join('=').replace(/^(['"])(.*)\1$/, '$2');
     }
   }
   
@@ -37,9 +41,12 @@ function syncSecretToWrangler(key, value) {
   try {
     console.log(`🔄 Syncing secret: ${key}`);
     
-    // Use echo to pipe the value to wrangler secret put
-    const command = `echo "${value}" | wrangler secret put ${key}`;
-    execSync(command, { stdio: 'inherit' });
+    // The value goes to wrangler on stdin, with no shell: never in the
+    // process list or shell history, and quotes or $ in it can't run commands
+    execFileSync('wrangler', ['secret', 'put', key], {
+      input: value,
+      stdio: ['pipe', 'inherit', 'inherit'],
+    });
     
     console.log(`✅ Successfully synced: ${key}`);
     return true;
