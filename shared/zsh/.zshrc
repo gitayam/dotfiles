@@ -13,7 +13,9 @@ fi
 export PS1="%n@%m %1~ %# "
 
 # # Enable command auto-suggestions
-# autoload -U compinit && compinit
+# Tab completion. -i skips insecure directories silently instead of asking on
+# every shell start.
+autoload -Uz compinit && compinit -i
 
 # Load zsh configuration files
 for config_file in ~/.zsh_{aliases,aws,functions,developer,apps,network,transfer,security,utils,docker,handle_files,encryption,git,linux_compat}; do

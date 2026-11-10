@@ -5,9 +5,9 @@
 # Network diagnostics
 # List listening ports (netstat -tulanp is Linux-only)
 if [[ "$OSTYPE" == darwin* ]]; then
-  alias ports='lsof -nP -iTCP -sTCP:LISTEN -iUDP'
+  alias ports='lsof -nP -iTCP -sTCP:LISTEN -iUDP'  # List listening ports and the programs behind them
 else
-  alias ports='ss -tulpn'
+  alias ports='ss -tulpn'  # List listening ports and the programs behind them
 fi
 alias myip='curl ifconfig.me'  # Check external IP address
 alias http="curl -I"           # Check HTTP headers
@@ -141,6 +141,7 @@ validate_mac() {
     fi
 }
 
+# Show a network interface's current MAC address
 show_current_mac() {
     local interface_input="$1"
     local interface_name
@@ -175,6 +176,7 @@ show_current_mac() {
     networksetup -getmacaddress "$interface_name"
 }
 
+# Set a random or chosen MAC address on an interface
 change_mac_address() {
     local mac_address="$1"
     local interface_input="$2"
@@ -383,6 +385,7 @@ change_mac_address() {
     fi
 }
 
+# Pick an interface and change its MAC address interactively
 change_mac_menu() {
     local choice mac_address interface_name
     
@@ -432,6 +435,7 @@ change_mac_menu() {
     esac
 }
 
+# Summarize a packet capture: top talkers, protocols, DNS, HTTP
 analyze_network_traffic() {
     local help=false pcap_file=""
     # Analysis flags
@@ -543,6 +547,7 @@ analyze_network_traffic() {
     fi
 }
 
+# Capture network traffic on an interface to a pcap file
 capture_network_traffic() {
 	local iface duration size count prefix filter help=false
 
@@ -921,6 +926,7 @@ alias tsf=funnel
 alias postfile=funnel
 alias openport="funnel -d -p"
 
+# Restore an interface's original MAC address
 restore_original_mac() {
     local interface_input="$1"
     local interface_name

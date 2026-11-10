@@ -3,7 +3,7 @@
 # This file provides Linux equivalents for macOS-specific functions
 # and adds server-specific utilities
 
-# OS Detection
+# Print the OS family: macos, debian, redhat, arch, ...
 detect_os() {
     case "$OSTYPE" in
         darwin*)
@@ -492,7 +492,7 @@ security_scan() {
     esac
 }
 
-# Backup utility
+# Back up /etc, your shell configs and MySQL dumps to $BACKUP_DIR (root-only)
 backup_system() {
     local backup_dir="${BACKUP_DIR:-/backup}"
     local timestamp=$(date +%Y%m%d_%H%M%S)
@@ -532,7 +532,7 @@ backup_system() {
     ls -lah "$backup_dir" | head -10
 }
 
-# Performance monitoring
+# Show CPU, memory, disk I/O and load figures
 performance_check() {
     echo "⚡ Performance Metrics"
     echo "═══════════════════════════════════════════════════════════════"
@@ -592,7 +592,7 @@ container_stats() {
     $runtime images
 }
 
-# Process monitoring
+# Watch one process's CPU and memory until Ctrl+C
 monitor_process() {
     local process="${1:-}"
 
@@ -646,15 +646,16 @@ fi
 alias svc='service_manage'
 alias logs='analyze_logs'
 alias secscan='security_scan'
-alias perfcheck='performance_check'
+alias perfcheck='performance_check'  # Show CPU, memory, disk I/O and load figures
 alias containers='container_stats'
 alias diskusage='disk_analysis'
-alias procmon='monitor_process'
+alias procmon='monitor_process'  # Watch one process's CPU and memory until Ctrl+C
 
 # ========================================
 # Help function
 # ========================================
 
+# List the Linux compatibility commands
 linux_compat_help() {
     echo "🐧 Linux/Cross-Platform Compatibility Functions"
     echo "═══════════════════════════════════════════════════════════════"
@@ -690,9 +691,8 @@ linux_compat_help() {
 }
 
 # Add help alias
-alias linux-help='linux_compat_help'
+alias linux-help='linux_compat_help'  # List the Linux compatibility commands
 
 # Note: Functions are automatically available in zsh without export
 # The export -f syntax is for bash, not zsh
 
-echo "✅ Linux compatibility layer loaded. Type 'linux-help' for available commands."

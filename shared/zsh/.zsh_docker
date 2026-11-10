@@ -3,10 +3,10 @@
 # ----------------------
 
 # Docker Compose aliases
-alias dc="docker compose"
+alias dc="docker compose"  # docker compose (note: hides the dc calculator)
 alias dcp="dc pull" # pull the docker compose services
-alias dcs="docker compose stop"
-alias dcrm="docker compose rm"
+alias dcs="docker compose stop"  # Stop the compose services
+alias dcrm="docker compose rm"  # Remove stopped compose containers
 alias docker-compose="dc" # alias for docker compose instead of docker-compose
 alias dcu="dcp && dc up -d" # pull and start the docker compose services
 alias dcd="dcs;dcrm;dc down" # stop the docker compose services (volumes kept)
@@ -15,15 +15,17 @@ alias dcb="dcu --build" # build the docker compose services
 alias dcr="dcd && dcu" # stop and start the docker compose services
 
 # Docker network and cleanup aliases
-alias dcnet="docker network prune"
-alias dcvol="docker volume prune"
+alias dcnet="docker network prune"  # Delete unused Docker networks (asks first)
+alias dcvol="docker volume prune"  # Delete unused Docker volumes (asks first)
 alias dcpur="dcd && dcp && dcnet && dcvol" # stop and pull the docker compose services
 
 # Docker container management
 alias d="docker" # alias for docker
-alias dps="d ps"
+alias dps="d ps"  # List running containers
 unalias dbash dsh 2>/dev/null
+# Open a bash shell in a container: dbash <container>
 dbash() { docker exec -it "$1" /bin/bash; }
+# Open a sh shell in a container: dsh <container>
 dsh() { docker exec -it "$1" /bin/sh; }
 
 # Docker exec helper
@@ -66,7 +68,7 @@ dexec() {
   local cmd="${*:-/bin/bash}"
   docker exec -it "$container" $cmd
 }
-# Docker auto for docker compose up -d --build if a docker-compose.yml file is found in the current directory
+# Build and start the compose project in this folder, then print its localhost link
 # Runs docker compose up -d --build if a compose file is found in the current
 # directory, then prints a clickable localhost:PORT link if a port can be
 # detected from the compose file.

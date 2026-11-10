@@ -181,6 +181,7 @@ aws_cw_logs() {
 # Help & Initialization
 # ==============================================================================
 
+# List the AWS helper commands
 aws_help() {
     echo "AWS Power Functions for Zsh"
     echo "A collection of helper functions to make working with the AWS CLI easier."
@@ -203,6 +204,4 @@ aws_help() {
     echo "Note: Most commands accept --profile <p> and --region <r> arguments."
 }
 
-# Initial message to let the user know the functions are loaded.
-echo "⚡️ AWS Power Functions loaded. Type 'aws_help' for a list of commands."
 

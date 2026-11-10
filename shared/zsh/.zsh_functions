@@ -5,8 +5,8 @@
 # Unalias any conflicting aliases that may have been defined in other config files
 # This prevents "defining function based on alias" errors
 unalias ccopy cpaste clipls clipcat clippwd clipip fhist sanitize_filename download_video \
-        igtok trim_vid mkd reset_file zipfile backup cdl show_func show_alias show_help helpmenu \
-        dl dlvid dlaudio dl720 dl1080 dlfix vcheck vfix vinfo check_video_format \
+        igtok trim_vid mkd reset_file zipfile backup cdl show_func show_alias show_help helpmenu dots \
+        dl dlvid dlaudio dl720 dl1080 dlfix vcheck vfix vinfo signalfix check_video_format \
         2>/dev/null
 
 # Disable glob expansion for these aliases to allow URLs with special characters
@@ -14,28 +14,31 @@ unalias ccopy cpaste clipls clipcat clippwd clipip fhist sanitize_filename downl
 # Now you can use: dl https://example.com/video?id=123 (without quotes!)
 # noglob is zsh-only; bash (the Linux loader) gets plain aliases, so quote URLs there
 if [[ -n "$ZSH_VERSION" ]]; then
-  alias dl='noglob download_video'
-  alias dlvid='noglob download_video'
-  alias dlaudio='noglob download_video --audio-only'
-  alias dl720='noglob download_video --quality 720p'
-  alias dl1080='noglob download_video --quality 1080p'
-  alias dlfix='noglob download_video --check-format'
+  alias dl='noglob download_video'  # Download a video with yt-dlp (zsh: no quotes needed around the URL)
+  alias dlvid='noglob download_video'  # Download a video with yt-dlp
+  alias dlaudio='noglob download_video --audio-only'  # Download only the audio with yt-dlp
+  alias dl720='noglob download_video --quality 720p'  # Download a video at 720p
+  alias dl1080='noglob download_video --quality 1080p'  # Download a video at 1080p
+  alias dlfix='noglob download_video --check-format'  # Download a video and convert it to play in QuickTime/Signal
 else
-  alias dl='download_video'
-  alias dlvid='download_video'
-  alias dlaudio='download_video --audio-only'
-  alias dl720='download_video --quality 720p'
-  alias dl1080='download_video --quality 1080p'
-  alias dlfix='download_video --check-format'
+  alias dl='download_video'  # Download a video with yt-dlp (zsh: no quotes needed around the URL)
+  alias dlvid='download_video'  # Download a video with yt-dlp
+  alias dlaudio='download_video --audio-only'  # Download only the audio with yt-dlp
+  alias dl720='download_video --quality 720p'  # Download a video at 720p
+  alias dl1080='download_video --quality 1080p'  # Download a video at 1080p
+  alias dlfix='download_video --check-format'  # Download a video and convert it to play in QuickTime/Signal
 fi
 
 # Download with automatic format checking for QuickTime/macOS compatibility
 
-# Video format checking aliases (Signal/iOS/Android compatible)
-alias vcheck='check_video_format'  # Check only (no fix)
-alias vfix='check_video_format'    # Check and fix
-alias vinfo='check_video_format'   # Alias for checking info
-alias signalfix='check_video_format'  # Signal-optimized video fixing
+# Video format checking (Signal/iOS/Android compatible)
+
+# Check a video's compatibility with Signal/iOS/QuickTime, without converting it
+vcheck() { check_video_format "$1" false; }
+# Check a video and convert it if needed (to /tmp, or the folder given second)
+vfix() { check_video_format "$1" true "$2"; }
+alias vinfo='vcheck'      # Check a video's format without converting it
+alias signalfix='vfix'    # Convert a video so it plays in Signal on every platform
 
 # Note: igtok is a function and handles URLs correctly without noglob
   # Normalize time to hh:mm:ss.
@@ -398,6 +401,7 @@ check_video_format() {
   fi
 }
 
+# Download video or audio with yt-dlp (quality, audio-only, format fixes)
 download_video() {
   # Usage: download_video url [options]
   # Options:
@@ -745,6 +749,7 @@ igtok() {
 }
 
 
+# Cut a video between a start and end time with ffmpeg (--start, --end)
 trim_vid() {
   local file=""
   local start=""
@@ -816,7 +821,7 @@ mkd(){
     fi
 }
 
-# Reset file content
+# Empty a file, then open it in nano
 reset_file(){
     # usage: reset_file file1 file2 ...
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
@@ -946,56 +951,236 @@ cdl(){
   fi
 }
 
-# Help functions
-show_func(){
-    # usage: show_help function_name
-    # show the help for a specific function
-    local files=("$HOME/.zsh_aliases" "$HOME/.zsh_functions" "$HOME/.zsh_git" "$HOME/.zsh_apps" "$HOME/.zsh_network" "$HOME/.zsh_transfer" "$HOME/.zsh_security" "$HOME/.zsh_utils")
-    for file in "${files[@]}"; do
-        if [ -f "$file" ]; then
-            grep -E "^\s*${1}\s*\(\)|^\s*function\s+${1}" "$file"
-        fi
-    done
+# ---------------------- Find and explain commands (dots) ----------------------
+
+# Files dots reads: the zsh config actually loaded from ~ (backups skipped),
+# plus the Claude aliases sourced from the repo
+_dots_files() {
+  local f
+  for f in "$HOME"/.zsh_*; do
+    case "${f##*/}" in
+      .zsh_*.*|.zsh_history|.zsh_sessions) continue ;;
+    esac
+    [[ -f "$f" ]] && echo "$f"
+  done
+  f="$HOME/Git/dotfiles/shared/zsh/claude-aliases.zsh"
+  [[ -f "$f" ]] && echo "$f"
 }
 
-alias show_function="show_func"
+# One tab-separated record per command:
+# name, kind, category, file, line, alias target, description, usage
+# Descriptions come from the comment block directly above a definition or an
+# alias's trailing comment. Names starting with _ and functions defined inside
+# other functions are internal and skipped. Portable awk (macOS awk, mawk).
+_dots_index() {
+  local f
+  _dots_files | while IFS= read -r f; do
+    awk -v file="$f" '
+      function category(path,   c) {
+        c = path; sub(/.*\//, "", c); sub(/^\.zsh_/, "", c)
+        if (c == "aliases") return "shell"
+        if (c == "functions") return "general"
+        if (c == "handle_files") return "files"
+        if (c == "linux_compat") return "linux"
+        if (c == "claude-aliases.zsh") return "claude"
+        return c
+      }
+      function clean(s) { gsub(/\t/, " ", s); sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+      function flush() {
+        if (pend != "") { print pend "\t" pusage; pend = ""; pusage = "" }
+      }
+      BEGIN { cat = category(file); block = "" }
+      {
+        line = $0
+        t = line; sub(/^[ \t]+/, "", t)
+        indented = (t != line)
+        if (pend != "") {
+          if (pusage == "" && (t ~ /[Uu]sage:/)) {
+            u = t; sub(/.*[Uu]sage:[ \t]*/, "", u); gsub(/["\047]/, "", u); sub(/[;)].*$/, "", u)
+            pusage = clean(u)
+          }
+          if (line ~ /^}/ || NR - pline > 60) flush()
+        }
+        if (t ~ /^#/) {
+          c = t; sub(/^#+[ \t]*/, "", c)
+          # Section banners like "# ------ Git ------" are not descriptions
+          if (c ~ /^[-=_*~ ]*$/ || c ~ /^---/ || c ~ /---$/) { block = ""; next }
+          # The first line is the summary; the rest is detail for `dots -s`
+          if (block == "") block = c
+          next
+        }
+        if (t == "") { block = ""; next }
 
-show_alias(){
-    # usage: show_alias
-    # show all the aliases in all zsh config files
-    local files=("$HOME/.zsh_aliases" "$HOME/.zsh_functions" "$HOME/.zsh_git" "$HOME/.zsh_apps" "$HOME/.zsh_network" "$HOME/.zsh_transfer" "$HOME/.zsh_security" "$HOME/.zsh_utils")
-    for file in "${files[@]}"; do
-        if [ -f "$file" ]; then
-            echo "Aliases in $file:"
-            grep -E "^alias " "$file" | cut -d '=' -f 1 | sort | uniq
-            echo ""
-        fi
-    done
+        name = ""; kind = ""
+        if (t ~ /^alias[ \t]+[^ \t=]+=/) {
+          kind = "alias"
+          rest = t; sub(/^alias[ \t]+/, "", rest)
+          name = rest; sub(/=.*/, "", name)
+          val = rest; sub(/^[^=]*=/, "", val)
+          desc = ""
+          if (val ~ /["\047][ \t]+#/) {
+            desc = val; sub(/^.*["\047][ \t]+#+[ \t]*/, "", desc)
+            sub(/[ \t]+#.*$/, "", val)
+          }
+          gsub(/^["\047]|["\047]$/, "", val)
+          if (desc == "") desc = block
+        } else if (!indented && (t ~ /^function[ \t]+[A-Za-z_]/ || t ~ /^[A-Za-z_][A-Za-z0-9_:-]*[ \t]*\(\)[ \t]*\{/)) {
+          kind = "function"
+          name = t; sub(/^function[ \t]+/, "", name); sub(/[ \t({].*$/, "", name)
+          val = ""; desc = block
+          if (t ~ /}[ \t]*#/) { desc = t; sub(/^.*}[ \t]*#+[ \t]*/, "", desc) }
+        }
+        block = ""
+        if (kind == "" || name ~ /^_/) next
+        lc = tolower(desc)
+        if (lc ~ /(aliases|functions|helpers|operations|launchers)$/ || (desc !~ / .* / && desc !~ /:/ && length(desc) < 25 && t !~ /#/)) desc = ""
+        flush()
+        rec = name "\t" kind "\t" cat "\t" file "\t" NR "\t" clean(val) "\t" clean(desc)
+        if (kind == "function") {
+          pend = rec; pusage = ""; pline = NR
+        } else {
+          print rec "\t"
+        }
+      }
+      END { flush() }
+    ' "$f"
+  done | awk -F '\t' -v OFS='\t' '
+    # First definition wins (the same order zsh loads them). An alias with no
+    # description of its own inherits the one of the command it runs.
+    !seen[$1]++ { n++; rec[n] = $0; if ($2 == "function" && $7 != "") fdesc[$1] = $7 }
+    END {
+      for (i = 1; i <= n; i++) {
+        split(rec[i], f, "\t")
+        if (f[2] == "alias" && f[7] == "") {
+          target = f[6]; sub(/[ \t].*$/, "", target)
+          if (target in fdesc) f[7] = fdesc[target]
+        }
+        print f[1], f[2], f[3], f[4], f[5], f[6], f[7], f[8]
+      }
+    }'
 }
 
-show_help(){
-    # usage: show_help function_name
-    # show the help for a specific function
-    local files=("$HOME/.zsh_aliases" "$HOME/.zsh_functions" "$HOME/.zsh_git" "$HOME/.zsh_apps" "$HOME/.zsh_network" "$HOME/.zsh_transfer" "$HOME/.zsh_security" "$HOME/.zsh_utils")
-    
-    if [[ -z "$1" ]]; then
-        # If no argument provided, show helpmenu
-        helpmenu
-        return 0
+# Format index records from stdin: name, category, description (→ alias target)
+_dots_print() {
+  local bold="" dim="" reset=""
+  if [[ -t 1 ]]; then bold=$'\e[1m'; dim=$'\e[2m'; reset=$'\e[0m'; fi
+  local width=0
+  [[ -t 1 ]] && width=${COLUMNS:-$(tput cols 2>/dev/null || echo 100)}
+  awk -F '\t' -v b="$bold" -v d="$dim" -v r="$reset" -v w="$width" '{
+    desc = $7; max = w - 38; if (max < 30) max = 30
+    if (w > 0 && length(desc) > max) desc = substr(desc, 1, max - 1) "…"
+    if ($2 == "alias") desc = (desc == "" ? "" : desc " ") d "→ " $6 r
+    printf "%s%-26s%s %s%-10s%s %s\n", b, $1, r, d, $3, r, desc
+  }'
+}
+
+# Find, search and explain the commands in these dotfiles
+dots() {
+  local bold="" dim="" reset=""
+  if [[ -t 1 ]]; then bold=$'\e[1m'; dim=$'\e[2m'; reset=$'\e[0m'; fi
+
+
+  case "$1" in
+    ""|-h|--help)
+      echo "dots — find and explain the commands in these dotfiles"
+      echo ""
+      echo "  dots <words>          search names and descriptions (all words must match)"
+      echo "  dots -c <category>    list one category"
+      echo "  dots -l               list everything"
+      echo "  dots -s <name>        show what a command does, where it lives, and its source"
+      echo "  dots -i               pick interactively (needs fzf)"
+      echo "  dots --lint           list commands that have no description"
+      echo ""
+      echo "Categories:"
+      _dots_index | awk -F '\t' '{n[$3]++} END {for (c in n) printf "  %-10s %3d\n", c, n[c]}' | sort
+      ;;
+    -l|--list)
+      _dots_index | sort -t $'\t' -k3,3 -k1,1 | _dots_print
+      ;;
+    -c|--category)
+      [[ -z "$2" ]] && { echo "Usage: dots -c <category>  (dots lists the categories)"; return 1; }
+      _dots_index | awk -F '\t' -v c="$2" '$3 == c' | sort -t $'\t' -k1,1 | _dots_print
+      ;;
+    -s|--show)
+      [[ -z "$2" ]] && { echo "Usage: dots -s <name>"; return 1; }
+      local rec
+      rec=$(_dots_index | awk -F '\t' -v n="$2" '$1 == n')
+      if [[ -z "$rec" ]]; then
+        echo "dots: '$2' is not defined in the dotfiles."
+        type "$2" 2>/dev/null
+        return 1
+      fi
+      local name kind cat file line target desc usage
+      # Not IFS=tab: tab counts as whitespace, so an empty field (a function's
+      # alias target) would collapse and shift every later field
+      local tab=$'\t' us=$'\037'
+      IFS="$us" read -r name kind cat file line target desc usage <<< "${rec//$tab/$us}"
+      echo "${bold}$name${reset} ($kind, $cat) — $file:$line"
+      [[ -n "$desc" ]] && echo "  $desc"
+      [[ -n "$usage" ]] && echo "  Usage: $usage"
+      [[ "$kind" == "alias" ]] && echo "  Runs: $target"
+      echo ""
+      if [[ "$kind" == "function" ]]; then
+        # The loaded definition, which is what actually runs
+        if [[ -n "$ZSH_VERSION" ]]; then whence -f "$name"; else declare -f "$name"; fi
+      fi
+      ;;
+    -i|--interactive)
+      if ! command -v fzf &>/dev/null; then
+        echo "dots -i needs fzf (brew install fzf / apt install fzf). Try: dots <word>"
+        return 1
+      fi
+      local pick
+      pick=$(_dots_index | awk -F '\t' '{printf "%s\t%s\t%s\t%s\t%-24s %-9s %s\n", $1, $4, $5, $6, $1, $3, $7}' |
+        fzf --delimiter $'\t' --with-nth 5 --prompt 'dots> ' \
+            --preview 'sed -n "{3},\$p" {2} | head -40' --preview-window 'right,60%' | cut -f1)
+      [[ -z "$pick" ]] && return 0
+      # zsh: put the command on the prompt to edit and run
+      if [[ -n "$ZSH_VERSION" ]]; then print -z -- "$pick "; else echo "$pick"; fi
+      ;;
+    --lint)
+      _dots_index | awk -F '\t' '$7 == "" {printf "%-24s %s:%s\n", $1, $4, $5}'
+      ;;
+    -*)
+      echo "dots: unknown option $1 (dots -h for help)"
+      return 1
+      ;;
+    *)
+      # Every word must appear in the name, category, alias target or description
+      _dots_index | awk -F '\t' -v q="$*" '
+        BEGIN { n = split(tolower(q), w, " ") }
+        { hay = tolower($1 " " $3 " " $6 " " $7); ok = 1
+          for (i = 1; i <= n; i++) if (index(hay, w[i]) == 0) { ok = 0; break }
+          if (ok) print }' | sort -t $'\t' -k3,3 -k1,1 | _dots_print
+      ;;
+  esac
+}
+
+# "name:description" per command, colons in names escaped, for completion
+_dots_names() { _dots_index | awk -F '\t' '{n = $1; gsub(/:/, "\\:", n); print n ":" $7}'; }
+
+# zsh tab completion for dots: options, categories, then command names with
+# their descriptions (eval keeps the zsh-only syntax away from bash)
+if [[ -n "$ZSH_VERSION" ]]; then
+  eval '_dots_complete() {
+    local -a items
+    if (( CURRENT == 2 )); then
+      items=("-s:explain a command" "-c:list a category" "-l:list everything" "-i:pick interactively" "--lint:commands without a description")
+      _describe "option" items
+    elif [[ $words[2] == (-c|--category) ]]; then
+      items=(${(f)"$(_dots_index | cut -f3 | sort -u)"})
+      _describe "category" items
+    else
+      items=(${(f)"$(_dots_names)"})
+      _describe "dotfiles command" items
     fi
-    
-    for file in "${files[@]}"; do
-        if [ -f "$file" ]; then
-            grep -E "^\s*${1}\s*\(\)|^\s*function\s+${1}" "$file"
-        fi
-    done
-}
+  }'
+  (( $+functions[compdef] )) && compdef _dots_complete dots
+fi
 
-helpmenu(){
-    echo "Help Menu:"
-    echo "----------"
-    echo "See all functions: show_function"
-    echo "See all aliases: show_alias"
-    echo "See help for a function: show_help function_name"
-    echo "See help for an alias: show_help alias_name"
-} 
+# Older help commands, kept as shortcuts to dots
+helpmenu() { dots; }                    # Overview of the dotfiles' commands (dots)
+show_help() { dots ${1:+-s "$1"}; }     # Explain a command, or the overview (dots -s)
+show_func() { dots -s "$1"; }           # Show a function's description and source (dots -s)
+alias show_function="show_func"         # Show a function's description and source (dots -s)
+show_alias() { dots -l; }               # List every command and alias (dots -l)

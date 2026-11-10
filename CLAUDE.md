@@ -91,6 +91,25 @@ OS hardening lives in `macos/harden.sh` and `linux/harden.sh` (alias `harden`). 
 
 ---
 
+## Finding commands (`dots`)
+
+`dots` (in `shared/zsh/.zsh_functions`) indexes every function and alias in the loaded `~/.zsh_*` files plus `claude-aliases.zsh`, straight from the source, so it never goes stale:
+
+| Command | Does |
+|---|---|
+| `dots` | overview and categories (one per file: shell, git, docker, files, encryption, network, ...) |
+| `dots <words>` | search names, alias targets and descriptions (all words must match) |
+| `dots -s <name>` | description, usage, file:line and the loaded source; Tab completes names with descriptions |
+| `dots -c <category>` / `dots -l` | list a category / everything |
+| `dots -i` | fzf picker; Enter puts the command on the prompt |
+| `dots --lint` | commands with no description (keep this empty, except `claude-aliases.zsh`) |
+
+Conventions it relies on (keep them when adding code):
+- Every user-facing function gets a one-line `# description` directly above it; aliases get a trailing `# description` (an alias to a documented function inherits its description). The first comment line is the summary; section banners (`# -----`) and short headings ("Git aliases") are ignored.
+- Names starting with `_` are internal and hidden; functions nested in other functions are skipped.
+- Don't shadow real commands except deliberate wrappers (`ls`, `grep`, `du`, `df`, `mkdir`). `reset` and `pyenv` were removed for that reason (`reset_file`, `venv`); `gs` (git status) still hides Ghostscript, so code calls `command gs`.
+- These files are also sourced by bash on Linux: keep syntax bash-compatible or guard zsh-only parts with `[[ -n "$ZSH_VERSION" ]]` and `eval`.
+
 ## Related Docs
 
 | File | What it covers |

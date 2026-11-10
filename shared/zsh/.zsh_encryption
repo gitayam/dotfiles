@@ -1,5 +1,4 @@
 # Debug line to verify file is sourced
-echo "Loading encryption functions..."
 
 # ----------------------
 # Password and Encryption Functions
@@ -259,9 +258,9 @@ generate_password() {
 }
 
 # Common aliases for password generation
-alias genpass="generate_password -c"
-alias genpassphrase="generate_password -p phrases -c"
-alias genpin="generate_password -p numbers -l 6 -c"
+alias genpass="generate_password -c"  # Generate a random passphrase and copy it to the clipboard
+alias genpassphrase="generate_password -p phrases -c"  # Generate a word passphrase and copy it
+alias genpin="generate_password -p numbers -l 6 -c"  # Generate a 6-digit PIN and copy it
 
 # Encryption/Decryption aliases
 alias encrypt="encrypt_file"
@@ -281,21 +280,21 @@ alias batch_enc_github="batch_encrypt -g"
 # Security aliases
 alias secure_rm="secure_delete"
 alias secure_del="secure_delete"
-alias wipe="secure_delete -p 7 -r"  # More thorough deletion
+alias wipe="secure_delete -p 7 -r"  # Overwrite a file or folder 7 times, then delete it
 
 # GPG helpers
 alias gpg_keys="gpg_key_info"
-alias gpg_list="gpg --list-keys --keyid-format SHORT"
-alias gpg_list_secret="gpg --list-secret-keys --keyid-format SHORT"
+alias gpg_list="gpg --list-keys --keyid-format SHORT"  # List GPG public keys
+alias gpg_list_secret="gpg --list-secret-keys --keyid-format SHORT"  # List GPG secret keys
 alias gpg_import="import_gpg_key"
 alias gpg_import_github="import_gpg_key -g"
 
 # Quick GitHub key operations
-alias encrypt_github="encrypt_for_github" # Use like: encrypt_github file.txt github_username
+alias encrypt_github="encrypt_for_github"  # Encrypt a file to a GitHub user's GPG key: encrypt_github file.txt user
 alias github_key="import_gpg_key -g"
 alias github_encrypt="encrypt_for_github"
 
-# Function to encrypt a file using GPG
+# Encrypt a file with GPG: passphrase, a recipient key, or a GitHub user's key (-g)
 encrypt_file() {
     if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
         echo "Usage: encrypt_file [options] [file] [recipient]"
@@ -509,8 +508,7 @@ encrypt_file() {
     fi
 }
 
-# Function to decrypt a GPG-encrypted file
-# Enhanced file decryption with multiple backends
+# Decrypt a file made with GPG, OpenSSL or age (detected from the file, or -m)
 decrypt_file() {
     if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
         echo "Usage: decrypt_file [options] [encrypted_file] [output_file]"

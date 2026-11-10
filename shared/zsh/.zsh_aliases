@@ -3,19 +3,19 @@
 # ----------------------
 
 # Navigation aliases
-alias ..="cd .."
-alias ...="cd ../.."
-alias ....="cd ../../.."
-alias mkdir="mkdir -p"
-alias rmr="rm -rf"
-alias untar="tar -zxvf"
-alias tarx="tar -xvf"
+alias ..="cd .."  # Go up one directory
+alias ...="cd ../.."  # Go up two directories
+alias ....="cd ../../.."  # Go up three directories
+alias mkdir="mkdir -p"  # mkdir that also creates missing parent folders (-p)
+alias rmr="rm -rf"  # Delete a folder and everything in it, without asking (rm -rf)
+alias untar="tar -zxvf"  # Extract a .tar.gz archive
+alias tarx="tar -xvf"  # Extract a .tar archive
 
 # Safe aliases to prevent accidental file overwrites or deletions
 
 # Colorize the `ls` output and setup useful aliases
 export LS_OPTIONS='--color=auto'
-alias ls='ls $LS_OPTIONS'
+alias ls='ls $LS_OPTIONS'  # ls with colours (LS_OPTIONS)
 alias ll='ls -lh $LS_OPTIONS'        # Detailed list view
 alias la='ls -lha $LS_OPTIONS'       # Show hidden files
 alias l='ls -lA $LS_OPTIONS'         # Short list view with hidden files
@@ -24,7 +24,7 @@ alias lt='ls -strhal $LS_OPTIONS'    # Sort by date, most recent last
 # Grep aliases and functions
 # No -i or "$@": aliases expand inside every function defined later, so "$@"
 # injected each function's own arguments into its greps
-alias grep='grep --color=auto'
+alias grep='grep --color=auto'  # grep with colour (case-sensitive; grepi ignores case)
 alias grepi='grep -i --color=auto' # case-insensitive
 alias grepv='grep -vi --color=auto' # Ignore case, invert match, and colorize output
 
@@ -34,7 +34,7 @@ alias findd='find . -type d -name' # Find directories by name
 
 # Editor aliases
 alias nanozsh='nano ~/.zshrc'     # Open the zshrc file in nano
-alias reset='reset_file'          # Custom function to erase a file content then open with nano
+# (no `reset` alias: that is the terminal's own reset command; use reset_file)
 
 # Note: All other functions and aliases have been moved to modular files:
 # - Git functions       -> .zsh_git

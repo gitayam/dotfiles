@@ -1,7 +1,6 @@
-# Command line keepassxc
-alias kp="keepassxc"
-# Open database in keepassxc
-alias run-kp="kp --db $1"
+alias kp="keepassxc"  # Open the KeePassXC password manager
+# Open a KeePassXC database file in the app: run-kp vault.kdbx
+run-kp() { keepassxc "$@"; }
 
 # ----------------------
 # AI CLI Tools (Qwen Code, Claude Code, etc.)
@@ -241,7 +240,7 @@ QWENMD
     echo "✅ Created QWEN.md template. Edit it for your project."
 }
 
-# Main qc function - wrapper for Qwen Code CLI with local Ollama support
+# Qwen Code CLI, in the cloud or against local Ollama (qc --local)
 # NOTE: Local Ollama has tool-calling issues (XML vs JSON format mismatch)
 # Cloud (Qwen OAuth) works properly and is free (2000 req/day)
 qc() {
@@ -364,7 +363,7 @@ qc() {
 }
 
 # Aliases for common modes
-alias qwen-yolo="qc --yolo"
+alias qwen-yolo="qc --yolo"  # Qwen Code, approving every action without asking
 alias qwen-plan="qc --approval-mode plan"
 alias qwen-local="qc --local"
 alias qwen-fast="qc --local --model 8b"
@@ -394,8 +393,9 @@ setup_profiles(){
 
 # Application launchers
 alias run-matrix="run-element"
-alias run-irregular="run-element irregularchat"
+alias run-irregular="run-element irregularchat"  # Open Element with the IrregularChat profile
 
+# Open the Element (Matrix) app, optionally with a named profile
 run-element(){
     # usage: run-element
     # open element desktop in the default browser
@@ -405,6 +405,7 @@ run-element(){
     cd - # go back to the previous directory
 }
 
+# Open Firefox, optionally with a named profile
 run-firefox(){
     # usage: run-firefox
     # open firefox in the default browser
@@ -414,6 +415,7 @@ run-firefox(){
     cd - # go back to the previous directory
 }
 
+# Open Discord, optionally with a named profile
 run-discord(){
     # usage: run-discord
     # open discord in the default browser
@@ -423,7 +425,7 @@ run-discord(){
     cd - # go back to the previous directory
 }
 
-# System Updates
+# Update everything: Homebrew, App Store apps and macOS software updates
 update_all(){
     sudo echo "Updating brew" # using sudo with echo to get user password, sudo used for softwareupdate
     brew update && brew upgrade && brew cleanup && brew doctor

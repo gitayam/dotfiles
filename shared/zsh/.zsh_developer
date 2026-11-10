@@ -1,19 +1,20 @@
 # ----------------------
 # Git Aliases
 # ----------------------
-alias gita="git_add"
-alias gitcg="git_commit"
-alias gitp="git push"
-alias gitpl="git pull"
-alias gitco="git checkout"
-alias gitcb="git checkout -b"
-alias gitlog="git log --oneline --graph --all"
-alias gitup="update_git_repos"
+alias gita="git_add"  # Stage files (all when none are given)
+alias gitcg="git_commit"  # Commit, with a message or in the editor
+alias gitp="git push"  # Push the current branch
+alias gitpl="git pull"  # Pull the current branch
+alias gitco="git checkout"  # Switch branch or restore a file (git checkout)
+alias gitcb="git checkout -b"  # Create a branch and switch to it
+alias gitlog="git log --oneline --graph --all"  # One-line history graph of all branches
+alias gitup="update_git_repos"  # Pull every git repo under a folder
 alias gitcl="git_clone"
-alias gitcr="create_repo"
+alias gitcr="create_repo"  # Create a GitHub repo with gh
 # ----------------------
 # Git Functions
 # ----------------------
+# Commit with the given message, or open the editor when none is given
 git_commit(){
     if [[ -z "$1" ]]; then
         echo "No commit message provided. Opening editor for interactive commit message."
@@ -23,6 +24,7 @@ git_commit(){
     fi
 }
 
+# Stage the given files, or everything when none are given
 git_add(){
     if [[ -z "$1" ]]; then
         echo "No files specified. Defaulting to 'git add .'"
@@ -47,6 +49,7 @@ git_recent_branches() {
   git for-each-ref --sort=-committerdate refs/heads/ --format='%(refname:short) — %(committerdate:relative)'
 }
 
+# Pull every git repo under a folder (default ~/Documents/Git)
 update_git_repos(){
     # Default variables
     search_path="$HOME/Documents/Git/"  # Default search path
@@ -97,8 +100,8 @@ update_git_repos(){
 
 ## Git Clone Function
 ### Usage: git_clone repo_name or url [destination_path]
-alias clone_repo="git_clone"
-### from any directory will clone the repo to the correct directory in the ~/Documents/Git/ directory
+alias clone_repo="git_clone"  # Clone a repo into ~/Documents/Git, from any folder
+# Clone a repo (name or URL) into ~/Documents/Git, from any folder
 git_clone(){
     if [[ -z "$1" ]]; then
         echo "No repository name or URL provided"
@@ -464,7 +467,8 @@ handle_existing_repo() {
     fi
 }
 
-alias git_create="create_repo"
+alias git_create="create_repo"  # Create a GitHub repo with gh
+# Create a GitHub repo with gh and clone it
 create_repo(){
     # "Usage: create_repo repo_name"
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
@@ -697,6 +701,7 @@ create_repo(){
 # ----------------------
 # Project Management
 # ----------------------
+# Jump to a project repo, picked with fzf
 cdproj() {
     # Usage: cdproj [repo_name]
     # check if fzf is installed
@@ -719,9 +724,11 @@ cdproj() {
 # Python Virtual Environment Management
 # ----------------------
 
-pyenv() {
+# Create, activate, deactivate or remove the ./env Python virtual environment
+# (named venv so it does not hide the real pyenv)
+venv() {
     if [[ -z "$1" ]]; then
-        echo "Usage: pyenv [create|activate|deactivate|cleanup] [version]"
+        echo "Usage: venv [create|activate|deactivate|cleanup] [version]"
         return 1
     fi
 
@@ -741,7 +748,7 @@ pyenv() {
             elif [ -d "venv" ]; then
                 source venv/bin/activate
             else
-                echo "No virtual environment found. Create one with 'pyenv create'"
+                echo "No virtual environment found. Create one with 'venv create'"
                 return 1
             fi
             ;;
@@ -820,7 +827,7 @@ pyenv_setup() {
 
     # Clean up if requested
     if [[ "$cleanup" == true ]]; then
-        pyenv cleanup
+        venv cleanup
     fi
 
     # Check if virtual environment exists, create if not
@@ -893,6 +900,7 @@ pyenv_setup() {
 # Create issues for Identifying Frameworks and Navigation (dirs and files)
 # Create issues for researching the topic and creating a plan
 
+# Create and open a hackathon repo with a starter layout
 hackathon_setup() {
     # Help menu
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
@@ -942,6 +950,7 @@ hackathon_setup() {
 # ----------------------
 # Claude Code Functions
 # ----------------------
+# Check that Claude Code and its prerequisites are installed (legacy)
 claude_checks() {
     # Check if Node.js is installed (required for Claude Code)
     if ! command -v node &> /dev/null; then
@@ -1059,6 +1068,7 @@ claude_checks() {
     claude doctor
 }
 
+# Run Claude Code on a file or folder (legacy; see the cc aliases)
 claude_code() {
     # Show help menu
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then

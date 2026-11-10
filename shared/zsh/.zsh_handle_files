@@ -168,6 +168,7 @@ process_single_image() {
   return 0
 }
 
+# Image toolkit: convert, rotate, strip EXIF, OCR, extract text, rename
 handle_image() {
   # Show help if no arguments or help option provided
   if [[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]]; then
@@ -399,17 +400,18 @@ handle_image() {
 # PDF Handling
 #using ghost script to convert pdfs to text that are still ocr
 # gs -dSAFER -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -sOutputFile=same_name_with_no_spaces_and_no_special_chars.pdf original.pdf
-alias ocr-pdf="handle_pdf -o"
-alias extract-text="handle_pdf -t"
-alias compress-pdf="handle_pdf -c"
-alias convert-to-pdf="handle_pdf -C"
-alias rotate-pdf="handle_pdf -r"
-alias sanitize-pdf="handle_pdf -s"
-alias metadata-pdf="handle_pdf -m"
+alias ocr-pdf="handle_pdf -o"  # Make a scanned PDF searchable (OCR text layer)
+alias extract-text="handle_pdf -t"  # Extract the text from a PDF
+alias compress-pdf="handle_pdf -c"  # Shrink a PDF (Ghostscript)
+alias convert-to-pdf="handle_pdf -C"  # Convert files to PDF
+alias rotate-pdf="handle_pdf -r"  # Rotate a PDF by 90, 180 or 270 degrees
+alias sanitize-pdf="handle_pdf -s"  # Clean up a PDF's filename only; it does not remove metadata (use mat2)
+alias metadata-pdf="handle_pdf -m"  # Show a PDF's metadata
 alias to-pdf="convert_to_pdf"
 alias pdf-convert="convert_to_pdf"
 alias to_pdf="convert_to_pdf"
 
+# PDF toolkit: OCR, extract text, compress, rotate, combine, EPUB, metadata, convert
 handle_pdf() {
     # Create a forcecopy function that bypasses interactive prompts
     # This will be local to the function only
@@ -1289,6 +1291,7 @@ ensure_tex_path() {
     fi
 }
 
+# Convert Markdown, documents and images to PDF (pandoc, LibreOffice, ImageMagick)
 convert_to_pdf() {
     # Define local forcecopy function
     forcecopy() {
@@ -1581,11 +1584,12 @@ convert_to_pdf() {
 }
 
 # Alias for quick access
-alias mdpdf="convert_to_pdf"
+alias mdpdf="convert_to_pdf"  # Convert Markdown (or other documents) to PDF
 
 # ----------------------
 # Clean markdown files by handling problematic separators
 # ----------------------
+# Remove characters from a Markdown file that break PDF conversion
 clean_markdown() {
     if [ $# -eq 0 ]; then
         echo "Usage: clean_markdown <input_file> [output_file]"
