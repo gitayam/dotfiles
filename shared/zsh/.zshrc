@@ -57,7 +57,8 @@ SAVEHIST=10000
 # Function to enable Touch ID for sudo
 sudotouch() {
   # Check if Touch ID is already enabled for sudo
-  if grep -q "auth       sufficient     pam_tid.so" /etc/pam.d/sudo; then
+  # cat, not grep on both files: BSD grep exits 2 when one is missing, even on a match
+  if cat /etc/pam.d/sudo_local /etc/pam.d/sudo 2>/dev/null | grep -q "^auth[[:space:]]*sufficient[[:space:]]*pam_tid.so"; then
     echo "Touch ID for sudo is already enabled."
     return
   fi
@@ -68,19 +69,21 @@ sudotouch() {
   read REPLY
   REPLY=${REPLY:-n}
   if [[ $REPLY =~ ^[Yy]$ ]]; then
-    sudo sed -i '' '1s;^;auth       sufficient     pam_tid.so\n;' /etc/pam.d/sudo
+    # sudo_local survives macOS updates; edits to /etc/pam.d/sudo are reset by them
+    echo "auth       sufficient     pam_tid.so" | sudo tee /etc/pam.d/sudo_local >/dev/null
     echo "Touch ID for sudo has been enabled."
   else 
     echo "Touch ID for sudo not enabled. Passwords will be required for sudo."
   fi
 }
 # alias for initial-setup.sh
-alias initial-install="./initial_macos_setup.sh"
+alias initial-install="$HOME/Git/dotfiles/macos/initial_macos_setup.sh"
 # call sudotouch to enable Touch ID for sudo if not already enabled
 sudotouch
 
 # Add local bin to PATH
-export PATH=$PATH:$HOME/.local/binexport PATH="/opt/homebrew/sbin:$PATH"
+export PATH="$HOME/.local/bin:$PATH"
+export PATH="/opt/homebrew/sbin:$PATH"
 export PATH="/opt/homebrew/bin:$PATH"
 
 # >>> claude-aliases.zsh <<<

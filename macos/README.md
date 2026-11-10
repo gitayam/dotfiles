@@ -29,4 +29,4 @@ This directory contains a modular shell configuration for ZSH that separates fun
 ## Helper Scripts
 
 - `check_zsh_config.sh` - Verifies that all modular files are properly set up
-- `initial_macos_setup.sh` - Initial setup script for macOS 
+- `initial_macos_setup.sh` - New-Mac bootstrap (re-runnable; `DRY_RUN=1` previews brew installs)

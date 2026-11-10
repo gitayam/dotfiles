@@ -73,15 +73,15 @@ The two halves are independent. Local install runs `./install.sh` per platform; 
 
 ## Local Config Sync (Mac)
 
-Interactive sync between `~/.zshrc`/etc. and this repo's `shared/`/`macos/` files:
+Interactive sync from this repo's `shared/zsh/` (the canonical copies) to `~/.zshrc`, `~/.zsh_*`:
 
 ```bash
-./scripts/sync_mac_dotfiles.sh
+./macos/install.sh        # Linux: ./linux/install.sh
 ```
 
-It compares home vs. repo, prompts to overwrite either direction, creates missing files from templates. Doesn't touch anything without confirmation.
+For each differing file it asks before overwriting and keeps a timestamped backup. `scripts/sync_mac_dotfiles.sh` is a stub that runs it. `macos/.zshrc` is a stale copy; edit `shared/zsh/.zshrc`.
 
-The macOS install bootstrap is `macos/install.sh` (Homebrew, taps, casks, Python, Node, AWS CLI). Linux mirror at `linux/install.sh`. Both source `shared/zsh-shared.zsh` so most aliases work cross-platform.
+The new-Mac bootstrap is `macos/initial_macos_setup.sh` (alias `initial-install`): Homebrew formulae and casks, IrregularChat bookmarks file, macOS security/defaults, then the sync above. Re-runnable; `DRY_RUN=1` prints brew commands instead of running them. It skips casks Homebrew has disabled and lists every skipped or failed item at the end.
 
 ---
 
