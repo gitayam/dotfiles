@@ -4,8 +4,8 @@
 #
 # Idempotent: re-run any time to pick up edits in shared/vibe/.
 #
-# Does NOT touch ~/.vibe/.env (secrets) or ~/.vibe/run-litellm.sh (host-
-# specific runner). Those are managed outside the dotfiles repo.
+# Does NOT touch keys (the `secret` profile "vibe") or ~/.vibe/run-litellm.sh
+# (linked by scripts/install-claude-aliases.sh).
 
 set -euo pipefail
 
@@ -15,8 +15,8 @@ DST_DIR="$HOME/.vibe"
 
 if [ ! -d "$DST_DIR" ]; then
   echo "ERROR: $DST_DIR does not exist. Set up vibe first (install mistral-vibe,"
-  echo "       create ~/.vibe/.env with MISTRAL_API_KEY + LITELLM_MASTER_KEY,"
-  echo "       deploy ~/.vibe/run-litellm.sh)."
+  echo "       store MISTRAL_API_KEY + LITELLM_MASTER_KEY with: secret set vibe NAME,"
+  echo "       and run scripts/install-claude-aliases.sh for the runner)."
   exit 1
 fi
 

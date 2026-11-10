@@ -42,7 +42,7 @@ OLLAMA_MODEL="devstral"
 OLLAMA_MODEL_NAME="Devstral (Ollama Local)"
 
 # ── Mistral Vibe (Official API) ──────────────────────────────────────────────
-# Uses official Mistral API — credentials sourced from ~/.vibe/.env (DF_API_KEY)
+# Uses official Mistral API — keys from the secret profile 'vibe' (or ~/.vibe/.env)
 # ANTHROPIC_BASE_URL must point to an Anthropic-compatible endpoint.
 # Default: same as LOCAL_BASE_URL (DigitalFacility proxy). Override if needed.
 VIBE_API_AVAILABLE=true
@@ -118,18 +118,19 @@ switch_ollama() {
 }
 
 switch_vibe() {
-  # Keys come from the encrypted `secret` profile "vibe" and/or the plaintext
-  # file; the profile wins. With the profile in place the file can be deleted.
-  if [ -f "${VIBE_API_KEY_FILE}" ]; then
+  # Keys come from the encrypted `secret` profile "vibe"; the plaintext file is
+  # read only when there is no profile (it may reference vars that are unset).
+  if [ -f "${SECRETS_DIR:-$HOME/Git/secrets}/vibe.env" ]; then
+    _claude_switch_overlay vibe
+  elif [ -f "${VIBE_API_KEY_FILE}" ]; then
     source "${VIBE_API_KEY_FILE}"
-  elif [ ! -f "${SECRETS_DIR:-$HOME/Git/secrets}/vibe.env" ]; then
-    echo "ERROR: no Mistral Vibe keys: neither ${VIBE_API_KEY_FILE} nor the secret profile 'vibe'"
-    echo "       Store them with: secret set vibe LITELLM_MASTER_KEY (and DF_API_KEY)"
+  else
+    echo "ERROR: no Mistral Vibe keys: neither the secret profile 'vibe' nor ${VIBE_API_KEY_FILE}"
+    echo "       Store them with: secret set vibe LITELLM_MASTER_KEY (and MISTRAL_API_KEY)"
     return 1
   fi
-  _claude_switch_overlay vibe
   if [ -z "${LITELLM_MASTER_KEY:-}" ]; then
-    echo "ERROR: LITELLM_MASTER_KEY not set in ${VIBE_API_KEY_FILE}"
+    echo "ERROR: LITELLM_MASTER_KEY is in neither the secret profile 'vibe' nor ${VIBE_API_KEY_FILE}"
     echo "       cc-vibe routes Claude Code through the local LiteLLM proxy"
     echo "       (Anthropic Messages -> Mistral). DF_API_KEY is the upstream"
     echo "       Mistral key and is NOT accepted by the LiteLLM proxy itself."
@@ -139,8 +140,9 @@ switch_vibe() {
   # /v1/models because LiteLLM 400s that endpoint without a tracking DB even
   # when the proxy itself is healthy. A tiny messages call costs ~1 token and
   # confirms both TCP reachability AND upstream Mistral credentials.
+  # The key goes in through a header file (printf is a builtin), not curl's argv.
   if ! curl -fsS -o /dev/null -m 5 "${VIBE_BASE_URL}/v1/messages" \
-       -H "x-api-key: ${LITELLM_MASTER_KEY}" \
+       -H @<(printf 'x-api-key: %s\n' "${LITELLM_MASTER_KEY}") \
        -H "anthropic-version: 2023-06-01" \
        -H "Content-Type: application/json" \
        -d '{"model":"'"${VIBE_MODEL}"'","max_tokens":1,"messages":[{"role":"user","content":"x"}]}' 2>/dev/null; then

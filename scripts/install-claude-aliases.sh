@@ -40,8 +40,33 @@ if [ ! -f "$HOME/.vibe/claude-backends.env" ]; then
     echo "  and fill in real values."
 fi
 
-# 4. Linux: install systemd user unit for LiteLLM autostart (Mac uses launchd plist
-#    at ~/Library/LaunchAgents/io.vibe.litellm.plist — NOT touched by this script).
+# 4. The LiteLLM runner (keys from the encrypted `secret` profile "vibe"), linked
+#    from the repo; an existing different runner is backed up first.
+mkdir -p "$HOME/.vibe/logs"
+RUNNER_SRC="$DOTFILES/shared/vibe/run-litellm.sh"
+RUNNER_DST="$HOME/.vibe/run-litellm.sh"
+if [ "$(readlink "$RUNNER_DST" 2>/dev/null)" != "$RUNNER_SRC" ]; then
+    [ -e "$RUNNER_DST" ] && mv "$RUNNER_DST" "$RUNNER_DST.bak.$(date +%Y%m%d%H%M%S)"
+    ln -s "$RUNNER_SRC" "$RUNNER_DST" && echo "✓ linked $RUNNER_DST → repo runner"
+fi
+
+# 5. macOS: launchd job for LiteLLM autostart (__HOME__ filled in; launchd
+#    doesn't expand ~), reloaded so a changed plist takes effect.
+if [ "$(uname -s)" = "Darwin" ]; then
+    PLIST_DST="$HOME/Library/LaunchAgents/io.vibe.litellm.plist"
+    mkdir -p "$HOME/Library/LaunchAgents"
+    sed "s|__HOME__|$HOME|g" "$DOTFILES/shared/launchd/io.vibe.litellm.plist" > "$PLIST_DST.tmp" &&
+        plutil -lint -s "$PLIST_DST.tmp" && mv "$PLIST_DST.tmp" "$PLIST_DST"
+    # Not loaded yet is fine (set -e would otherwise stop here)
+    launchctl bootout "gui/$(id -u)/io.vibe.litellm" 2>/dev/null || true
+    if launchctl bootstrap "gui/$(id -u)" "$PLIST_DST"; then
+        echo "✓ loaded launchd job io.vibe.litellm (logs: ~/.vibe/logs/litellm.log)"
+    else
+        echo "⚠ could not load io.vibe.litellm; try: launchctl bootstrap gui/$(id -u) $PLIST_DST"
+    fi
+fi
+
+# 6. Linux: install systemd user unit for LiteLLM autostart.
 #    `cc-vibe` requires litellm running on :4000; without autostart, you'd have to
 #    `nohup ~/.vibe/run-litellm.sh &` after every reboot/login.
 if [ "$(uname -s)" = "Linux" ] && command -v systemctl >/dev/null 2>&1; then

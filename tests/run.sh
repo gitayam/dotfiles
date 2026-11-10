@@ -59,7 +59,9 @@ echo "== Syntax"
 syntax_bash() {
   local f bad=0
   for f in "$REPO"/macos/*.sh "$REPO"/linux/*.sh "$REPO"/shared/setup/*.sh "$REPO"/tests/*.sh \
-           "$REPO"/shared/bin/git-wip "$REPO"/shared/bin/git-sync-all "$REPO"/shared/zsh/.zsh_*; do
+           "$REPO"/shared/bin/git-wip "$REPO"/shared/bin/git-sync-all "$REPO"/shared/bin/secret \
+           "$REPO"/shared/bin/claude-switch "$REPO"/shared/vibe/run-litellm.sh \
+           "$REPO"/scripts/install-claude-aliases.sh "$REPO"/shared/zsh/.zsh_*; do
     [[ "$f" == *.original ]] && continue
     bash -n "$f" || { echo "bash -n failed: $f"; bad=1; }
   done
@@ -77,6 +79,7 @@ if command -v zsh >/dev/null; then
   }
   check "zsh parses every zsh file" syntax_zsh
 fi
+check "launchd plists are valid XML" python3 -c "import plistlib,sys; [plistlib.load(open(f,'rb')) for f in sys.argv[1:]]" "$REPO"/shared/launchd/*.plist
 check "git-inventory compiles" python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$REPO/shared/bin/git-inventory"
 if command -v node >/dev/null; then
   check "secrets scripts parse" bash -c "node --check '$REPO/typescript/sync-secrets.js' && node --check '$REPO/typescript/get-secrets.js'"
@@ -229,6 +232,29 @@ if command -v sops >/dev/null && command -v age-keygen >/dev/null; then
       [[ -z "$(git -C "$SEC/store" status --porcelain)" ]]
   }
   check "secret: every change is committed in the store's git history" secret_git_history
+  # cc-vibe: the profile wins over a plaintext file that can't be sourced, and
+  # the preflight hands the key to curl through a header file, not argv
+  claude_switch_vibe_profile() {
+    local fake="$SEC/fakebin" log="$SEC/curl.argv" sh rc=0
+    mkdir -p "$fake"
+    printf '#!/bin/sh\nprintf "%%s\\n" "$@" >> "%s"\n' "$log" > "$fake/curl"; chmod +x "$fake/curl"
+    printf 'DF_API_KEY=${MISTRAL_API_KEY:?unset}\n' > "$SEC/vibe-plain.env"
+    printf 'VIBE_API_KEY_FILE=%s\nVIBE_BASE_URL=http://127.0.0.1:9\nVIBE_MODEL=m\nVIBE_MODEL_NAME=n\n' \
+      "$SEC/vibe-plain.env" > "$SEC/backends.env"
+    printf 'mk-test-123' | d1 set vibe LITELLM_MASTER_KEY >/dev/null || return 1
+    for sh in bash zsh; do
+      command -v $sh >/dev/null || continue
+      : > "$log"
+      HOME="$SEC/h1" SECRETS_DIR="$SEC/store" SECRET_KEY_BACKEND=file CLAUDE_BACKENDS_CONFIG="$SEC/backends.env" \
+        PATH="$fake:$REPO/shared/bin:$PATH" $sh -c \
+        'source "$1" vibe >/dev/null 2>&1 && [ "$ANTHROPIC_AUTH_TOKEN" = mk-test-123 ]' $sh "$REPO/shared/bin/claude-switch" ||
+        { echo "$sh: switch_vibe did not take the key from the profile"; rc=1; }
+      grep -q '/v1/messages' "$log" || { echo "$sh: preflight never ran"; rc=1; }
+      ! grep -q 'mk-test-123' "$log" || { echo "$sh: key on curl's command line"; rc=1; }
+    done
+    return $rc
+  }
+  check "claude-switch vibe: profile key, never in curl argv" claude_switch_vibe_profile
   secret_no_plaintext_files() { ! ls -a "$SEC/store" | grep -qE '^\.tmp|\.dec$|\.plain$'; }
   check "secret: no plaintext or temp files left in the store" secret_no_plaintext_files
 fi
