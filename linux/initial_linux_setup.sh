@@ -245,10 +245,12 @@ gather_user_preferences() {
   echo "5. OpenCode (CLI)"
   echo "6. Hermes Agent (Nous Research, CLI)"
   echo "7. Orca (runs Codex/Claude/Cursor as observable lanes for an orchestrator; npm)"
-  echo "8. None (Default)"
-  echo -n "Enter your choice (1-8)(Default: 8) (multiple choices separated by commas): "
+  echo "8. Paperclip (orchestrator: a local web UI that runs teams of agents with budgets; npm, Node 24.11+)"
+  echo "9. Gas Town (orchestrator: gt runs many Claude Code/Codex agents in tmux; pinned release binaries)"
+  echo "10. None (Default)"
+  echo -n "Enter your choice (1-10)(Default: 10) (multiple choices separated by commas): "
   read editor_choice
-  EDITOR_CHOICES=($(parse_choices "${editor_choice:-8}"))
+  EDITOR_CHOICES=($(parse_choices "${editor_choice:-10}"))
 
   echo ""
   ask_vibe_coding
@@ -391,8 +393,74 @@ install_sops() {
   rm -rf "$tmp"
 }
 
+# Gas Town (github.com/gastownhall/gastown): `gt` coordinates many Claude Code /
+# Codex agents in tmux, with Beads (`bd`) tracking work in Dolt. No apt package,
+# so pinned release tarballs, each checked against the sha256 recorded here (gt's
+# and bd's match their projects' checksums files). gt 1.2.x accepts exactly
+# bd 1.0.4 and needs Dolt >= 2.0.7. All three need only libc.
+GASTOWN_VERSION="1.2.1"
+BEADS_VERSION="1.0.4"
+DOLT_VERSION="2.7.2"
+gastown_sha256() {
+  case "$1" in
+    gastown_1.2.1_linux_amd64.tar.gz) echo cc81f0a55c1f30986759ec8a924e232316c1532900d61af241965ebc0127eb05 ;;
+    gastown_1.2.1_linux_arm64.tar.gz) echo 955066db97c1782935bf6413fd5ad9dc3c699a76a5b38eb34c0f192484a240d4 ;;
+    beads_1.0.4_linux_amd64.tar.gz) echo 643e602e27f666c8726abff0f22001e2b5883988fa960204bde20a3129d448a5 ;;
+    beads_1.0.4_linux_arm64.tar.gz) echo 48cdf571cd8b64bae81da829c1309e402bc12e6a4cc6b87606dfc9220b7ece60 ;;
+    dolt-linux-amd64.tar.gz) echo 72825a65d96bf0a0967ec408ad43bc21afc9b1c899b84cb84344a35f567fb11f ;;
+    dolt-linux-arm64.tar.gz) echo 5498898fdb4b93ce69deb9e32fb9e0fbaceb734657e6013afc0e914ae9c10afe ;;
+  esac
+}
+# Usage: _fetch_checked URL NAME MEMBER DEST  (download, verify, extract one file)
+_fetch_checked() {
+  local url="$1" name="$2" member="$3" dest="$4" tmp sum
+  sum=$(gastown_sha256 "$name")
+  [[ -n "$sum" ]] || { note_problem "Gas Town: no pinned checksum for $name"; return 1; }
+  tmp=$(mktemp -d)
+  if curl -fsSL "$url" -o "$tmp/$name" &&
+     echo "$sum  $tmp/$name" | sha256sum --check --status - &&
+     tar -xzf "$tmp/$name" -C "$tmp" "$member"; then
+    mkdir -p "$(dirname "$dest")" && install -m 0755 "$tmp/$member" "$dest"
+  else
+    note_problem "Gas Town: $name failed to download or its checksum did not match; not installed"
+    rm -rf "$tmp"; return 1
+  fi
+  rm -rf "$tmp"
+}
+install_gastown() {
+  local arch bin="$HOME/.local/bin"
+  arch=$(dpkg --print-architecture 2>/dev/null || echo amd64)
+  if [[ "$arch" != amd64 && "$arch" != arm64 ]]; then
+    note_problem "Gas Town: no release binaries for $arch"; return 1
+  fi
+  if is_dry_run; then
+    echo "  [dry-run] gt $GASTOWN_VERSION, bd $BEADS_VERSION, dolt $DOLT_VERSION ($arch): download, check pinned sha256, install to ~/.local/bin"
+    return 0
+  fi
+  apt_install tmux git sqlite3
+  if [[ -x "$bin/gt" ]]; then
+    echo "gt is already in ~/.local/bin."
+  else
+    _fetch_checked "https://github.com/gastownhall/gastown/releases/download/v$GASTOWN_VERSION/gastown_${GASTOWN_VERSION}_linux_$arch.tar.gz" \
+      "gastown_${GASTOWN_VERSION}_linux_$arch.tar.gz" gt "$bin/gt" || return 1
+  fi
+  if [[ -x "$bin/bd" ]]; then
+    echo "bd is already in ~/.local/bin."
+  else
+    _fetch_checked "https://github.com/steveyegge/beads/releases/download/v$BEADS_VERSION/beads_${BEADS_VERSION}_linux_$arch.tar.gz" \
+      "beads_${BEADS_VERSION}_linux_$arch.tar.gz" bd "$bin/bd" || return 1
+  fi
+  if command -v dolt &>/dev/null; then
+    echo "dolt is already installed ($(command -v dolt))."
+  else
+    _fetch_checked "https://github.com/dolthub/dolt/releases/download/v$DOLT_VERSION/dolt-linux-$arch.tar.gz" \
+      "dolt-linux-$arch.tar.gz" "dolt-linux-$arch/bin/dolt" "$bin/dolt" || return 1
+  fi
+  note_next_step "Gas Town: gt install ~/gt --git && cd ~/gt && gt up && gt doctor. Its workers run Claude Code with permissions skipped and a daemon keeps running (gt down stops it)"
+}
+
 install_editors_and_agents() {
-  if has_choice 8 "${EDITOR_CHOICES[@]}"; then
+  if has_choice 10 "${EDITOR_CHOICES[@]}"; then
     echo "No code editor or agent selected. Skipping."
     return
   fi
@@ -418,6 +486,11 @@ install_editors_and_agents() {
         # ~/.local prefix: no sudo, and ~/.local/bin is on PATH via the dotfiles
         install_orca "$HOME/.local"
         ;;
+      8)
+        apt_install nodejs npm
+        install_paperclip "$HOME/.local"
+        ;;
+      9) install_gastown ;;
       *) echo "Invalid choice: $choice" ;;
     esac
   done

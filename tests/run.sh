@@ -420,19 +420,48 @@ if [[ "$OS" == Linux ]]; then
   check "linux/harden.sh --check runs on real Linux without errors" harden_linux_runs
 fi
 
+echo "== Gas Town installer (Linux)"
+# Pinned sums are complete; a matching archive installs, a mismatch installs nothing
+gastown_fetch_checked() {
+  local d="$WORK/gtfetch"; mkdir -p "$d/src"
+  printf '#!/bin/sh\necho gt\n' > "$d/src/gt"; chmod +x "$d/src/gt"
+  tar -czf "$d/fixture.tar.gz" -C "$d/src" gt
+  bash -c '
+    source "$1" >/dev/null 2>&1 || exit 1
+    d="$2"; problems=0
+    for a in amd64 arm64; do
+      for n in "gastown_${GASTOWN_VERSION}_linux_$a.tar.gz" "beads_${BEADS_VERSION}_linux_$a.tar.gz" "dolt-linux-$a.tar.gz"; do
+        [[ "$(gastown_sha256 "$n")" =~ ^[0-9a-f]{64}$ ]] || { echo "no pinned sum for $n"; exit 6; }
+      done
+    done
+    note_problem() { problems=$((problems + 1)); }
+    curl() { local o; while [[ $# -gt 0 ]]; do [[ "$1" == -o ]] && { o="$2"; shift; }; shift; done; cp "$d/fixture.tar.gz" "$o"; }
+    good=$(sha256sum "$d/fixture.tar.gz" | cut -d" " -f1)
+    gastown_sha256() { case "$1" in good.tar.gz) echo "$good" ;; bad.tar.gz) printf "%064d\n" 0 ;; esac; }
+    _fetch_checked https://x/good.tar.gz good.tar.gz gt "$d/out/good" && [[ -x "$d/out/good" ]] || { echo "good archive not installed"; exit 2; }
+    _fetch_checked https://x/bad.tar.gz bad.tar.gz gt "$d/out/bad" && { echo "bad archive accepted"; exit 3; }
+    [[ ! -e "$d/out/bad" && $problems -eq 1 ]] || { echo "bad archive installed or not reported"; exit 4; }
+  ' _ "$REPO/linux/initial_linux_setup.sh" "$d"
+}
+check "gastown: pinned sums complete; checksum mismatch installs nothing" gastown_fetch_checked
+
 echo "== Setup dry runs"
 # Everything the setup asks comes first; after "Preferences saved" nothing may prompt
 no_prompts_after() { ! sed -n '/Preferences saved/,$p' "$1" | grep -qE '\(y/n\)|Enter your choice'; }
 if [[ "$OS" == Darwin ]]; then
   mac_dry() {
-    printf '10\n6\n7\n10\n9\nn\n13\n5\ny\nn\ny\ny\ny\n' | DRY_RUN=1 /bin/bash "$REPO/macos/initial_macos_setup.sh" > "$WORK/mac.log" 2>&1 &&
-      no_prompts_after "$WORK/mac.log"
+    # 10,11: Paperclip and Gas Town
+    printf '10,11\n6\n7\n10\n9\nn\n13\n5\ny\nn\ny\ny\ny\n' | DRY_RUN=1 /bin/bash "$REPO/macos/initial_macos_setup.sh" > "$WORK/mac.log" 2>&1 &&
+      no_prompts_after "$WORK/mac.log" &&
+      grep -q "paperclipai@" "$WORK/mac.log" && grep -qE "gastown" "$WORK/mac.log"
   }
   check "macOS setup dry run: exits 0, no prompts after the questions" mac_dry
 fi
 linux_dry() {
-  printf '8\n6\n3\n13\nn\ny\ny\n' | SHELL=/bin/bash DRY_RUN=1 bash "$REPO/linux/initial_linux_setup.sh" > "$WORK/linux.log" 2>&1 &&
-    no_prompts_after "$WORK/linux.log"
+  # 8,9: Paperclip and Gas Town
+  printf '8,9\n6\n3\n13\nn\ny\ny\n' | SHELL=/bin/bash DRY_RUN=1 bash "$REPO/linux/initial_linux_setup.sh" > "$WORK/linux.log" 2>&1 &&
+    no_prompts_after "$WORK/linux.log" &&
+    grep -q "paperclipai@" "$WORK/linux.log" && grep -q "gt 1.2.1, bd 1.0.4" "$WORK/linux.log"
 }
 check "Linux setup dry run: exits 0, no prompts after the questions" linux_dry
 

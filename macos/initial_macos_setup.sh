@@ -174,8 +174,10 @@ gather_user_preferences() {
   echo "7. Hermes Agent (Nous Research, CLI)"
   echo "8. DeepSeek Harness (desktop app, Apple Silicon only)"
   echo "9. Orca (runs Codex/Claude/Cursor as observable lanes for an orchestrator; npm)"
-  echo "10. None"
-  echo -n "Enter your choice (1-10)(Default: 2) (multiple choices separated by commas): "
+  echo "10. Paperclip (orchestrator: a local web UI that runs teams of agents with budgets; npm)"
+  echo "11. Gas Town (orchestrator: gt runs many Claude Code/Codex agents in tmux; Homebrew)"
+  echo "12. None"
+  echo -n "Enter your choice (1-12)(Default: 2) (multiple choices separated by commas): "
   read editor_choice
   EDITOR_CHOICES=($(parse_choices "${editor_choice:-2}"))
 
@@ -384,7 +386,7 @@ install_cloud_drives() {
 install_gui_apps() {
   echo "Installing selected GUI applications..."
 
-  if has_choice 10 "${EDITOR_CHOICES[@]}"; then
+  if has_choice 12 "${EDITOR_CHOICES[@]}"; then
     echo "No code editor or agent selected. Skipping."
   else
     for choice in "${EDITOR_CHOICES[@]}"; do
@@ -406,6 +408,16 @@ install_gui_apps() {
         9)
           install_formula node
           install_orca
+          ;;
+        10)
+          install_formula node
+          install_paperclip
+          ;;
+        11)
+          # Brings bd (Beads) and Dolt; tmux runs its agents
+          install_formula tmux
+          install_formula gastown
+          note_next_step "Gas Town: gt install ~/gt --git && cd ~/gt && gt up && gt doctor. Its workers run Claude Code with permissions skipped and a daemon keeps running (gt down stops it). Homebrew ships gastown 1.1.0; 1.2.x is upstream"
           ;;
         *) echo "Invalid choice: $choice" ;;
       esac

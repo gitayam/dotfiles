@@ -103,6 +103,49 @@ install_orca() {
   note_next_step "Orca: run 'orca agents' to see which of Codex/Claude/Cursor it can drive"
 }
 
+# Paperclip (github.com/paperclipai/paperclip, npm "paperclipai"): a local control
+# plane (web UI on 127.0.0.1:3100, embedded PostgreSQL) that runs teams of Claude
+# Code, Codex, Cursor, OpenCode or Hermes agents with goals and budgets. Pinned,
+# and its ~440 dependencies are capped with npm --before, so a version published
+# after PAPERCLIP_BEFORE can't slip in. Install scripts are skipped; the one it
+# needs, embedded PostgreSQL's (it only recreates the library symlinks listed in
+# its own JSON file; without them postgres can't load libzstd), is run by hand.
+# The skipped ones fetch Copilot/OpenCode harness binaries. Bump both values
+# together after reading the release notes.
+PAPERCLIP_VERSION="2026.1106.0"
+PAPERCLIP_BEFORE="2026-11-08T00:00:00Z"
+# Usage: install_paperclip [npm prefix]
+install_paperclip() {
+  local prefix="$1" root pkg major minor hydrated=0
+  local -a npm_prefix=()
+  [[ -n "$prefix" ]] && npm_prefix=(--prefix "$prefix")
+  if is_dry_run; then
+    echo "  [dry-run] npm install -g ${npm_prefix[*]} --ignore-scripts --before $PAPERCLIP_BEFORE paperclipai@$PAPERCLIP_VERSION, then embedded PostgreSQL's symlink step"
+    return 0
+  fi
+  command -v npm &>/dev/null || { note_problem "Paperclip: npm not found (install Node.js first)"; return 1; }
+  IFS=. read -r major minor _ < <(node -v 2>/dev/null | tr -d v)
+  if (( ${major:-0} < 24 || (${major:-0} == 24 && ${minor:-0} < 11) )); then
+    note_next_step "Paperclip: needs Node.js 24.11+ (found $(node -v 2>/dev/null || echo none)); install a newer Node, then re-run this setup"
+    return 1
+  fi
+  if npm ls -g "${npm_prefix[@]}" "paperclipai@$PAPERCLIP_VERSION" &>/dev/null; then
+    echo "Paperclip $PAPERCLIP_VERSION is already installed."
+    return 0
+  fi
+  echo "Installing Paperclip $PAPERCLIP_VERSION..."
+  npm install -g "${npm_prefix[@]}" --ignore-scripts --no-fund --no-audit --before "$PAPERCLIP_BEFORE" \
+    "paperclipai@$PAPERCLIP_VERSION" ||
+    { note_problem "Paperclip: npm install of paperclipai@$PAPERCLIP_VERSION failed"; return 1; }
+  root="$(npm root -g "${npm_prefix[@]}")/paperclipai"
+  while IFS= read -r pkg; do
+    (cd "$pkg" && node scripts/hydrate-symlinks.js) && hydrated=1
+  done < <(find "$root" -type d -path '*/@embedded-postgres/*' -prune -exec test -f '{}/scripts/hydrate-symlinks.js' \; -print 2>/dev/null)
+  [[ $hydrated -eq 1 ]] ||
+    note_problem "Paperclip: embedded PostgreSQL's symlink step not found; 'paperclipai onboard' may fail to start its database"
+  note_next_step "Paperclip: run 'paperclipai onboard --yes', then open http://127.0.0.1:3100 (keep it on loopback; never publish port 3100). Telemetry is on unless DO_NOT_TRACK=1. Back up ~/.paperclip/instances/default/secrets/master.key"
+}
+
 # Symlink src to dst unless something is already there. Never overwrites.
 link_if_missing() {
   local src="$1" dst="$2"
