@@ -311,7 +311,7 @@ gather_user_preferences() {
   echo "  8. OpenSnitch outbound firewall (Linux counterpart of LuLu)"
   echo "  9. Lynis and rkhunter (security audit and rootkit scan)"
   echo "  Privacy"
-  echo "  10. Metadata scrubbing (exiftool, mat2)"
+  echo "  10. Metadata scrubbing and AES archives (exiftool, mat2, 7-Zip)"
   echo "  11. Tor Browser (Flathub, verified publisher)"
   echo "  12. All of the above"
   echo "  13. None"
@@ -455,7 +455,7 @@ install_dfp_tools() {
       7) apt_install yubikey-manager ;;
       8) apt_install opensnitch python3-opensnitch-ui ;;
       9) apt_install lynis rkhunter ;;
-      10) apt_install libimage-exiftool-perl mat2 ;;
+      10) apt_install libimage-exiftool-perl mat2 7zip ;;
       11) flatpak_install org.torproject.torbrowser-launcher "Tor Browser" ;;
       *) echo "Invalid choice: $choice" ;;
     esac

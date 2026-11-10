@@ -21,8 +21,8 @@ jobs:
     steps:
       # v7.0.1, pinned to its commit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Install zsh (Ubuntu)
+      - name: Install zsh and 7-Zip (Ubuntu)
         if: runner.os == 'Linux'
-        run: sudo apt-get install -y -qq zsh
+        run: sudo apt-get install -y -qq zsh 7zip
       - name: Run tests
         run: tests/run.sh -v

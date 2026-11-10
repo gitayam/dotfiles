@@ -264,7 +264,7 @@ gather_user_preferences() {
   echo "  8. LuLu outbound firewall"
   echo "  9. BlockBlock and OverSight (alerts on new launch items and mic/camera use)"
   echo "  Privacy"
-  echo "  10. Metadata scrubbing (exiftool, mat2)"
+  echo "  10. Metadata scrubbing and AES archives (exiftool, mat2, 7-Zip)"
   echo "  11. Tor Browser"
   echo "  12. All of the above"
   echo "  13. None"
@@ -521,6 +521,8 @@ install_dfp_tools() {
       10)
         install_formula exiftool
         install_formula mat2
+        # AES-256 ZIPs for secure_zip
+        install_formula sevenzip
         ;;
       11) install_cask tor-browser ;;
       *) echo "Invalid choice: $choice" ;;

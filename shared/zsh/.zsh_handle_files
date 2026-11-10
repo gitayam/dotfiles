@@ -682,136 +682,20 @@ handle_pdf() {
                 continue
             fi
             
-            # Special case for convert_to_pdf flag with non-PDF files
+            # Non-PDF with -C: hand it to convert_to_pdf (pandoc, LibreOffice,
+            # ImageMagick, by file type). This used to hand-write a minimal PDF
+            # that readers reported as damaged.
             if [[ "$convert_to_pdf" == true && ! "$item" =~ \.pdf$ ]]; then
-                if [[ "$quiet_mode" != true ]]; then
-                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                    echo "📄 Converting non-PDF file to PDF: '$item'"
-                fi
-                
-                # Get the sanitized filename
-                local dirname=$(dirname "$item")
-                local basename=$(basename "$item")
-                local extension="${basename##*.}"
-                local filename="${basename%.*}"
-                
-                # Better sanitization: replace spaces with underscores first, then remove special chars
-                local sanitized_name=""
-                if [[ "$sanitize" == true || "$rename_file" == true ]]; then
-                    #remove (Z-Library) from the filename first 
-                    sanitized_name=$(echo "$filename" | sed 's/(Z-Library)//g')
-                    # Replace spaces with underscores, then remove other special characters
-                    sanitized_name=$(echo "$sanitized_name" | tr ' ' '_' | tr -cd '[:alnum:]._-')
-                    # Replace + and other special chars with underscore
-                    sanitized_name=$(echo "$sanitized_name" | tr '+' '_')
-                    # Replace double underscores with single underscore
-                    while [[ "$sanitized_name" == *__* ]]; do
-                        sanitized_name=${sanitized_name//__/_}
-                    done
-                    
-                    # Log the sanitization if in verbose mode
-                    if [[ "$quiet_mode" != true ]]; then
-                        echo "🧹 Sanitizing filename: '$filename' → '${sanitized_name}'"
-                    fi
-                else
-                    sanitized_name="$filename"
-                fi
-                
-                # Create output path
-                local output_pdf="${dirname}/${sanitized_name}.pdf"
-                
-                # Create PDF directly with minimal dependencies
-                if [[ "$quiet_mode" != true ]]; then
-                    echo "🔄 Converting to PDF..."
-                fi
-                
-                # Get file content
-                local content=$(cat "$item" | tr '\n' ' ' | tr '"' "'" | sed 's/(/\\(/g' | sed 's/)/\\)/g')
-                
-                # Create simple PDF file using printf instead of heredoc
-                printf '%%PDF-1.4\n' > "$output_pdf"
-                printf '1 0 obj\n' >> "$output_pdf"
-                printf '<< /Title (%s) /Creator (handle_pdf) /Producer (Simple PDF Creator) >>\n' "$sanitized_name" >> "$output_pdf"
-                printf 'endobj\n' >> "$output_pdf"
-                printf '2 0 obj\n' >> "$output_pdf"
-                printf '<< /Length 150 >>\n' >> "$output_pdf"
-                printf 'stream\n' >> "$output_pdf"
-                printf 'BT\n' >> "$output_pdf"
-                printf '/F1 12 Tf\n' >> "$output_pdf"
-                printf '100 700 Td\n' >> "$output_pdf"
-                printf '(File content from: %s) Tj\n' "$basename" >> "$output_pdf"
-                printf '0 -20 Td\n' >> "$output_pdf"
-                printf '(%s) Tj\n' "$content" >> "$output_pdf"
-                printf 'ET\n' >> "$output_pdf"
-                printf 'endstream\n' >> "$output_pdf"
-                printf 'endobj\n' >> "$output_pdf"
-                printf '3 0 obj\n' >> "$output_pdf"
-                printf '<< /Type /Catalog /Pages 4 0 R >>\n' >> "$output_pdf"
-                printf 'endobj\n' >> "$output_pdf"
-                printf '4 0 obj\n' >> "$output_pdf"
-                printf '<< /Type /Pages /Kids [5 0 R] /Count 1 >>\n' >> "$output_pdf"
-                printf 'endobj\n' >> "$output_pdf"
-                printf '5 0 obj\n' >> "$output_pdf"
-                printf '<< /Type /Page /Parent 4 0 R /MediaBox [0 0 612 792] /Contents 2 0 R >>\n' >> "$output_pdf"
-                printf 'endobj\n' >> "$output_pdf"
-                printf 'xref\n' >> "$output_pdf"
-                printf '0 6\n' >> "$output_pdf"
-                printf '0000000000 65535 f\n' >> "$output_pdf"
-                printf '0000000009 00000 n\n' >> "$output_pdf"
-                printf '0000000096 00000 n\n' >> "$output_pdf"
-                printf '0000000296 00000 n\n' >> "$output_pdf"
-                printf '0000000345 00000 n\n' >> "$output_pdf"
-                printf '0000000402 00000 n\n' >> "$output_pdf"
-                printf 'trailer\n' >> "$output_pdf"
-                printf '<< /Size 6 /Root 3 0 R /Info 1 0 R >>\n' >> "$output_pdf"
-                printf 'startxref\n' >> "$output_pdf"
-                printf '492\n' >> "$output_pdf"
-                printf '%%%%EOF\n' >> "$output_pdf"
-                
-                # Check if the PDF was created successfully
-                if [[ -f "$output_pdf" ]]; then
-                    if [[ "$quiet_mode" != true ]]; then
-                        echo "✅ PDF created: $output_pdf"
-                    fi
-                    
-                    # Handle original file (delete unless keep_originals is true)
-                    if [[ "$keep_originals" != true ]]; then
-                        if [[ "$prompt_user" == true ]]; then
-                            echo -n "❓ Delete original file '$item'? (y/n): "
-                            read delete_original
-                            if [[ $delete_original =~ ^[Yy]$ ]]; then
-                                rm -f "$item"
-                                if [[ "$quiet_mode" != true ]]; then
-                                    echo "🗑️ Original file deleted."
-                                fi
-                            else
-                                if [[ "$quiet_mode" != true ]]; then
-                                    echo "💾 Original file kept."
-                                fi
-                            fi
-                        else
-                            # Default: keep the original. This converter writes a minimal
-                            # hand-built PDF; deleting the source without asking lost data.
-                            if [[ "$quiet_mode" != true ]]; then
-                                echo "💾 Original file kept (use the prompt mode to delete it)."
-                            fi
-                        fi
-                    elif [[ "$quiet_mode" != true ]]; then
-                        echo "💾 Original file kept (--keep option)."
-                    fi
-                    
+                local -a ctp_args=()
+                [[ "$rename_file" == true || "$sanitize" == true ]] && ctp_args+=(-n)
+                [[ "$quiet_mode" == true ]] || echo "📄 Converting '$item' with convert_to_pdf"
+                if convert_to_pdf "${ctp_args[@]}" "$item"; then
                     ((processed_count++))
-                    if [[ "$quiet_mode" != true ]]; then
-                        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                        echo "📋 Summary:"
-                        echo "  - 1 file(s) processed successfully"
-                    fi
-                    continue
                 else
                     echo "❌ Failed to create PDF from: $item"
                     ((failed_count++))
-                    continue
                 fi
+                continue
             fi
             
             # Check if it's a PDF file

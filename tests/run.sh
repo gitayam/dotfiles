@@ -166,6 +166,25 @@ ugr_safe() {
 }
 check "update_git_repos: no code from folder names, cwd kept, no safe.directory pile-up" ugr_safe
 
+zip_aes() {
+  local d="$WORK/zip" sz
+  sz=$(command -v 7zz || command -v 7z)
+  mkdir -p "$d" && echo data > "$d/f.txt"
+  (cd "$d" && printf 'pw-test\npw-test\n' | env -i HOME="$H" PATH="$PATH" bash -c 'source ~/.zsh_encryption; secure_zip out.zip f.txt' >/dev/null 2>&1) || return 1
+  "$sz" l -slt "$d/out.zip" | grep -q 'Method = .*AES-256'
+}
+if command -v 7zz >/dev/null || command -v 7z >/dev/null; then
+  check "secure_zip makes AES-256 archives with 7-Zip" zip_aes
+fi
+zip_warns() {
+  local d="$WORK/zipw"; mkdir -p "$d/bin" && echo data > "$d/f.txt"
+  # Hide 7-Zip so the ZipCrypto fallback runs; it must say it is weak
+  (cd "$d" && env -i HOME="$H" PATH=/usr/bin:/bin bash -c 'source ~/.zsh_encryption; secure_zip out.zip f.txt' </dev/null 2>&1) | grep -q 'ZipCrypto encryption is weak'
+}
+if ! [[ -x /usr/bin/7zz || -x /usr/bin/7z || -x /bin/7z ]]; then
+  check "secure_zip warns when it falls back to weak ZipCrypto" zip_warns
+fi
+
 echo "== git wip"
 wip_setup() {
   local d="$WORK/wip"

@@ -1533,7 +1533,7 @@ secure_delete() {
     return $exit_code
 }
 
-# Create a password-protected zip archive
+# Create a password-protected zip archive (AES-256 with 7-Zip; weak ZipCrypto without it)
 secure_zip() {
     if [[ $# -lt 2 || "$1" == "-h" || "$1" == "--help" ]]; then
         echo "Usage: secure_zip [options] [zipfile] [files/directories...]"
@@ -1616,6 +1616,31 @@ secure_zip() {
         fi
     fi
     
+    # AES-256 through 7-Zip when it's installed. `zip -e` uses ZipCrypto,
+    # which known-plaintext attacks break; it is only the fallback.
+    local sevenzip="" candidate
+    for candidate in 7zz 7z; do
+        command -v "$candidate" &>/dev/null && { sevenzip="$candidate"; break; }
+    done
+    if [[ -n "$sevenzip" ]]; then
+        rm -f "$zipfile"  # overwrite was confirmed above; 7z would add to it
+        # -p with no value: 7-Zip asks for the password, so it is never in argv
+        local sz_args=(a -tzip -mem=AES256 "-mx=$compression_level" -p)
+        for pattern in "${exclude_patterns[@]}"; do
+            sz_args+=("-xr!$pattern")
+        done
+        if "$sevenzip" "${sz_args[@]}" "$zipfile" "${files[@]}" >/dev/null; then
+            chmod 600 "$zipfile"
+            echo "Created AES-256 encrypted ZIP: $zipfile"
+            echo "Open it with 7-Zip, Keka or WinRAR (macOS Archive Utility can't open AES ZIPs)."
+            return 0
+        fi
+        echo "Error: Failed to create archive"
+        return 1
+    fi
+    echo "⚠️  7-Zip not found: using zip -e, whose ZipCrypto encryption is weak." >&2
+    echo "   Install 7-Zip for AES-256 (brew install sevenzip / apt install 7zip), or use age_encrypt." >&2
+
     # Build zip command
     local zip_args=("-e" "-$compression_level")
     
