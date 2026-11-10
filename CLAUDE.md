@@ -81,7 +81,7 @@ Interactive sync from this repo's `shared/zsh/` (the canonical copies) to `~/.zs
 
 For each differing file it asks before overwriting and keeps a timestamped backup. `scripts/sync_mac_dotfiles.sh` is a stub that runs it. `macos/.zshrc` is a stale copy; edit `shared/zsh/.zshrc`.
 
-The new-Mac bootstrap is `macos/initial_macos_setup.sh` (alias `initial-install`): Homebrew formulae and casks, IrregularChat bookmarks file, macOS security/defaults, then the sync above. Re-runnable; `DRY_RUN=1` prints brew commands instead of running them. It skips casks Homebrew has disabled and lists every skipped or failed item at the end.
+The new-Mac bootstrap is `macos/initial_macos_setup.sh` (alias `initial-install`): Homebrew formulae and casks, IrregularChat bookmarks file, macOS security/defaults, then the sync above. All questions come first, then one sudo prompt (kept alive), then it runs unattended with `HOMEBREW_NO_ASK=1`; only FileVault, if chosen, asks again at the very end. Re-runnable; `DRY_RUN=1` asks the questions but only prints brew commands and skips sudo, settings and sync. It skips casks Homebrew has disabled and lists every skipped or failed item at the end.
 
 ---
 

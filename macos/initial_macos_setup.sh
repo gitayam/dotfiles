@@ -2,8 +2,13 @@
 # Initial macOS setup: Homebrew packages, apps, bookmarks, system settings,
 # then the zsh dotfile sync. Safe to re-run: installed packages are skipped.
 #
+# Every question is asked up front, then the password once; after that the run
+# is unattended. The one exception is FileVault, which needs the user and runs
+# last only if they chose it.
+#
 # Runs on the stock /bin/bash (3.2), so no associative arrays.
-# DRY_RUN=1 prints the brew commands instead of running them.
+# DRY_RUN=1 asks the questions, prints the brew commands instead of running
+# them, and skips sudo, system settings and the dotfile sync.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -15,12 +20,39 @@ AI_CHOICES=()
 CLOUD_CHOICES=()
 INSTALL_PROTON=""
 INSTALL_MULLVAD=""
+MICROSOFT_CHOICES=()
+APPLY_SETTINGS=""
+DISABLE_REMOTE=""
+ENABLE_FILEVAULT="n"
+SYNC_ANSWER=""
+
+# Homebrew 7 asks "Do you want to proceed?" before every install. Older
+# versions ignore this variable.
+export HOMEBREW_NO_ASK=1
+export HOMEBREW_NO_ENV_HINTS=1
 
 # Problems collected during the run, printed together at the end
 PROBLEMS=()
 
 note_problem() {
   PROBLEMS+=("$1")
+}
+
+is_dry_run() {
+  [[ "${DRY_RUN:-0}" == "1" ]]
+}
+
+# Ask for the password once and keep the sudo ticket fresh, so Homebrew's pkg
+# installers and the system settings never stop to ask again.
+start_sudo_keepalive() {
+  echo "Enter your Mac password once. The rest of the setup runs without questions."
+  if ! sudo -v; then
+    echo "❌ Setup needs administrator rights. Re-run as an admin user."
+    exit 1
+  fi
+  ( while kill -0 "$$" 2>/dev/null; do sudo -n true 2>/dev/null; sleep 50; done ) &
+  SUDO_KEEPALIVE_PID=$!
+  trap 'kill "$SUDO_KEEPALIVE_PID" 2>/dev/null' EXIT
 }
 
 run_brew() {
@@ -115,6 +147,20 @@ print("|".join([status, reason, replacement, apps[0] if apps else ""]))
   run_brew install --cask "$token" || note_problem "cask $token: brew install failed (see output above)"
 }
 
+# Install a command-line agent unless the command is already on PATH. Their
+# native installers (claude, hermes) put them in ~/.local/bin, outside Homebrew.
+# Usage: install_cli <command> <brew name> --cask|--formula
+install_cli() {
+  local cmd="$1" name="$2" kind="$3"
+  if command -v "$cmd" &>/dev/null; then
+    echo "$cmd is already installed ($(command -v "$cmd"))."
+  elif [[ "$kind" == "--cask" ]]; then
+    install_cask "$name"
+  else
+    install_formula "$name"
+  fi
+}
+
 # Gather all user preferences at the beginning
 gather_user_preferences() {
   echo "======================================"
@@ -122,14 +168,18 @@ gather_user_preferences() {
   echo "======================================"
   echo ""
 
-  # Code Editor Selection
-  echo "Which code editor(s) would you like to install?"
+  # Code Editor and Coding Agent Selection
+  echo "Which code editors and coding agents would you like to install?"
   echo "1. Visual Studio Code"
   echo "2. Cursor (Default)"
-  echo "3. Windsurf"
+  echo "3. Devin Desktop (formerly Windsurf)"
   echo "4. Claude Code (CLI)"
-  echo "5. None"
-  echo -n "Enter your choice (1-5)(Default: 2) (multiple choices separated by commas): "
+  echo "5. Codex (OpenAI, CLI)"
+  echo "6. OpenCode (CLI)"
+  echo "7. Hermes Agent (Nous Research, CLI)"
+  echo "8. DeepSeek Harness (desktop app, Apple Silicon only)"
+  echo "9. None"
+  echo -n "Enter your choice (1-9)(Default: 2) (multiple choices separated by commas): "
   read editor_choice
   EDITOR_CHOICES=($(parse_choices "${editor_choice:-2}"))
 
@@ -174,6 +224,50 @@ gather_user_preferences() {
   echo -n "Do you want to install Mullvad apps (MullvadVPN, Browser)? (y/n)(Default: n): "
   read INSTALL_MULLVAD
   INSTALL_MULLVAD=${INSTALL_MULLVAD:-n}
+
+  echo ""
+
+  # Microsoft Apps Selection
+  echo "Which Microsoft apps would you like to install?"
+  echo "1. Office (Word, Excel, PowerPoint)"
+  echo "2. Outlook"
+  echo "3. Teams"
+  echo "4. OneNote"
+  echo "5. None"
+  echo -n "Enter your choice (1-5)(Default: 5) (multiple choices separated by commas): "
+  read microsoft_choice
+  MICROSOFT_CHOICES=($(parse_choices "${microsoft_choice:-5}"))
+
+  echo ""
+
+  # System settings
+  echo -n "Do you want to apply recommended macOS system configurations? (y/n)(Default: y): "
+  read APPLY_SETTINGS
+  APPLY_SETTINGS=${APPLY_SETTINGS:-y}
+
+  if [[ "$APPLY_SETTINGS" == "y" ]]; then
+    echo ""
+    echo "⚠️  Disabling remote login turns off SSH and Screen Sharing."
+    echo "If you are connected remotely (SSH, VNC, etc.), you will lose connection!"
+    echo "This does NOT affect Tailscale, Cloudflare Tunnel, VPNs or web-based remote access."
+    echo -n "Do you want to disable remote login services? (y/yes/n/no)(Default: n): "
+    read DISABLE_REMOTE
+    DISABLE_REMOTE=${DISABLE_REMOTE:-n}
+
+    if ! fdesetup status | grep -q "FileVault is On"; then
+      echo ""
+      echo "FileVault disk encryption is off. Turning it on needs you at the end of setup:"
+      echo "you type your login password and must save the recovery key it shows."
+      echo -n "Turn on FileVault at the end of setup? (y/n)(Default: y): "
+      read ENABLE_FILEVAULT
+      ENABLE_FILEVAULT=${ENABLE_FILEVAULT:-y}
+    fi
+  fi
+
+  echo ""
+  echo -n "Replace your shell config files (~/.zshrc, ~/.zsh_*) with this repo's versions? Backups are kept. (y/n)(Default: y): "
+  read SYNC_ANSWER
+  SYNC_ANSWER=${SYNC_ANSWER:-y}
 
   echo ""
   echo "======================================"
@@ -224,20 +318,23 @@ install_cloud_drives() {
 install_gui_apps() {
   echo "Installing selected GUI applications..."
 
-  if has_choice 5 "${EDITOR_CHOICES[@]}"; then
-    echo "No code editor selected. Skipping code editor installation."
+  if has_choice 9 "${EDITOR_CHOICES[@]}"; then
+    echo "No code editor or agent selected. Skipping."
   else
     for choice in "${EDITOR_CHOICES[@]}"; do
       case $choice in
         1) install_cask visual-studio-code ;;
         2) install_cask cursor ;;
-        3) install_cask windsurf ;;
-        4)
-          # The native installer puts `claude` in ~/.local/bin, outside Homebrew
-          if command -v claude &>/dev/null; then
-            echo "Claude Code is already installed ($(command -v claude))."
+        3) install_cask devin-desktop ;;
+        4) install_cli claude claude-code --cask ;;
+        5) install_cli codex codex --cask ;;
+        6) install_cli opencode opencode --formula ;;
+        7) install_cli hermes hermes-agent --formula ;;
+        8)
+          if [[ "$ARCH" == "arm64" ]]; then
+            install_cask deepseek-harness
           else
-            install_cask claude-code
+            echo "DeepSeek Harness needs Apple Silicon. Skipping."
           fi
           ;;
         *) echo "Invalid choice: $choice" ;;
@@ -283,6 +380,26 @@ install_gui_apps() {
     install_cask mullvad-vpn "Mullvad VPN.app"
     install_cask mullvad-browser
   fi
+
+  # Microsoft casks are pkg installers, so name the app bundle for the
+  # installed-outside-Homebrew check
+  if has_choice 5 "${MICROSOFT_CHOICES[@]}"; then
+    echo "No Microsoft apps selected. Skipping Microsoft installation."
+  else
+    for choice in "${MICROSOFT_CHOICES[@]}"; do
+      case $choice in
+        1)
+          install_cask microsoft-word "Microsoft Word.app"
+          install_cask microsoft-excel "Microsoft Excel.app"
+          install_cask microsoft-powerpoint "Microsoft PowerPoint.app"
+          ;;
+        2) install_cask microsoft-outlook "Microsoft Outlook.app" ;;
+        3) install_cask microsoft-teams "Microsoft Teams.app" ;;
+        4) install_cask microsoft-onenote "Microsoft OneNote.app" ;;
+        *) echo "Invalid choice: $choice" ;;
+      esac
+    done
+  fi
 }
 
 # Write the community bookmarks as a standard bookmarks file that every browser
@@ -290,6 +407,10 @@ install_gui_apps() {
 # runs, and adding them again on every re-run creates duplicates.
 write_bookmarks_file() {
   local bookmarks_file="$HOME/Downloads/irregularchat-bookmarks.html"
+  if is_dry_run; then
+    echo "[dry-run] Would write IrregularChat bookmarks to $bookmarks_file"
+    return 0
+  fi
   mkdir -p "$HOME/Downloads"
   cat > "$bookmarks_file" <<'HTML'
 <!DOCTYPE NETSCAPE-Bookmark-file-1>
@@ -319,12 +440,12 @@ configure_macos_settings() {
   echo "======================================"
   echo ""
 
-  echo -n "Do you want to apply recommended macOS system configurations? (y/n)(Default: y): "
-  read APPLY_SETTINGS
-  APPLY_SETTINGS=${APPLY_SETTINGS:-y}
-
   if [[ "$APPLY_SETTINGS" != "y" ]]; then
     echo "Skipping macOS system configuration."
+    return
+  fi
+  if is_dry_run; then
+    echo "[dry-run] Skipping macOS system configuration."
     return
   fi
 
@@ -333,13 +454,7 @@ configure_macos_settings() {
   # Security Settings (1-8)
   echo "Configuring security settings..."
 
-  # 1. Enable FileVault disk encryption
-  if ! fdesetup status | grep -q "FileVault is On"; then
-    echo "Enabling FileVault disk encryption..."
-    sudo fdesetup enable -user "$USER" || echo "FileVault setup requires manual completion"
-  else
-    echo "FileVault already enabled"
-  fi
+  # 1. FileVault disk encryption: interactive, so enable_filevault runs it last
 
   # 2. Enable Firewall with stealth mode
   echo "Configuring firewall..."
@@ -355,20 +470,7 @@ configure_macos_settings() {
   defaults write com.apple.screensaver askForPassword -int 1
   defaults write com.apple.screensaver askForPasswordDelay -int 0
 
-  # 5. Disable remote login services
-  echo "Disabling remote services..."
-  echo "⚠️  WARNING: This will disable SSH and Screen Sharing."
-  echo "If you are connected remotely (SSH, VNC, etc.), you will lose connection!"
-  echo "This does NOT affect:"
-  echo "  - Tailscale (uses WireGuard tunnels)"
-  echo "  - Cloudflare Tunnel/Zero Trust"
-  echo "  - VPN connections"
-  echo "  - Web-based remote access tools"
-  echo ""
-  echo -n "Do you want to disable remote login services? (y/yes/n/no)(Default: n): "
-  read DISABLE_REMOTE
-  DISABLE_REMOTE=${DISABLE_REMOTE:-n}
-
+  # 5. Disable remote login services (answered up front)
   if [[ "$DISABLE_REMOTE" =~ ^[Yy]([Ee][Ss])?$ ]]; then
     echo "Disabling remote login and screen sharing..."
     sudo systemsetup -setremotelogin off
@@ -505,13 +607,35 @@ print_summary() {
   echo "======================================"
 }
 
+# Runs after the summary because it needs the user: fdesetup asks for the login
+# password and prints the recovery key.
+enable_filevault() {
+  [[ "$ENABLE_FILEVAULT" =~ ^[Yy] ]] || return 0
+  if is_dry_run; then
+    echo "[dry-run] Would turn on FileVault now."
+    return 0
+  fi
+  echo ""
+  echo "======================================"
+  echo "Last step: turning on FileVault. Your input is needed."
+  echo "Save the recovery key it prints somewhere other than this Mac."
+  echo "======================================"
+  sudo fdesetup enable -user "$USER" ||
+    echo "⚠️  FileVault was not turned on. Use System Settings > Privacy & Security > FileVault."
+}
+
 main() {
   echo "Detected: macOS $(sw_vers -productVersion) on $ARCH"
+
+  gather_user_preferences
+
+  is_dry_run || start_sudo_keepalive
 
   echo "Checking if Homebrew is installed..."
   if ! command -v brew &> /dev/null; then
     echo "Homebrew is not installed. Installing..."
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    # NONINTERACTIVE skips the installer's "Press RETURN"; it uses the sudo ticket above
+    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
     # A fresh install is not on PATH yet
     [[ -x /opt/homebrew/bin/brew ]] && eval "$(/opt/homebrew/bin/brew shellenv)"
     [[ -x /usr/local/bin/brew ]] && eval "$(/usr/local/bin/brew shellenv)"
@@ -521,8 +645,6 @@ main() {
     fi
   fi
 
-  gather_user_preferences
-
   echo "Starting initial install..."
   install_terminal_apps
   install_cloud_drives
@@ -530,11 +652,18 @@ main() {
   write_bookmarks_file
   configure_macos_settings
 
-  echo "Syncing zsh dotfiles to your home directory..."
-  # macos/install.sh syncs from shared/zsh, the canonical copies
-  "$REPO_ROOT/macos/install.sh" || note_problem "dotfile sync failed: run $REPO_ROOT/macos/install.sh"
+  if is_dry_run; then
+    echo "[dry-run] Skipping the dotfile sync."
+  else
+    echo "Syncing zsh dotfiles to your home directory..."
+    # macos/install.sh syncs from shared/zsh, the canonical copies; SYNC_ANSWER
+    # answers its per-file question
+    SYNC_ANSWER="$SYNC_ANSWER" "$REPO_ROOT/macos/install.sh" ||
+      note_problem "dotfile sync failed: run $REPO_ROOT/macos/install.sh"
+  fi
 
   print_summary
+  enable_filevault
 }
 
 # Run only when executed, so the functions can be sourced for testing

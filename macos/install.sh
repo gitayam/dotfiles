@@ -43,7 +43,13 @@ sync_file() {
 
     if ! diff "$system_file" "$repo_file" &> /dev/null; then
         echo "Differences found in $file_name."
-        read -p "Update home directory file with repository version? (y/n): " choice
+        # SYNC_ANSWER (y/n) answers for every file; initial_macos_setup.sh sets it
+        if [[ -n "$SYNC_ANSWER" ]]; then
+            choice="$SYNC_ANSWER"
+            echo "Update home directory file with repository version? $choice (preset)"
+        else
+            read -p "Update home directory file with repository version? (y/n): " choice
+        fi
         if [[ "$choice" == "y" ]]; then
             timestamp=$(date +"%Y%m%d_%H%M%S")
             backup_file="${system_file}.bak_${timestamp}"
