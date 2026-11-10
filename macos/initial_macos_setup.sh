@@ -265,9 +265,12 @@ gather_user_preferences() {
 
   if [[ "$APPLY_SETTINGS" == "y" ]]; then
     echo ""
-    echo "⚠️  Disabling remote login turns off SSH and Screen Sharing."
+    echo "⚠️  Disabling remote login turns off SSH, Screen Sharing and Remote Management."
     echo "If you are connected remotely (SSH, VNC, etc.), you will lose connection!"
-    echo "This does NOT affect Tailscale, Cloudflare Tunnel, VPNs or web-based remote access."
+    echo "SSH over Tailscale stops too, unless you use Tailscale SSH (needs the open-source"
+    echo "tailscaled, not the App Store app). Tailscale itself and Cloudflare Tunnel keep working."
+    echo "Keeping it on hardens SSH instead: keys only and no root login, once you have"
+    echo "~/.ssh/authorized_keys (passwords stay on until then, so you aren't locked out)."
     echo -n "Do you want to disable remote login services? (y/yes/n/no)(Default: n): "
     read DISABLE_REMOTE
     DISABLE_REMOTE=${DISABLE_REMOTE:-n}
@@ -524,71 +527,35 @@ configure_macos_settings() {
 
   echo "Applying macOS system configurations..."
 
-  # Security Settings (1-8)
-  echo "Configuring security settings..."
+  # Security: macos/harden.sh applies the scriptable mSCP/CIS controls and
+  # re-checks each one. Run it with no arguments any time for a read-only report.
+  echo "Applying security hardening..."
+  local harden_flags=(--apply)
+  [[ "$DISABLE_REMOTE" =~ ^[Yy]([Ee][Ss])?$ ]] || harden_flags+=(--keep-remote)
+  local harden_output line
+  harden_output=$("$SCRIPT_DIR/harden.sh" "${harden_flags[@]}")
+  echo "$harden_output"
+  while IFS= read -r line; do
+    case "$line" in
+      # Screen lock and FileVault are handled by the last steps when chosen
+      *screen\ saver*) [[ "$SET_SCREEN_LOCK" =~ ^[Yy] ]] && continue ;;
+      *FileVault*) [[ "$ENABLE_FILEVAULT" =~ ^[Yy] ]] && continue ;;
+    esac
+    case "$line" in
+      MANUAL*) note_next_step "Hardening: ${line#MANUAL }" ;;
+      FAIL*) note_problem "Hardening: ${line#FAIL   }" ;;
+    esac
+  done <<< "$harden_output"
 
-  # 1. FileVault disk encryption: interactive, so enable_filevault runs it last
-
-  # 2. Enable Firewall with stealth mode
-  echo "Configuring firewall..."
-  sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on
-  sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on
-
-  # 3. Disable automatic login
-  echo "Disabling automatic login..."
-  sudo defaults delete /Library/Preferences/com.apple.loginwindow autoLoginUser 2>/dev/null || true
-
-  # 4. Require password immediately after sleep/screensaver: needs the login
-  # password, so finish_steps_needing_user runs it last
-
-  # 5. Disable remote login services (answered up front)
-  if [[ "$DISABLE_REMOTE" =~ ^[Yy]([Ee][Ss])?$ ]]; then
-    echo "Disabling remote login and screen sharing..."
-    # Needs Full Disk Access for the terminal; -f skips its "are you sure" prompt
-    sudo systemsetup -setremotelogin -f off ||
-      note_problem "Remote Login still on: grant your terminal Full Disk Access, or turn it off in System Settings > General > Sharing"
-    sudo launchctl disable system/com.apple.screensharing 2>/dev/null || true
-    echo "✅ Remote services disabled"
-  else
-    echo "⏭️  Keeping remote services enabled"
-  fi
-
-  # 6. Enable secure keyboard entry in Terminal
-  echo "Enabling secure keyboard entry..."
-  defaults write com.apple.terminal SecureKeyboardEntry -bool true
-
-  # 7. Disable Siri data collection and suggestions
-  echo "Disabling Siri data collection..."
-  defaults write com.apple.assistant.support "Assistant Enabled" -bool false
-  defaults write com.apple.lookup.shared LookupSuggestionsDisabled -bool true
-
-  # 8. Enable Gatekeeper
-  echo "Enabling Gatekeeper..."
-  if ! spctl --status 2>/dev/null | grep -q "assessments enabled"; then
-    # --master-enable was renamed --global-enable in macOS 15
-    sudo spctl --global-enable 2>/dev/null || sudo spctl --master-enable
-  fi
-
-  # Privacy & Cleanup (9-11)
-  echo "Configuring privacy settings..."
-
-  # 9. Disable location services for system services
-  echo "Configuring location services..."
-  defaults write com.apple.locationmenu ShowSystemServices -bool false
-
-  # 10. Configure Safari privacy settings. Safari keeps its preferences in a
-  # sandbox container, which the terminal can only write with Full Disk Access.
-  echo "Configuring Safari privacy..."
+  # Safari keeps its preferences in a sandbox container, which the terminal
+  # can only write with Full Disk Access
+  echo "Configuring Safari..."
   if defaults write com.apple.Safari IncludeDevelopMenu -bool true 2>/dev/null; then
     defaults write com.apple.Safari WebKitDeveloperExtrasEnabledPreferenceKey -bool true
   else
     echo "⚠️  Skipped Safari settings: this terminal needs Full Disk Access to write them."
     note_problem "Safari settings skipped: grant your terminal Full Disk Access (System Settings > Privacy & Security), then re-run"
   fi
-
-  # 11. Enable advanced security logging and auditing
-  echo "Enabling security auditing..."
-  sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.auditd.plist 2>/dev/null || true
 
   # Convenience & Performance (12-17)
   echo "Configuring system performance..."
@@ -629,13 +596,11 @@ configure_macos_settings() {
   # System Preferences (18-20)
   echo "Configuring system preferences..."
 
-  # 18. Configure energy settings for optimal performance
-  echo "Configuring power management..."
-  sudo pmset -a displaysleep 10
-  sudo pmset -a sleep 30
-  sudo pmset -a hibernatemode 0
+  # Power settings live in harden.sh: Power Nap off, and on laptops 15 min
+  # battery sleep and no wake-for-network. hibernatemode stays at the macOS
+  # default (0 here dropped the hibernate image on laptops).
 
-  # 19. Set timezone and enable automatic time sync
+  # 19. Set timezone (automatic time sync is in harden.sh)
   echo "Configuring time settings..."
   local timezone="America/New_York"
   if [[ "$(readlink /etc/localtime)" == *"/zoneinfo/$timezone" ]]; then
@@ -644,7 +609,6 @@ configure_macos_settings() {
     # systemsetup prints a harmless "### Error:-99 ... InternetServices.m" line on recent macOS
     sudo systemsetup -settimezone "$timezone" 2>&1 | grep -v '### Error:-99'
   fi
-  sudo sntp -sS time.apple.com
 
   # 20. Configure system-wide text and input preferences
   echo "Configuring text input preferences..."
