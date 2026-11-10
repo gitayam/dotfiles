@@ -1005,7 +1005,8 @@ ssh-doctor() {
   local problems=0 mode f host hosts idfiles io found key
   local cfg="${SSH_DOCTOR_CONFIG:-$HOME/.ssh/config}" cfgdir="$HOME/.ssh/config.d"
   _ssh_doctor_say() { printf '%-5s %s\n' "$1" "$2"; [[ "$1" == FAIL ]] && problems=$((problems + 1)); return 0; }
-  _ssh_doctor_mode() { stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1" 2>/dev/null; }
+  # GNU stat first: on Linux `stat -f` succeeds but reports the filesystem
+  _ssh_doctor_mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1" 2>/dev/null; }
 
   # What ssh/sshd enforce: no group/world write on ~/.ssh, config and
   # authorized_keys; private keys readable by you only

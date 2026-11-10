@@ -88,7 +88,8 @@ if command -v zsh >/dev/null; then
   # Silent and error-free: banners and errors on every shell start were removed
   startup_silent() {
     local out
-    out=$(env -i HOME="$H" TERM=xterm PATH=/usr/bin:/bin:/usr/sbin:/sbin zsh -i -c exit </dev/null 2>&1)
+    # -d: this repo's .zshrc only, not the distro's /etc/zsh files
+    out=$(env -i HOME="$H" TERM=xterm PATH=/usr/bin:/bin:/usr/sbin:/sbin zsh -d -i -c exit </dev/null 2>&1)
     [[ -z "$out" ]] || { echo "$out"; return 1; }
   }
   check "zsh -i starts silently with the repo .zshrc" startup_silent

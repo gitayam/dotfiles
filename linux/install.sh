@@ -70,6 +70,14 @@ for file in "${ZSH_FILES[@]}"; do
     create_symlink "$SHARED_DIR/zsh/$file" "$SYSTEM_DIR/$file"
 done
 
+# Debian/Ubuntu's /etc/zsh/zshrc runs its own compinit unless told not to; our
+# .zshrc runs compinit -i itself, so skip the global one (it doubles startup
+# work and, without -i, can stop to ask about insecure directories)
+if ! grep -qs 'skip_global_compinit' "$SYSTEM_DIR/.zshenv"; then
+    echo "skip_global_compinit=1  # dotfiles: .zshrc runs compinit itself" >> "$SYSTEM_DIR/.zshenv"
+    echo "✓ Added skip_global_compinit=1 to ~/.zshenv"
+fi
+
 # Create symlinks for any Linux-specific files here
 # Example: ln -sf "$SCRIPT_DIR/linux-specific-file" "$SYSTEM_DIR/.linux-specific-file"
 
