@@ -164,9 +164,9 @@ fi
 window="$(served_window "$port" "$model")"
 label="$model@${ssh/-/localhost}"
 # Claude Code's opening request (system prompt, tools, CLAUDE.md, rules, skill
-# and agent lists) is ~27K tokens even with the short system prompt, so a 32K
-# model fails on the first call (measured 2026-11-12). --bare would fit but
-# also drops hooks, including the safety guard.
+# and agent lists) is 24.9K tokens even with the short system prompt (28.7K
+# without), so a 32K model fails on the first call (measured 2026-11-12).
+# --bare would fit but also drops hooks, including the safety guard.
 MIN_WINDOW="${CLAUDE_Z_MIN_WINDOW:-40000}"
 if [ -n "$window" ] && [ "$window" -lt "$MIN_WINDOW" ]; then
   echo "claude-z: z$key has a ${window}-token window; Claude Code needs at least $MIN_WINDOW." >&2

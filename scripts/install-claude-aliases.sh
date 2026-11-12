@@ -97,6 +97,28 @@ if [ "$(uname -s)" = "Darwin" ]; then
     done
 fi
 
+# 5c. macOS: Paperclip's service plist (written by `paperclipai service install`)
+#     has no PATH, so its agents get Apple's Python 3.9 and miss Homebrew tools.
+#     Add one when it's missing and reload the service; reinstalls drop it again,
+#     so this step is idempotent and safe to rerun.
+PAPERCLIP_PLIST="$HOME/Library/LaunchAgents/ing.paperclip.paperclipai.plist"
+if [ "$(uname -s)" = "Darwin" ] && [ -f "$PAPERCLIP_PLIST" ]; then
+    if /usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:PATH" "$PAPERCLIP_PLIST" >/dev/null 2>&1; then
+        echo "✓ Paperclip service already has a PATH"
+    else
+        pc_path="$DOTFILES/shared/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:PATH string $pc_path" "$PAPERCLIP_PLIST"
+        launchctl bootout "gui/$(id -u)/ing.paperclip.paperclipai" 2>/dev/null || true
+        # bootout returns before the old process is gone; bootstrap fails (EIO) until then
+        for _ in $(seq 1 60); do launchctl print "gui/$(id -u)/ing.paperclip.paperclipai" >/dev/null 2>&1 || break; sleep 1; done
+        if launchctl bootstrap "gui/$(id -u)" "$PAPERCLIP_PLIST"; then
+            echo "✓ added PATH to the Paperclip service and reloaded it"
+        else
+            echo "⚠ PATH added; reload with: launchctl bootstrap gui/$(id -u) $PAPERCLIP_PLIST"
+        fi
+    fi
+fi
+
 # 6. Linux: install systemd user unit for LiteLLM autostart.
 #    `cc-vibe` requires litellm running on :4000; without autostart, you'd have to
 #    `nohup ~/.vibe/run-litellm.sh &` after every reboot/login.

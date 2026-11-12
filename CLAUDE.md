@@ -140,9 +140,13 @@ Claude Code is the only coding harness. `shared/zsh/claude-aliases.zsh` defines 
 
 - **Registry:** `shared/llm/models.conf` is the only place a model, port or tunnel target is written. `claude-z` (`shared/bin`, symlinked as `~/.local/bin/claude-z` plus `z1 z2 z2q z2s z2f z2f2 zl`) reads it for tunnels, the Claude Code environment (`claude-z env <key>`) and `zq`. Adding a model means adding a row and a `z<key>` symlink.
 - **Tunnels:** launchd jobs `io.zenithflow.tunnel.<ssh-host>` (`shared/launchd/io.zenithflow.tunnel.plist`) run `claude-z tunnel-run <host>`, one autossh per server carrying every model on it. `scripts/install-claude-aliases.sh` installs them. Logs: `~/Library/Logs/zenithflow-tunnel-<host>.log`.
-- **What claude-z sets** (for the one `claude` process): base URL, a dummy token, the model, every tier alias and `CLAUDE_CODE_SUBAGENT_MODEL` (so `model: sonnet` agents run on the server), `CLAUDE_CODE_MAX_CONTEXT_TOKENS` from vLLM's `max_model_len`, and below 100K the short system prompt and an output cap of window/6. It refuses windows under 40K: Claude Code's opening prompt is ~27K.
+- **What claude-z sets** (for the one `claude` process): base URL, a dummy token, the model, every tier alias and `CLAUDE_CODE_SUBAGENT_MODEL` (so `model: sonnet` agents run on the server), `CLAUDE_CODE_MAX_CONTEXT_TOKENS` from vLLM's `max_model_len`, and below 100K the short system prompt and an output cap of window/6. It refuses windows under 40K: Claude Code's opening prompt is 25–29K (measured).
 - **Qwen models** (`nothink` in the registry) have no reasoning parser on the server; `zq` sends `enable_thinking: false` for them only (GLM gets worse with it).
-- **Paperclip** (launchd `ing.paperclip.paperclipai`, `127.0.0.1:3100`): agents `Claude Cloud` (Opus), `Claude GLM (z1)`, `Claude gpt-oss (z2)` (env from `claude-z env`) and `Hermes GLM (z1)`, all reporting to Claude Cloud, heartbeats off. `paperclipai service install` rewrites its plist without a PATH; re-add `EnvironmentVariables:PATH` (see vibe-coding `lessons-learned/self-hosted-claude-code.md`, items 9–11).
+- **Paperclip** (launchd `ing.paperclip.paperclipai`, `127.0.0.1:3100`): agents use the **legacy runner** (`paperclipai agent create --runner legacy`), so they run the real `claude` CLI with the global agents, rules and safety hook. The default Paperclip Runner is its own agent loop, not Claude Code.
+  - Agents: `Claude Code Cloud (Opus)` (lead) and `Claude Code z1 (GLM)` (`command: claude`, `env` from `claude-z env 1`, explicit `model`), plus `Hermes GLM (z1)` (explicit `model`, empty `provider`). Heartbeats are off.
+  - No z2 agent: gpt-oss posts comments but never marks issues done.
+  - `scripts/install-claude-aliases.sh` re-adds the plist PATH that `paperclipai service install` drops.
+  - Details: vibe-coding `lessons-learned/self-hosted-claude-code.md`, items 9–13.
 - **Hermes:** providers `z1`/`z2` in `~/.hermes/config.yaml` (tunnel ports, `chat_completions`); `h1`/`h2` launch it.
 
 ## Tests
