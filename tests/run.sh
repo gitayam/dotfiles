@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Regression tests for the dotfiles: syntax, shell startup, dots, git-wip,
-# git-inventory, ssh-doctor, harden.sh logic and the setup dry runs.
+# git-inventory, storage-cleanup, ssh-doctor, harden.sh logic and the setup dry runs.
 # Runs on macOS (bash 3.2 compatible) and Linux; CI runs it on both.
 #
 #   tests/run.sh            all tests
@@ -81,6 +81,7 @@ if command -v zsh >/dev/null; then
 fi
 check "launchd plists are valid XML" python3 -c "import plistlib,sys; [plistlib.load(open(f,'rb')) for f in sys.argv[1:]]" "$REPO"/shared/launchd/*.plist
 check "git-inventory compiles" python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$REPO/shared/bin/git-inventory"
+check "storage-cleanup compiles" python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$REPO/shared/bin/storage-cleanup"
 if command -v node >/dev/null; then
   check "secrets scripts parse" bash -c "node --check '$REPO/typescript/sync-secrets.js' && node --check '$REPO/typescript/get-secrets.js'"
   check "orca-lanes parses" node --check "$REPO/shared/bin/orca-lanes"
@@ -496,6 +497,90 @@ expect "git-inventory finds a dirty worktree outside the roots" 'worktree .*outs
 expect "git-inventory reports a broken repo instead of passing it" 'broken .*could not be read' inv_run
 inv_redacts() { inv_run >/dev/null; ! grep -q TOKENVALUE "$I/inv.json"; }
 check "git-inventory redacts credentials in remote URLs" inv_redacts
+
+echo "== storage-cleanup"
+# sc_project <dir> [nm-file]: an old project with a node_modules, everything dated 2020
+sc_project() {
+  mkdir -p "$1/node_modules/pkg"; echo '{}' > "$1/package.json"; echo x > "$1/node_modules/pkg/${2:-index.js}"
+  find "$1" -exec touch -t 202001010000 {} +
+}
+sc_setup() {
+  local d="$WORK/sc"
+  rm -rf "$d"; mkdir -p "$d/home" "$d/roots" "$d/outside/keep"
+  sc_project "$d/roots/old"
+  sc_project "$d/roots/new"; touch "$d/roots/new/package.json"
+  # linked: node_modules is a symlink to data elsewhere, which must survive
+  mkdir -p "$d/roots/linked"; echo '{}' > "$d/roots/linked/package.json"; touch -t 202001010000 "$d/roots/linked/package.json"
+  echo keep > "$d/outside/keep/file"; ln -s "$d/outside/keep" "$d/roots/linked/node_modules"
+  echo "$d"
+}
+SC=$(sc_setup)
+sc_cmd() { HOME="$SC/home" "$REPO/shared/bin/storage-cleanup" "$@"; }
+sc_run() { sc_cmd --only node-modules --root "$SC/roots" "$@"; }
+expect "storage-cleanup dry run lists only the stale project" 'remove 1 of 2 node_modules' sc_run
+sc_dry_keeps() { sc_run >/dev/null; [[ -d "$SC/roots/old/node_modules/pkg" ]]; }
+check "storage-cleanup dry run deletes nothing" sc_dry_keeps
+expect "storage-cleanup counts overlapping roots once" 'remove 1 of 2 node_modules' \
+  sc_run --root "$SC/roots/old"
+sc_apply() {
+  sc_run --apply >/dev/null && [[ ! -e "$SC/roots/old/node_modules" && -d "$SC/roots/new/node_modules/pkg" \
+    && -L "$SC/roots/linked/node_modules" && -f "$SC/outside/keep/file" ]]
+}
+check "storage-cleanup --apply removes stale node_modules only, never through a symlink" sc_apply
+
+# Each layout below must be kept; the run must report nothing to remove
+sc_keeps() { local r="$1"; shift; sc_cmd --only node-modules --root "$r" "$@" | grep -q 'remove [0-9]' && return 1; return 0; }
+K="$WORK/sc-keep"; rm -rf "$K"
+sc_project "$K/clone"; mkdir -p "$K/clone/node_modules/pkg/.git"
+check "storage-cleanup keeps a node_modules that holds a git clone" sc_keeps "$K/clone"
+sc_project "$K/edited"; echo patched > "$K/edited/node_modules/pkg/fix.js"
+check "storage-cleanup keeps a node_modules edited recently" sc_keeps "$K/edited"
+mkdir -p "$K/tools/.nvm/lib/node_modules/npm" "$K/tools/ext/node_modules/x"; echo x > "$K/tools/ext/node_modules/x/a.js"
+find "$K/tools" -exec touch -t 202001010000 {} +
+check "storage-cleanup ignores node_modules with no package.json or under hidden folders" sc_keeps "$K/tools"
+sc_project "$K/tracked"; git -C "$K/tracked" init -q; git -C "$K/tracked" add -A; git -C "$K/tracked" commit -q -m i
+find "$K/tracked" -path '*/.git' -prune -o -exec touch -t 202001010000 {} +
+check "storage-cleanup keeps a node_modules committed to git" sc_keeps "$K/tracked"
+sc_project "$K/locked"; mkdir -p "$K/locked/src/private"; chmod 000 "$K/locked/src/private"
+check "storage-cleanup keeps a project it cannot fully read" sc_keeps "$K/locked"
+chmod 755 "$K/locked/src/private"
+sc_project "$K/running"; printf 'sleep 30\n' > "$K/running/serve.sh"; touch -t 202001010000 "$K/running/serve.sh"
+bash "$K/running/serve.sh" & SC_PID=$!
+check "storage-cleanup keeps a project a running program uses" sc_keeps "$K/running"
+kill "$SC_PID" 2>/dev/null; wait "$SC_PID" 2>/dev/null
+
+F="$WORK/sc-fail"; rm -rf "$F"; sc_project "$F/p"; chmod 555 "$F/p/node_modules/pkg"
+sc_fail() { local out rc; out=$(sc_cmd --only node-modules --root "$F" --apply 2>&1); rc=$?
+  [[ $rc -eq 1 ]] && grep -q 'FAILED *node-modules' <<< "$out"; }
+check "storage-cleanup reports a deletion it could not finish and exits 1" sc_fail
+chmod -R u+w "$F"
+sc_refuses() {
+  local h="$WORK/sc-home"; rm -rf "$h"
+  mkdir -p "$h/.claude/projects" "$h/Library/Mobile Documents/x" "$h/Library/CloudStorage/d/y" "$h/proj/node_modules" "$h/Documents"
+  ln -s "$h/proj" "$h/link"
+  HOME="$h" PYTHONDONTWRITEBYTECODE=1 python3 - "$REPO/shared/bin/storage-cleanup" "$h" <<'PY'
+import importlib.machinery, importlib.util, os, sys
+loader = importlib.machinery.SourceFileLoader("sc", sys.argv[1])
+sc = importlib.util.module_from_spec(importlib.util.spec_from_loader("sc", loader))
+loader.exec_module(sc)
+h = os.path.realpath(sys.argv[2])
+for p in (h, h + "/.claude", h + "/Documents", h + "/Library", h + "/Library/Mobile Documents/x",
+          h + "/Library/CloudStorage/d/y", h + "/link", "/"):
+    errs = sc.remove(p)
+    assert errs and "refused" in errs[0], (p, errs)
+    assert os.path.lexists(p), p
+assert sc.remove(h + "/proj/node_modules") == [] and not os.path.exists(h + "/proj/node_modules")
+PY
+}
+check "storage-cleanup refuses home, protected, cloud-synced and symlinked paths" sc_refuses
+expect "storage-cleanup rejects --node-modules below 1 day" 'at least 1' sc_run --node-modules 0
+expect "storage-cleanup rejects an unknown category" 'unknown categories: bogus' sc_cmd --only bogus
+if command -v npm >/dev/null; then
+  mkdir -p "$SC/home/.npm/_npx/abc"; printf 'sleep 30\n' > "$SC/home/.npm/_npx/abc/mcp.sh"
+  bash "$SC/home/.npm/_npx/abc/mcp.sh" & SC_PID=$!
+  expect "storage-cleanup skips the npx cache while a program runs from it" 'SKIPPED: 1 running' sc_cmd --only npx
+  kill "$SC_PID" 2>/dev/null; wait "$SC_PID" 2>/dev/null
+fi
 
 echo "== ssh-doctor"
 if command -v ssh-agent >/dev/null; then
