@@ -85,6 +85,13 @@ if [ "$(uname -s)" = "Darwin" ]; then
     pkill -f "autossh -M 0 -N -o ControlMaster=no" 2>/dev/null || true
     for host in $hosts; do
         label="io.zenithflow.tunnel.$host"
+        # Not every Mac reaches every server. A host with no HostName or proxy in
+        # the SSH config that doesn't resolve as is would make launchd retry forever.
+        hn=$(ssh -G "$host" 2>/dev/null | awk '$1 == "hostname" { h = $2 } ($1 == "proxycommand" || $1 == "proxyjump") && $2 != "none" { p = 1 } END { print (p ? "proxied" : h) }')
+        if [ "$hn" = "$host" ] && ! dscacheutil -q host -a name "$host" 2>/dev/null | grep -q '^ip'; then
+            echo "⚠ skipped $label: no SSH host '$host' on this machine (add a Host block, then rerun)"
+            continue
+        fi
         dst="$HOME/Library/LaunchAgents/$label.plist"
         sed "s|__HOME__|$HOME|g; s|__HOST__|$host|g" "$DOTFILES/shared/launchd/io.zenithflow.tunnel.plist" > "$dst.tmp" &&
             plutil -lint -s "$dst.tmp" && mv "$dst.tmp" "$dst"
