@@ -978,9 +978,9 @@ _dots_bin_index() {
   local f desc
   for f in "$HOME"/Git/dotfiles/shared/bin/*; do
     [[ -f "$f" && -x "$f" ]] || continue
-    # First "# ..." line (or a Python docstring line) after the shebang, minus "name: "
-    desc=$(awk 'NR >= 2 && NR <= 8 && (/^#[^!]/ || /^"""/) {
-                  sub(/^(#+|""")[ \t]*/, ""); if ($0 == "") next; print; exit }' "$f" |
+    # First "# ..." line (or a Python docstring or "// " line) after the shebang, minus "name: "
+    desc=$(awk 'NR >= 2 && NR <= 8 && (/^#[^!]/ || /^"""/ || /^\/\/ /) {
+                  sub(/^(#+|"""|\/\/)[ \t]*/, ""); if ($0 == "") next; print; exit }' "$f" |
            sed -E 's/"""$//; s/^[A-Za-z0-9_.-]+(:| —| -) +//')
     printf '%s\tcommand\tbin\t%s\t1\t\t%s\t\n' "${f##*/}" "$f" "$desc"
   done

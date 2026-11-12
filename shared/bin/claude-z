@@ -161,6 +161,15 @@ if ! answers "$port" 20; then
   exit 1
 fi
 
+# Per-project model policy (shared/bin/ai-policy): refuse a model this repo
+# may not use, before any request is made
+if [ -z "${PRINT_ENV:-}" ] && command -v ai-policy >/dev/null 2>&1; then
+  ai-policy check --cwd "$PWD" --model "$model" --base-url "http://127.0.0.1:$port" >/dev/null || {
+    ai-policy check --cwd "$PWD" --model "$model" --base-url "http://127.0.0.1:$port" >&2 || true
+    exit 3
+  }
+fi
+
 window="$(served_window "$port" "$model")"
 label="$model@${ssh/-/localhost}"
 # Claude Code's opening request (system prompt, tools, CLAUDE.md, rules, skill

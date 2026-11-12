@@ -83,6 +83,15 @@ check "launchd plists are valid XML" python3 -c "import plistlib,sys; [plistlib.
 check "git-inventory compiles" python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$REPO/shared/bin/git-inventory"
 if command -v node >/dev/null; then
   check "secrets scripts parse" bash -c "node --check '$REPO/typescript/sync-secrets.js' && node --check '$REPO/typescript/get-secrets.js'"
+  check "orca-lanes parses" node --check "$REPO/shared/bin/orca-lanes"
+  OL=$(mktemp -d); printf '{"name":"orcastrator","version":"0.0.1"}' > "$OL/package.json"
+  expect "orca-lanes refuses an unqualified Orca version" 'built against orcastrator' \
+    env ORCA_PACKAGE_DIR="$OL" node "$REPO/shared/bin/orca-lanes" agents
+  rm -rf "$OL"
+  if [[ "$(npm ls -g --depth=0 --json orcastrator 2>/dev/null)" == *'"version": "0.2.25"'* ]]; then
+    expect "orca-lanes registers the extra harnesses" 'alibaba.*claude-edit.*deepseek.*dsh.*opencode.*vibe' \
+      bash -c "'$REPO/shared/bin/orca-lanes' agents 2>/dev/null | tr -d '\\n'"
+  fi
 fi
 
 echo "== Shell startup"
@@ -207,6 +216,11 @@ if command -v sops >/dev/null && command -v age-keygen >/dev/null; then
     [[ "$(d1 run ai -- sh -c 'echo "$API_TOKEN"')" == "abc def" ]] && [[ -z "${API_TOKEN:-}" ]]
   }
   check "secret: run injects values into that command only" secret_run_scoped
+  secret_run_missing_profile() {
+    local out; out=$(d1 run nosuch -- sh -c 'echo RAN' 2>/dev/null) && return 1
+    [[ "$out" != *RAN* ]]
+  }
+  check "secret: run refuses to start the command without its profile" secret_run_missing_profile
   secret_set_stdin() { printf 'n3w\n' | d1 set ai NEW >/dev/null && [[ "$(d1 get ai NEW)" == "n3w" ]]; }
   check "secret: set reads the value from stdin" secret_set_stdin
   secret_devices() {
@@ -219,6 +233,12 @@ if command -v sops >/dev/null && command -v age-keygen >/dev/null; then
     ! d2 get ai API_TOKEN >/dev/null 2>&1                      # and not after removal
   }
   check "secret: add-device grants, remove-device revokes" secret_devices
+  secret_set_needs_decrypt() {
+    local before; before=$(d1 list ai | tr '\n' ' ')
+    printf 'x\n' | d2 set ai OTHER >/dev/null 2>&1 && return 1   # h2 is no longer a recipient
+    [[ "$(d1 list ai | tr '\n' ' ')" == "$before" && "$(d1 get ai API_TOKEN)" == "abc def" ]]
+  }
+  check "secret: set on a device that can't decrypt keeps the profile" secret_set_needs_decrypt
   secret_skips_references() {
     printf 'REAL=v\nREF=${OTHER}\nLIT='"'"'a$b'"'"'\n' > "$SEC/refs.env"
     d1 import refs "$SEC/refs.env" 2>"$SEC/refs.err" >/dev/null || return 1
@@ -260,7 +280,11 @@ if command -v sops >/dev/null && command -v age-keygen >/dev/null; then
   claude_switch_deepseek() {
     local fake="$SEC/fakebin" log="$SEC/curl.argv" rc=0 out
     printf 'ds-test-456' | d1 set deepseek DEEPSEEK_API_KEY >/dev/null || return 1
+    printf '#!/bin/sh\nprintf "%%s\\n" "$@" >> "%s"\nprintf "%%s" "${FAKE_HTTP_CODE:-200}"\n' "$log" > "$fake/curl"
     : > "$log"
+    out=$(HOME="$SEC/h1" SECRETS_DIR="$SEC/store" SECRET_KEY_BACKEND=file CLAUDE_BACKENDS_CONFIG="$SEC/backends.env" \
+      FAKE_HTTP_CODE=402 PATH="$fake:$REPO/shared/bin:$PATH" zsh -fc 'source "$1" deepseek; echo "url:${ANTHROPIC_BASE_URL-}"' _ "$REPO/shared/bin/claude-switch" 2>&1)
+    [[ "$out" == *"no balance (HTTP 402)"* && "$out" != *"url:http"* ]] || { echo "402: $out"; rc=1; }
     out=$(HOME="$SEC/h1" SECRETS_DIR="$SEC/store" SECRET_KEY_BACKEND=file CLAUDE_BACKENDS_CONFIG="$SEC/backends.env" \
       PATH="$fake:$REPO/shared/bin:$PATH" zsh -fc '
         source "$1" deepseek >/dev/null 2>&1 || exit 3
@@ -277,6 +301,27 @@ if command -v sops >/dev/null && command -v age-keygen >/dev/null; then
     ! grep -q 'ds-test-456' "$log" || { echo "key on curl's command line"; rc=1; }
     return $rc
   }
+  # alibaba: key from the profile, never in curl argv; the Coding Plan backend
+  # wants its own key and refuses the pay-as-you-go one
+  claude_switch_alibaba() {
+    local fake="$SEC/fakebin" log="$SEC/curl.argv" rc=0 out
+    printf 'sk-ws-test-789' | d1 set alibaba DASHSCOPE_API_KEY >/dev/null || return 1
+    printf '#!/bin/sh\nprintf "%%s\\n" "$@" >> "%s"\nprintf "\\n%%s" "${FAKE_HTTP_CODE:-200}"\n' "$log" > "$fake/curl"
+    : > "$log"
+    out=$(HOME="$SEC/h1" SECRETS_DIR="$SEC/store" SECRET_KEY_BACKEND=file CLAUDE_BACKENDS_CONFIG="$SEC/backends.env" \
+      PATH="$fake:$REPO/shared/bin:$PATH" zsh -fc '
+        source "$1" alibaba >/dev/null 2>&1 || exit 3
+        echo "payg:$ANTHROPIC_AUTH_TOKEN:$ANTHROPIC_MODEL:$ANTHROPIC_DEFAULT_HAIKU_MODEL"' _ "$REPO/shared/bin/claude-switch" 2>&1) ||
+      { echo "switch failed: $out"; return 1; }
+    [[ "$out" == *"payg:sk-ws-test-789:qwen3.8-max:qwen3.8-flash"* ]] || { echo "payg: $out"; rc=1; }
+    out=$(HOME="$SEC/h1" SECRETS_DIR="$SEC/store" SECRET_KEY_BACKEND=file CLAUDE_BACKENDS_CONFIG="$SEC/backends.env" \
+      PATH="$fake:$REPO/shared/bin:$PATH" zsh -fc 'source "$1" alibaba-coding; echo "coding:${ANTHROPIC_AUTH_TOKEN-}"' _ "$REPO/shared/bin/claude-switch" 2>&1)
+    [[ "$out" == *"DASHSCOPE_CODING_API_KEY is not in the secret profile"* && "$out" != *"coding:sk-"* ]] || { echo "coding: $out"; rc=1; }
+    grep -q 'dashscope-intl.aliyuncs.com/apps/anthropic/v1/messages' "$log" || { echo "preflight never ran"; rc=1; }
+    ! grep -q 'sk-ws-test-789' "$log" || { echo "key on curl's command line"; rc=1; }
+    return $rc
+  }
+  command -v zsh >/dev/null && check "claude-switch alibaba: profile key, plan keys kept apart" claude_switch_alibaba
   # Output goes to a file and is checked by structure only
   secret_aws_credentials() {
     printf 'AKIATESTTESTTESTTEST' | d1 set awst AWS_ACCESS_KEY_ID >/dev/null &&
@@ -287,7 +332,7 @@ if command -v sops >/dev/null && command -v age-keygen >/dev/null; then
     ! d1 aws-credentials awsbad > "$SEC/aws-bad.json" 2>/dev/null && [[ ! -s "$SEC/aws-bad.json" ]]
   }
   check "secret: aws-credentials prints credential_process JSON, fails without both keys" secret_aws_credentials
-  command -v zsh >/dev/null && check "claude-switch deepseek: profile key, Pro model, cloud clears it" claude_switch_deepseek
+  command -v zsh >/dev/null && check "claude-switch deepseek: profile key, Pro model, 402 named, cloud clears it" claude_switch_deepseek
   secret_no_plaintext_files() { ! ls -a "$SEC/store" | grep -qE '^\.tmp|\.dec$|\.plain$'; }
   check "secret: no plaintext or temp files left in the store" secret_no_plaintext_files
 fi
@@ -336,6 +381,62 @@ cc_cloud_is_clean() {
 }
 check "cc: cloud run drops self-hosted variables; re-sourcing over old aliases is clean" cc_cloud_is_clean
 rm -rf "$CZT"
+
+echo "== ai-policy"
+AP="$REPO/shared/bin/ai-policy"
+APW="$WORK/ai-policy"; mkdir -p "$APW"
+ap_repo() { mkdir -p "$APW/$1" && git -C "$APW/$1" init -q && git -C "$APW/$1" remote add origin "$2"; }
+ap_repo ic https://github.com/irregularchat/probe.git
+ap_repo zf git@github.com:zenithflowinc/probe.git
+ap_repo icgl ssh://git@100.87.20.88:2224/irregulars/irregularchat-monorepo.git
+ap_repo own https://git.irregularchat.com/sac/own-project.git
+ap_decisions() {
+  local rc=0 c
+  c() { "$AP" check --cwd "$APW/$1" "${@:3}" 2>/dev/null; [[ $? -eq $2 ]] || { echo "$1 ${*:3}: expected $2"; rc=1; }; }
+  c ic 3 --model qwen3.8-max
+  c ic 3 --model opencode-go/qwen3.7-plus
+  c ic 3 --model qwen3.6:latest
+  c ic 3 --model deepseek-v4-pro --base-url https://dashscope-intl.aliyuncs.com/apps/anthropic
+  c ic 3 --model alibaba/glm-5.3
+  c zf 3 --model qwen3.8-max
+  c zf 3 --model huihui-ai/Huihui-Qwen3.8-27B-abliterated   # fine-tune: family after a prefix
+  c zf 0 --model openai/gpt-oss-120b
+  c zf 0 --model translategemma:12b
+  c icgl 3 --model Qwen/Qwen2.5-72B-Instruct
+  c ic 0 --model claude-opus-5-5
+  c ic 0 --model deepseek-v4-pro --base-url https://api.deepseek.com/anthropic
+  c own 0 --model qwen3.8-max --base-url https://dashscope-intl.aliyuncs.com/apps/anthropic
+  return $rc
+}
+check "ai-policy: Alibaba models and services denied only in IrregularChat/ZenithFlow repos" ap_decisions
+ap_hook() {
+  printf '{"cwd":"%s"}' "$APW/ic" | env -u ANTHROPIC_MODEL ANTHROPIC_BASE_URL=https://dashscope-intl.aliyuncs.com/apps/anthropic "$AP" claude-hook 2>/dev/null
+  [[ $? -eq 2 ]] || return 1
+  printf '{"cwd":"%s"}' "$APW/ic" | env -u ANTHROPIC_BASE_URL -u ANTHROPIC_MODEL "$AP" claude-hook || return 1
+  printf '{"cwd":"%s"}' "$APW/own" | env -u ANTHROPIC_MODEL AI_POLICY_FILE=/nonexistent "$AP" claude-hook 2>/dev/null
+  [[ $? -eq 2 ]]
+}
+check "ai-policy: Claude hook blocks (exit 2) on a denied backend and on an unreadable policy" ap_hook
+ap_scan() {
+  printf 'const model = env.M || "qwen3.6:latest"\n' > "$APW/ic/ai.ts"
+  printf 'We tried Qwen once.\n' > "$APW/ic/notes.md"
+  git -C "$APW/ic" add ai.ts notes.md
+  local out; out=$("$AP" scan "$APW/ic" 2>/dev/null) && return 1
+  [[ "$out" == *"ai.ts:1: vendor:alibaba"* && "$out" != *notes.md* ]] || { echo "$out"; return 1; }
+  "$AP" scan "$APW/own" >/dev/null 2>&1
+}
+check "ai-policy: scan finds Qwen in tracked code, skips docs and unrestricted repos" ap_scan
+ap_install() {
+  local h="$APW/home"; mkdir -p "$h/.claude"; printf '{"theme":"dark"}' > "$h/.claude/settings.json"
+  HOME="$h" "$AP" install >/dev/null && HOME="$h" "$AP" install >/dev/null || return 1
+  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); e=d["hooks"]["UserPromptSubmit"]; sys.exit(0 if d["theme"]=="dark" and len(e)==1 else 1)' "$h/.claude/settings.json" &&
+    [[ -L "$h/.config/opencode/plugins/ai-policy" ]] && HOME="$h" "$AP" install --check >/dev/null
+}
+check "ai-policy: install adds the hook once and links the OpenCode plugin" ap_install
+check "ai-policy: the shipped policy parses" "$AP" explain --cwd "$APW/ic"
+if command -v node >/dev/null; then
+  check "ai-policy OpenCode plugin parses" node --check "$REPO/shared/opencode/plugins/ai-policy/server.js"
+fi
 
 echo "== git wip"
 wip_setup() {

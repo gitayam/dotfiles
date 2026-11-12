@@ -21,6 +21,7 @@ import argparse
 import json
 import os
 import select
+import shutil
 import stat
 import subprocess
 import sys
@@ -33,7 +34,14 @@ def ensure(key):
     if out.returncode != 0:
         sys.exit(out.stderr.strip() or f"zq: cannot reach model '{key}'")
     port, model, opts = out.stdout.split()
-    return f"http://127.0.0.1:{port}/v1", model, opts.split(",")
+    base = f"http://127.0.0.1:{port}/v1"
+    # Per-project model policy (shared/bin/ai-policy), when installed
+    if shutil.which("ai-policy"):
+        verdict = subprocess.run(["ai-policy", "check", "--cwd", os.getcwd(), "--model", model,
+                                  "--base-url", base], capture_output=True, text=True)
+        if verdict.returncode != 0:
+            sys.exit((verdict.stdout + verdict.stderr).strip() or f"zq: {model} is not allowed here")
+    return base, model, opts.split(",")
 
 
 def piped_input():

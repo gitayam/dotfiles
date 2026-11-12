@@ -6,6 +6,8 @@
 #   source claude-switch.sh local       # Use self-hosted Mistral Medium via LiteLLM
 #   source claude-switch.sh ollama      # Use local Ollama
 #   source claude-switch.sh deepseek    # DeepSeek API (key: secret profile "deepseek")
+#   source claude-switch.sh alibaba     # Alibaba Model Studio pay-as-you-go (secret profile "alibaba")
+#   source claude-switch.sh alibaba-coding  # Alibaba Coding Plan subscription (same profile)
 #   source claude-switch.sh status      # Show current config
 #   source claude-switch.sh             # Interactive picker
 #
@@ -197,14 +199,18 @@ switch_deepseek() {
     return 1
   fi
   # Pre-flight: one tiny message; the key goes to curl through a header file
-  if ! curl -fsS -o /dev/null -m 15 "${base}/v1/messages" \
+  local code
+  code=$(curl -sS -o /dev/null -w '%{http_code}' -m 15 "${base}/v1/messages" \
        -H @<(printf 'x-api-key: %s\n' "${DEEPSEEK_API_KEY}") \
        -H "anthropic-version: 2023-06-01" \
        -H "Content-Type: application/json" \
-       -d '{"model":"deepseek-flash","max_tokens":1,"messages":[{"role":"user","content":"x"}]}' 2>/dev/null; then
-    echo "ERROR: DeepSeek at ${base} rejected the key or is unreachable; not switching."
-    return 1
-  fi
+       -d '{"model":"deepseek-flash","max_tokens":1,"messages":[{"role":"user","content":"x"}]}' 2>/dev/null)
+  case "$code" in
+    2??) ;;
+    401) echo "ERROR: DeepSeek rejected the key (HTTP 401); not switching."; return 1 ;;
+    402) echo "ERROR: the DeepSeek account has no balance (HTTP 402); top up at platform.deepseek.com. Not switching."; return 1 ;;
+    *) echo "ERROR: DeepSeek at ${base} answered HTTP ${code:-none} or is unreachable; not switching."; return 1 ;;
+  esac
   export ANTHROPIC_BASE_URL="${base}"
   export ANTHROPIC_AUTH_TOKEN="${DEEPSEEK_API_KEY}"
   export ANTHROPIC_MODEL="${model}[1m]"
@@ -220,6 +226,67 @@ switch_deepseek() {
   echo "  Endpoint: ${base}"
   echo "  API Key: from the encrypted secret profile 'deepseek'"
   echo "  Models: ${model} (main), deepseek-v4-pro (opus), deepseek-flash (sonnet/haiku/subagents)"
+  echo "  Run: claude"
+}
+
+# Alibaba Cloud Model Studio, international (Singapore), Anthropic-compatible.
+# Two products with separate keys and endpoints; never mix them:
+#   alibaba         pay-as-you-go API, key DASHSCOPE_API_KEY (sk-ws-/sk-),
+#                   ALIBABA_MODEL default qwen3.8-max; also serves
+#                   deepseek-v4-pro, deepseek-v4.1-flash, kimi-k3, glm-5.3, ...
+#   alibaba-coding  Coding Plan subscription, key DASHSCOPE_CODING_API_KEY (sk-sp-),
+#                   ALIBABA_MODEL default qwen3.7-plus; also qwen3.6-plus,
+#                   qwen3.5-plus, kimi-k2.5, glm-5, MiniMax-M2.5
+# Both keys live in the secret profile "alibaba".
+switch_alibaba() {
+  local plan="${1:-payg}" base var model small name
+  _claude_switch_clear_tiers
+  if [ "$plan" = coding ]; then
+    base="${ALIBABA_CODING_BASE_URL:-https://coding-intl.dashscope.aliyuncs.com/apps/anthropic}"
+    var=DASHSCOPE_CODING_API_KEY; model="${ALIBABA_MODEL:-qwen3.7-plus}"
+    small="${ALIBABA_SMALL_MODEL:-$model}"; name="Alibaba Coding Plan"
+  else
+    base="${ALIBABA_BASE_URL:-https://dashscope-intl.aliyuncs.com/apps/anthropic}"
+    var=DASHSCOPE_API_KEY; model="${ALIBABA_MODEL:-qwen3.8-max}"
+    small="${ALIBABA_SMALL_MODEL:-qwen3.8-flash}"; name="Alibaba Model Studio"
+  fi
+  _claude_switch_overlay alibaba
+  local key
+  eval "key=\${$var:-}"
+  if [ -z "$key" ]; then
+    echo "ERROR: $var is not in the secret profile 'alibaba'"
+    echo "       Store it with: secret set alibaba $var  (hidden prompt)"
+    return 1
+  fi
+  # Pre-flight: one tiny message; the key goes to curl through a header file.
+  # The reply body carries only Alibaba's error code, never the key.
+  local reply code
+  reply=$(curl -sS -w '\n%{http_code}' -m 20 "${base}/v1/messages" \
+       -H @<(printf 'x-api-key: %s\n' "$key") \
+       -H "anthropic-version: 2023-06-01" \
+       -H "Content-Type: application/json" \
+       -d "{\"model\":\"${small}\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]}" 2>/dev/null)
+  code=${reply##*$'\n'}
+  case "$code" in
+    2??) ;;
+    401) echo "ERROR: ${name} rejected $var (HTTP 401). Singapore-region keys only, and Coding Plan (sk-sp-) and pay-as-you-go keys aren't interchangeable; not switching."; return 1 ;;
+    *) echo "ERROR: ${name} at ${base} answered HTTP ${code:-none}: $(printf '%s' "${reply%$'\n'*}" | head -c 200); not switching."; return 1 ;;
+  esac
+  export ANTHROPIC_BASE_URL="${base}"
+  export ANTHROPIC_AUTH_TOKEN="$key"
+  export ANTHROPIC_MODEL="${model}"
+  export ANTHROPIC_CUSTOM_MODEL_OPTION="${model}"
+  export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="${name} ${model}"
+  export ANTHROPIC_DEFAULT_OPUS_MODEL="${model}"
+  export ANTHROPIC_DEFAULT_SONNET_MODEL="${model}"
+  export ANTHROPIC_DEFAULT_HAIKU_MODEL="${small}"
+  export CLAUDE_CODE_SUBAGENT_MODEL="${small}"
+  export CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1
+  unset key
+  echo "Switched to: ${name} (${model})"
+  echo "  Endpoint: ${base}"
+  echo "  API Key: $var from the encrypted secret profile 'alibaba'"
+  echo "  Models: ${model} (main/opus/sonnet), ${small} (haiku/subagents)"
   echo "  Run: claude"
 }
 
@@ -265,6 +332,8 @@ show_help() {
   echo "  ollama   Local Ollama instance"
   echo "  vibe     Mistral Vibe (Official API)"
   echo "  deepseek DeepSeek API (DEEPSEEK_MODEL=deepseek-v4-pro for Pro)"
+  echo "  alibaba  Alibaba Model Studio pay-as-you-go, Singapore (ALIBABA_MODEL, default qwen3.8-max)"
+  echo "  alibaba-coding  Alibaba Coding Plan subscription (default qwen3.7-plus)"
   echo "  vllm     Direct vLLM endpoint"
   echo "  status   Show current backend configuration"
   echo ""
@@ -287,6 +356,8 @@ case "${1:-}" in
   ollama)   switch_ollama ;;
   vibe)     switch_vibe ;;
   deepseek) switch_deepseek ;;
+  alibaba)  switch_alibaba payg ;;
+  alibaba-coding) switch_alibaba coding ;;
   vllm)     switch_vllm ;;
   status)   show_status ;;
   -h|--help|help) show_help ;;
@@ -298,8 +369,9 @@ case "${1:-}" in
     echo "  4) Mistral Vibe (Official API)"
     echo "  5) vLLM (direct)"
     echo "  6) DeepSeek (API)"
+    echo "  7) Alibaba Model Studio (Qwen, Kimi, GLM, DeepSeek)"
     echo ""
-    read -p "Choice [1-6]: " choice
+    read -p "Choice [1-7]: " choice
     case "$choice" in
       1) switch_cloud ;;
       2) switch_local ;;
@@ -307,6 +379,7 @@ case "${1:-}" in
       4) switch_vibe ;;
       5) switch_vllm ;;
       6) switch_deepseek ;;
+      7) switch_alibaba payg ;;
       *) echo "Invalid choice" ;;
     esac
     ;;

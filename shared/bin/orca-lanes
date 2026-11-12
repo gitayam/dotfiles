@@ -1,0 +1,683 @@
+#!/usr/bin/env node
+// orca-lanes: Orca's orca/v1 lane verbs with more harnesses behind them.
+//
+// Orca 0.2.25's CLI registers claude, codex and cursor with default options,
+// so a CLI Claude lane cannot write files (its manifest says so) and there is
+// no way to add another harness. This wrapper runs Orca's own lane CLI with a
+// registry that adds:
+//   claude-edit  Claude Code with --permission-mode acceptEdits
+//   deepseek     Claude Code on DeepSeek (route: OpenCode Go, or the DeepSeek API)
+//   dsh          DeepSeek Harness headless (`dsh --profile headless --json`)
+//   alibaba      Claude Code on Alibaba Model Studio (Qwen, Kimi, GLM, DeepSeek)
+//   opencode     native OpenCode (`opencode run --standalone --format json`)
+//   vibe         Mistral Vibe headless (`vibe -p --output streaming`)
+// Lanes, envelopes, exit codes, inspect and kill are Orca's. Every lane still
+// reports semanticOutcome "unknown": check the work yourself. Each dispatch and
+// resume first asks ai-policy whether the lane's project may use its service/model.
+//
+// Usage: orca-lanes dispatch --agent vibe --cwd . "Fix the flaky store test"
+//        orca-lanes agents | inspect <laneId> | resume <laneId> <prompt> | kill <laneId>
+// Env:   ORCA_VIBE_AGENT (default accept-edits), ORCA_DEEPSEEK_ROUTE
+//        (opencode-go | api; default opencode-go), ORCA_DEEPSEEK_MODEL
+//        (default per route: deepseek-flash or deepseek-v4.1-flash), ORCA_DSH_BINARY, ORCA_DSH_CREDENTIALS
+//        (secret | native), ORCA_ALIBABA_PLAN (payg | coding), ORCA_ALIBABA_MODEL,
+//        ORCA_PACKAGE_DIR (orcastrator root).
+'use strict';
+
+const fs = require('node:fs');
+const fsp = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
+const { execFile } = require('node:child_process');
+
+const PINNED_ORCA = '0.2.25';
+const BIN_DIR = path.dirname(fs.realpathSync(__filename));
+const PREVIEW_CHARS = 400;
+const FAILURE_CHARS = 1200;
+
+// Imports internal paths of the orcastrator package, so pin its version.
+function orcaPackageDir() {
+  if (process.env.ORCA_PACKAGE_DIR) return process.env.ORCA_PACKAGE_DIR;
+  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+    const candidate = path.join(dir, 'orca');
+    let real;
+    try { real = fs.realpathSync(candidate); } catch { continue; }
+    let pkg = path.dirname(real);
+    for (let i = 0; i < 4; i += 1) {
+      try {
+        if (JSON.parse(fs.readFileSync(path.join(pkg, 'package.json'), 'utf8')).name === 'orcastrator') return pkg;
+      } catch { /* keep walking up */ }
+      pkg = path.dirname(pkg);
+    }
+  }
+  return null;
+}
+
+function truncate(text, max) {
+  return text.length <= max ? text : `${text.slice(0, max)}…`;
+}
+
+function run(file, args, opts = {}) {
+  return new Promise((resolve) => {
+    execFile(file, args, { maxBuffer: 64 * 1024 * 1024, timeout: 60_000, ...opts },
+      (error, stdout, stderr) => resolve({ code: error ? (error.code ?? 1) : 0, stdout, stderr }));
+  });
+}
+
+// Runs one CLI turn through Orca's process runner (detached process group,
+// deadline, verified tree kill) and maps runner failures onto AdapterErrors.
+async function runTurn(orca, exec, name, { args, cwd, stdin, timeoutMs, onEvent, onLine }) {
+  const { AdapterError } = orca;
+  const startedAt = Date.now();
+  let chain = Promise.resolve();
+  let sinkError;
+  let handle;
+  const emit = (event) => {
+    if (!onEvent) return;
+    chain = chain.then(() => (sinkError ? undefined : onEvent(event))).catch((error) => {
+      if (!sinkError) { sinkError = error; handle?.kill().catch(() => false); }
+    });
+  };
+  let result;
+  try {
+    result = await exec({
+      args, cwd, stdin, timeoutMs,
+      onStdoutLine: (line) => onLine(line, emit),
+      onSpawn: (h) => {
+        handle = h;
+        emit({ event: 'agent_started', data: { pid: h.pid, pgid: h.pgid, startedAt: new Date().toISOString() } });
+      },
+    });
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      throw new AdapterError('agent_unavailable', `${name} CLI not found (spawn ENOENT)`, { cause: error });
+    }
+    throw new AdapterError('adapter_error', `failed to run ${name}: ${error.message}`, { cause: error });
+  }
+  await chain;
+  if (sinkError) throw new AdapterError('adapter_error', `lane event sink failed; the ${name} process group was signalled`, { cause: sinkError });
+  if (result.termination === 'unverified') {
+    throw new AdapterError('adapter_error', `${name} process-group termination could not be confirmed; refusing to classify the run`);
+  }
+  if (result.overflowed) throw new AdapterError('adapter_error', `${name} printed an oversized protocol line; the run was killed`);
+  if (result.timedOut) {
+    throw new AdapterError('timeout', `${name} did not finish within ${timeoutMs}ms; process-group termination was verified`, {
+      remediation: 'Increase the timeout or split the task into smaller lanes.',
+    });
+  }
+  if (result.aborted && result.exitCode === null) throw new AdapterError('adapter_error', `${name} run was aborted`);
+  return { exitCode: result.exitCode, stderr: result.stderr, wallMs: Date.now() - startedAt, emit };
+}
+
+function failed(name, exitCode, message, extra = {}) {
+  return {
+    status: 'failed', delivery: extra.agentSessionId ? 'confirmed' : 'unknown', nativeStatus: 'failed',
+    semanticOutcome: 'unknown', code: 'agent_failed',
+    error: { message: `${name} exited ${exitCode ?? 'on a signal'}: ${truncate(message, FAILURE_CHARS)}` },
+    ...extra,
+  };
+}
+
+const POSIX = process.platform !== 'win32';
+
+// ---------------------------------------------------------------- OpenCode
+const OPENCODE_PROVIDER_PROFILES = { alibaba: 'alibaba' };  // provider id -> secret profile (DASHSCOPE_API_KEY)
+
+class OpenCodeAdapter {
+  constructor(orca, { agent = 'opencode', displayName = 'OpenCode (run --standalone)', defaultModel } = {}) {
+    this.orca = orca;
+    this.agent = agent;
+    this.displayName = displayName;
+    this.defaultModel = defaultModel;
+    this.exec = orca.createProcessClaudeExec('/usr/bin/env');
+  }
+
+  capabilities() {
+    return {
+      v: 1, agent: this.agent, displayName: this.displayName, adapterVersion: 'orca-lanes-1',
+      capabilities: { resume: true, kill: POSIX, questions: false, continuityMethods: ['session-id-match'] },
+      caveats: [
+        { code: 'permissions_from_user_config', note: 'Tools follow opencode.json permissions. Anything set to "ask" is rejected in a non-interactive run and surfaces as permissionDenials (shell, by default here); edits run when the config allows them.' },
+        { code: 'standalone_server', note: '--standalone keeps the server inside the lane process group, so kill stops the model turn (the shared background service would keep running it). About 1-2 s of startup.' },
+        { code: 'free_models_share_data', note: 'OpenCode Zen *-free models may use prompts for training. Use them only on public or throwaway code.' },
+      ],
+      declared: { promptDelivery: 'stdin', outputFormat: 'json-lines', ...(this.defaultModel ? { defaultModel: this.defaultModel } : {}) },
+    };
+  }
+
+  // Providers whose key lives in a secret profile get it for this run only.
+  args(model, sessionId) {
+    const chosen = model ?? this.defaultModel;
+    const profile = chosen && OPENCODE_PROVIDER_PROFILES[chosen.split('/')[0]];
+    return [...(profile ? [path.join(BIN_DIR, 'secret'), 'run', profile, '--'] : []), 'opencode',
+      'run', '--standalone', '--format', 'json',
+      ...(chosen ? ['--model', chosen] : []), ...(sessionId ? ['--session', sessionId] : [])];
+  }
+
+  async turn(params) {
+    const state = { sessionIds: new Set(), steps: [], current: [], errors: [], denials: [], input: 0, output: 0, cost: 0 };
+    const onLine = (raw, emit) => {
+      let event;
+      try { event = JSON.parse(raw); } catch { return; }
+      if (event.sessionID) {
+        if (!state.sessionIds.size) emit({ event: 'progress', data: { phase: 'session_init', agentSessionId: event.sessionID } });
+        state.sessionIds.add(event.sessionID);
+      }
+      const part = event.part || {};
+      if (event.type === 'step_start') state.current = [];
+      if (event.type === 'text' && part.text) {
+        state.current.push(part.text);
+        emit({ event: 'progress', data: { text: part.text.slice(0, PREVIEW_CHARS) } });
+      }
+      if (event.type === 'tool_use' && part.state?.status === 'error') {
+        const message = String(part.state.error || '');
+        if (/permission/i.test(message)) {
+          state.denials.push(part.tool);
+          emit({ event: 'progress', data: { permissionDenials: [part.tool] } });
+        }
+      }
+      if (event.type === 'step_finish') {
+        if (state.current.length) state.steps.push(state.current.join('\n'));
+        state.input += part.tokens?.input ?? 0;
+        state.output += part.tokens?.output ?? 0;
+        state.cost += typeof part.cost === 'number' ? part.cost : 0;
+      }
+      if (event.type === 'error') {
+        state.errors.push(event.error?.message || event.error?.type || 'unknown error');
+      }
+    };
+    const run = await runTurn(this.orca, this.exec, 'opencode', { ...params, onLine });
+    return { ...run, state };
+  }
+
+  outcome(run, expectedSession) {
+    const { state, exitCode, wallMs } = run;
+    const sessionId = [...state.sessionIds][0];
+    const usage = { inputTokens: state.input, outputTokens: state.output, costUsd: state.cost };
+    const base = { ...(sessionId ? { agentSessionId: sessionId } : {}), usage, timing: { wallMs } };
+    if (state.errors.length || exitCode !== 0) {
+      return failed('opencode', exitCode, state.errors.join('; ') || run.stderr.trim() || 'no error event', base);
+    }
+    if (!sessionId) throw new this.orca.AdapterError('adapter_error', 'opencode exited 0 without a session id; refusing to guess');
+    if (state.sessionIds.size > 1 || (expectedSession && sessionId !== expectedSession)) {
+      throw new this.orca.ContinuityError('opencode answered from a different session than the lane is bound to', {
+        detail: `expected ${expectedSession ?? sessionId}, saw ${[...state.sessionIds].join(', ')}`,
+        remediation: 'Refusing to rebind; dispatch a new lane.',
+      });
+    }
+    return {
+      status: 'completed', delivery: 'confirmed', nativeStatus: 'completed', semanticOutcome: 'unknown',
+      result: { text: state.steps.at(-1) ?? '' }, ...base,
+    };
+  }
+
+  async exportSession(sessionId, cwd) {
+    const out = await run('opencode', ['session', 'export', sessionId], { cwd });
+    if (out.code !== 0) return null;
+    try { return JSON.parse(out.stdout); } catch { return null; }
+  }
+
+  async dispatch(req) {
+    const turn = await this.turn({ args: this.args(req.model), cwd: req.cwd, stdin: req.prompt, timeoutMs: req.timeoutMs, onEvent: req.onEvent });
+    return this.outcome(turn);
+  }
+
+  // `opencode run --session X` creates X when it does not exist, so verify the
+  // session first and check that it gained messages afterwards.
+  async resume(lane, prompt, opts = {}) {
+    const { ContinuityError } = this.orca;
+    const sessionId = lane.agentSessionId;
+    if (!sessionId) throw new ContinuityError('lane has no bound opencode session id', { remediation: 'Dispatch a new lane.' });
+    const before = await this.exportSession(sessionId, lane.cwd);
+    if (!before) {
+      throw new ContinuityError(`opencode no longer knows session ${sessionId}`, { remediation: 'Dispatch a new lane.' });
+    }
+    const turn = await this.turn({ args: this.args(lane.model, sessionId), cwd: lane.cwd, stdin: prompt, timeoutMs: opts.timeoutMs, onEvent: opts.onEvent });
+    const outcome = this.outcome(turn, sessionId);
+    if (outcome.status !== 'completed') return outcome;
+    const after = await this.exportSession(sessionId, lane.cwd);
+    const grew = after && after.messages.length > before.messages.length;
+    if (!grew) {
+      throw new ContinuityError('opencode reported success but the session did not gain messages', {
+        detail: `${before.messages.length} -> ${after ? after.messages.length : 'missing'} messages`,
+      });
+    }
+    return { ...outcome, continuity: { verified: true, method: 'session-id-match', detail: `events echoed ${sessionId}; messages ${before.messages.length} -> ${after.messages.length}` } };
+  }
+
+  async inspect(lane) {
+    if (!lane.agentSessionId) return { nativeStatus: 'unknown', detail: 'no opencode session bound yet' };
+    const session = await this.exportSession(lane.agentSessionId, lane.cwd);
+    if (!session) return { nativeStatus: 'unknown', agentSessionId: lane.agentSessionId, detail: 'session not found' };
+    const updated = session.info?.time?.updated;
+    return {
+      nativeStatus: 'unknown', agentSessionId: lane.agentSessionId,
+      ...(updated ? { lastActivityAt: new Date(updated).toISOString() } : {}),
+      detail: `${session.messages.length} messages; opencode run is one-shot, liveness is the session's last update`,
+    };
+  }
+}
+
+// -------------------------------------------------------------------- Vibe
+class VibeAdapter {
+  constructor(orca) {
+    this.orca = orca;
+    this.agentMode = process.env.ORCA_VIBE_AGENT || 'accept-edits';
+    this.exec = orca.createProcessClaudeExec('vibe');
+    this.runsDir = path.join(orca.resolveOrcaHome(), 'vibe-runs');
+  }
+
+  capabilities() {
+    return {
+      v: 1, agent: 'vibe', displayName: 'Mistral Vibe (headless)', adapterVersion: 'orca-lanes-1',
+      capabilities: { resume: true, kill: POSIX, questions: false, continuityMethods: ['session-id-match'] },
+      caveats: [
+        { code: 'agent_mode', note: `Runs --agent ${this.agentMode} (ORCA_VIBE_AGENT). Under accept-edits, shell calls are denied and surface as permissionDenials.` },
+        { code: 'trusts_cwd', note: '--trust trusts the lane cwd for this run only; Vibe reads its AGENTS.md and project config.' },
+        { code: 'export_record', note: `Each turn writes Vibe's export.json and session journal under ${this.runsDir}.` },
+      ],
+      declared: { promptDelivery: 'stdin', outputFormat: 'streaming', agentMode: this.agentMode },
+    };
+  }
+
+  async turn(laneId, { model, sessionId, cwd, prompt, timeoutMs, onEvent }) {
+    const outDir = path.join(this.runsDir, `${laneId}-${Date.now()}`);
+    await fsp.mkdir(outDir, { recursive: true, mode: 0o700 });
+    const args = ['-p', '--output', 'streaming', '--trust', '--agent', this.agentMode, '--output-dir', outDir,
+      ...(model ? ['--model', model] : []), ...(sessionId ? ['--resume', sessionId] : [])];
+    const state = { sessionId: undefined, text: undefined, denials: [] };
+    const onLine = (raw, emit) => {
+      let entry;
+      try { entry = JSON.parse(raw); } catch { return; }
+      if (entry.sessionId && !state.sessionId) {
+        state.sessionId = entry.sessionId;
+        emit({ event: 'progress', data: { phase: 'session_init', agentSessionId: entry.sessionId } });
+      }
+      if (entry.type === 'message' && entry.role === 'assistant') {
+        const text = (entry.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('\n').trim();
+        if (text) {
+          state.text = text;
+          emit({ event: 'progress', data: { text: text.slice(0, PREVIEW_CHARS) } });
+        }
+      }
+      if (entry.type === 'effect' && entry.state?.error?.code === 'tool_denied') {
+        const tool = entry.detail?.toolName || entry.title;
+        state.denials.push(tool);
+        emit({ event: 'progress', data: { permissionDenials: [tool] } });
+      }
+    };
+    const turn = await runTurn(this.orca, this.exec, 'vibe', { args, cwd, stdin: prompt, timeoutMs, onEvent, onLine });
+    let exported = null;
+    try { exported = JSON.parse(await fsp.readFile(path.join(outDir, 'export.json'), 'utf8')); } catch { /* none */ }
+    return { ...turn, state, exported };
+  }
+
+  outcome(turn) {
+    const { state, exported, exitCode, wallMs, stderr } = turn;
+    const sessionId = exported?.session_id ?? state.sessionId;
+    const usage = exported?.usage
+      ? { inputTokens: exported.usage.input_tokens, outputTokens: exported.usage.output_tokens, costUsd: exported.cost_usd }
+      : undefined;
+    const base = { ...(sessionId ? { agentSessionId: sessionId } : {}), ...(usage ? { usage } : {}), timing: { wallMs } };
+    if (exitCode !== 0 || !exported || exported.outcome !== 'finished') {
+      const why = exported ? `outcome ${exported.outcome}, stop ${exported.stop_reason ?? 'none'}${exported.error ? `, ${JSON.stringify(exported.error)}` : ''}` : stderr.trim();
+      return failed('vibe', exitCode, why || 'no export record', base);
+    }
+    if (state.text === undefined) throw new this.orca.AdapterError('adapter_error', 'vibe finished without an assistant message; refusing to guess');
+    return { status: 'completed', delivery: 'confirmed', nativeStatus: 'completed', semanticOutcome: 'unknown', result: { text: state.text }, ...base };
+  }
+
+  async dispatch(req) {
+    return this.outcome(await this.turn(req.laneId, { model: req.model, cwd: req.cwd, prompt: req.prompt, timeoutMs: req.timeoutMs, onEvent: req.onEvent }));
+  }
+
+  // Vibe fails loudly ("Session not found", exit 1) on an unknown id; still
+  // check that the export record names the bound session.
+  async resume(lane, prompt, opts = {}) {
+    const { ContinuityError } = this.orca;
+    const sessionId = lane.agentSessionId;
+    if (!sessionId) throw new ContinuityError('lane has no bound vibe session id', { remediation: 'Dispatch a new lane.' });
+    const turn = await this.turn(lane.id, { model: lane.model, sessionId, cwd: lane.cwd, prompt, timeoutMs: opts.timeoutMs, onEvent: opts.onEvent });
+    if (turn.exitCode !== 0 && /Session not found/.test(turn.stderr)) {
+      throw new ContinuityError(`vibe no longer knows session ${sessionId}`, { remediation: 'Dispatch a new lane.' });
+    }
+    if (turn.exported && turn.exported.session_id !== sessionId) {
+      throw new ContinuityError('vibe answered from a different session than the lane is bound to', {
+        detail: `expected ${sessionId}, export named ${turn.exported.session_id}`,
+      });
+    }
+    const outcome = this.outcome(turn);
+    return outcome.status === 'completed'
+      ? { ...outcome, continuity: { verified: true, method: 'session-id-match', detail: `export.json named ${sessionId}` } }
+      : outcome;
+  }
+
+  async inspect(lane) {
+    return {
+      nativeStatus: 'unknown', ...(lane.agentSessionId ? { agentSessionId: lane.agentSessionId } : {}),
+      detail: `vibe -p runs are one-shot; per-turn export records are under ${this.runsDir}/${lane.id}-*`,
+    };
+  }
+}
+
+// ---------------------------------------------------- DeepSeek Harness
+// The desktop app's credential store is encrypted for the app; the headless
+// CLI reads DEEPSEEK_API_KEY from its environment, which `secret run deepseek`
+// provides (ORCA_DSH_CREDENTIALS=native leaves the environment to the caller).
+const DSH_APP_CLI = '/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh';
+
+function dshBinary() {
+  if (process.env.ORCA_DSH_BINARY) return process.env.ORCA_DSH_BINARY;
+  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+    const candidate = path.join(dir, 'dsh');
+    try { fs.accessSync(candidate, fs.constants.X_OK); return candidate; } catch { /* next */ }
+  }
+  return DSH_APP_CLI;
+}
+
+class DshAdapter {
+  constructor(orca) {
+    this.orca = orca;
+    this.binary = dshBinary();
+    this.credentials = process.env.ORCA_DSH_CREDENTIALS || 'secret';
+    if (!['secret', 'native'].includes(this.credentials)) throw new Error('ORCA_DSH_CREDENTIALS must be secret or native');
+    const base = orca.createProcessClaudeExec('/usr/bin/env');
+    this.exec = (req) => base({ ...req, args: this.credentials === 'secret'
+      ? [path.join(BIN_DIR, 'secret'), 'run', 'deepseek', '--', this.binary, ...req.args]
+      : [this.binary, ...req.args] });
+  }
+
+  capabilities() {
+    return {
+      v: 1, agent: 'dsh', displayName: 'DeepSeek Harness (headless)', adapterVersion: 'orca-lanes-1',
+      capabilities: { resume: true, kill: POSIX, questions: false, continuityMethods: ['session-id-match'] },
+      caveats: [
+        { code: 'credentials', note: this.credentials === 'secret'
+          ? 'DEEPSEEK_API_KEY comes from the secret profile "deepseek" (secret set deepseek DEEPSEEK_API_KEY). The desktop app\'s own store is not readable by the CLI.'
+          : 'DEEPSEEK_API_KEY must already be in the environment.' },
+        { code: 'unqualified_success_path', note: 'Probed 2026-11-12 only up to MISSING_CREDENTIAL: tool, permission and usage events are not yet observed, so only final text and turn errors are mapped.' },
+      ],
+      declared: { binary: this.binary, promptDelivery: 'stdin', outputFormat: 'json-lines', credentials: this.credentials },
+    };
+  }
+
+  async turn({ sessionId, cwd, prompt, timeoutMs, onEvent }) {
+    const args = ['--profile', 'headless', '--json', ...(sessionId ? ['--session-id', sessionId] : []), '-'];
+    const state = { sessionId: undefined, text: undefined, errors: [], input: 0, output: 0 };
+    const onLine = (raw, emit) => {
+      let event;
+      try { event = JSON.parse(raw); } catch { return; }
+      if (event.type === 'session' && event.sessionId) {
+        state.sessionId = event.sessionId;
+        emit({ event: 'progress', data: { phase: 'session_init', agentSessionId: event.sessionId } });
+      }
+      if (event.type === 'status' && event.phase === 'turn_end' && event.reason?.kind === 'error') {
+        state.errors.push(`${event.reason.error?.code ?? 'error'}: ${event.reason.error?.message ?? ''}`);
+      }
+      if (event.type === 'final') state.text = event.text;
+      const usage = event.usage;
+      if (usage) {
+        state.input += usage.inputTokens ?? usage.input_tokens ?? 0;
+        state.output += usage.outputTokens ?? usage.output_tokens ?? 0;
+      }
+    };
+    const run = await runTurn(this.orca, this.exec, 'dsh', { args, cwd, stdin: prompt, timeoutMs, onEvent, onLine });
+    return { ...run, state };
+  }
+
+  outcome(turn) {
+    const { state, exitCode, wallMs, stderr } = turn;
+    const base = { ...(state.sessionId ? { agentSessionId: state.sessionId } : {}),
+      ...(state.input || state.output ? { usage: { inputTokens: state.input, outputTokens: state.output } } : {}), timing: { wallMs } };
+    if (state.errors.length || exitCode !== 0) return failed('dsh', exitCode, state.errors.join('; ') || stderr.trim() || 'no error event', base);
+    if (state.text === undefined) throw new this.orca.AdapterError('adapter_error', 'dsh exited 0 without a final event; refusing to guess');
+    return { status: 'completed', delivery: 'confirmed', nativeStatus: 'completed', semanticOutcome: 'unknown', result: { text: state.text }, ...base };
+  }
+
+  async dispatch(req) {
+    return this.outcome(await this.turn({ cwd: req.cwd, prompt: req.prompt, timeoutMs: req.timeoutMs, onEvent: req.onEvent }));
+  }
+
+  // --session-id with an unknown id is an error in dsh; still check the echo.
+  async resume(lane, prompt, opts = {}) {
+    const { ContinuityError } = this.orca;
+    const sessionId = lane.agentSessionId;
+    if (!sessionId) throw new ContinuityError('lane has no bound dsh session id', { remediation: 'Dispatch a new lane.' });
+    const turn = await this.turn({ sessionId, cwd: lane.cwd, prompt, timeoutMs: opts.timeoutMs, onEvent: opts.onEvent });
+    if (turn.state.sessionId && turn.state.sessionId !== sessionId) {
+      throw new ContinuityError('dsh answered from a different session than the lane is bound to', {
+        detail: `expected ${sessionId}, saw ${turn.state.sessionId}`,
+      });
+    }
+    if (!turn.state.sessionId && turn.exitCode !== 0) {
+      throw new ContinuityError(`dsh did not adopt session ${sessionId}`, { detail: truncate(turn.stderr.trim(), FAILURE_CHARS), remediation: 'Dispatch a new lane.' });
+    }
+    const outcome = this.outcome(turn);
+    return outcome.status === 'completed'
+      ? { ...outcome, continuity: { verified: true, method: 'session-id-match', detail: `session event echoed ${sessionId}` } }
+      : outcome;
+  }
+
+  async inspect(lane) {
+    return { nativeStatus: 'unknown', ...(lane.agentSessionId ? { agentSessionId: lane.agentSessionId } : {}), detail: 'dsh headless runs are one-shot' };
+  }
+}
+
+// ------------------------------------------------- Claude Code variants
+function claudeVariant(orca, { agent, displayName, notes, declared, ...options }) {
+  const adapter = new orca.ClaudeAdapter(options);
+  adapter.capabilities = () => {
+    const manifest = orca.buildClaudeManifest();
+    return {
+      ...manifest, agent, displayName, adapterVersion: `${manifest.adapterVersion}+orca-lanes-1`,
+      caveats: [...manifest.caveats.filter((c) => c.code !== 'default_permissions_deny_writes'), ...notes],
+      declared: { ...manifest.declared, ...declared },
+    };
+  };
+  return adapter;
+}
+
+const DEEPSEEK_API = 'https://api.deepseek.com/anthropic';
+const ALIBABA = {
+  payg: { baseUrl: 'https://dashscope-intl.aliyuncs.com/apps/anthropic', keyVar: 'DASHSCOPE_API_KEY', model: 'qwen3.8-max', small: 'qwen3.8-flash' },
+  coding: { baseUrl: 'https://coding-intl.dashscope.aliyuncs.com/apps/anthropic', keyVar: 'DASHSCOPE_CODING_API_KEY', model: 'qwen3.7-plus' },
+};
+
+// Pops `--model X` from Claude's argv: the model goes into the route's
+// environment instead (tiers need env names, and cc-opencode adds its own).
+function takeModel(args, fallback) {
+  const at = args.indexOf('--model');
+  return at === -1 ? fallback : args.splice(at, 2)[1];
+}
+
+// Claude Code against an Anthropic-compatible API whose key is in a secret
+// profile. The key stays in the store until the final exec; never in argv.
+function anthropicApiArgs({ baseUrl, profile, keyVar, model, opus = model, small = model, suffix = '' }, args) {
+  const routing = [`ANTHROPIC_BASE_URL=${baseUrl}`, `ANTHROPIC_MODEL=${model}${suffix}`,
+    `ANTHROPIC_DEFAULT_OPUS_MODEL=${opus}${suffix}`, `ANTHROPIC_DEFAULT_SONNET_MODEL=${model}${suffix}`,
+    `ANTHROPIC_DEFAULT_HAIKU_MODEL=${small}`, `CLAUDE_CODE_SUBAGENT_MODEL=${small}`,
+    'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1'];
+  return ['-u', 'ANTHROPIC_API_KEY', '-u', 'CLAUDE_CODE_OAUTH_TOKEN', ...routing,
+    path.join(BIN_DIR, 'secret'), 'run', profile, '--', '/bin/sh', '-c',
+    `export ANTHROPIC_AUTH_TOKEN="$${keyVar}"; unset ${keyVar}; exec claude "$@"`, 'claude', ...args];
+}
+
+function deepseekExec(orca, route) {
+  const base = orca.createProcessClaudeExec('/usr/bin/env');
+  return (req) => {
+    const args = [...req.args];
+    // Model ids differ by route: the API serves deepseek-flash/deepseek-v4-pro,
+    // OpenCode Go deepseek-v4.1-flash/deepseek-v4-pro.
+    const model = takeModel(args, process.env.ORCA_DEEPSEEK_MODEL || (route === 'api' ? 'deepseek-flash' : 'deepseek-v4.1-flash'));
+    if (route === 'api') {
+      return base({ ...req, args: anthropicApiArgs({ baseUrl: DEEPSEEK_API, profile: 'deepseek', keyVar: 'DEEPSEEK_API_KEY',
+        model, opus: 'deepseek-v4-pro', small: model, suffix: '[1m]' }, args) });
+    }
+    return base({ ...req, args: [`OPENCODE_GO_MODEL=${model}`, path.join(BIN_DIR, 'cc-opencode'), ...args] });
+  };
+}
+
+function alibabaExec(orca, plan) {
+  const base = orca.createProcessClaudeExec('/usr/bin/env');
+  const p = ALIBABA[plan];
+  return (req) => {
+    const args = [...req.args];
+    const model = takeModel(args, process.env.ORCA_ALIBABA_MODEL || p.model);
+    return base({ ...req, args: anthropicApiArgs({ baseUrl: p.baseUrl, profile: 'alibaba', keyVar: p.keyVar,
+      model, small: p.small ?? model }, args) });
+  };
+}
+
+const EXTRA = {
+  'claude-edit': (orca) => claudeVariant(orca, {
+    agent: 'claude-edit', displayName: 'Claude Code (acceptEdits)', permissionMode: 'acceptEdits',
+    notes: [{ code: 'accept_edits', note: 'Edit and Write are allowed in the lane cwd; Bash and other prompting tools are still denied and surface as permissionDenials.' }],
+    declared: { permissionMode: 'acceptEdits' },
+  }),
+  deepseek: (orca) => {
+    const route = process.env.ORCA_DEEPSEEK_ROUTE || 'opencode-go';
+    if (!['opencode-go', 'api'].includes(route)) throw new Error(`ORCA_DEEPSEEK_ROUTE must be opencode-go or api, not ${route}`);
+    return claudeVariant(orca, {
+      agent: 'deepseek', displayName: `Claude Code on DeepSeek (${route})`, permissionMode: 'acceptEdits',
+      exec: deepseekExec(orca, route),
+      notes: [
+        { code: 'route', note: route === 'api'
+          ? 'DeepSeek API key from the secret profile "deepseek" (secret set deepseek DEEPSEEK_API_KEY).'
+          : 'OpenCode Go subscription through cc-opencode; its monthly limit fails the lane with a 429 in the error text.' },
+        { code: 'model_via_env', note: '--model picks the DeepSeek model (default ORCA_DEEPSEEK_MODEL, else deepseek-flash on the API route and deepseek-v4.1-flash on OpenCode Go); it is passed as routing env, not as a Claude model alias.' },
+        { code: 'accept_edits', note: 'Edit and Write are allowed in the lane cwd; Bash is denied.' },
+      ],
+      declared: { route, permissionMode: 'acceptEdits' },
+    });
+  },
+  alibaba: (orca) => {
+    const plan = process.env.ORCA_ALIBABA_PLAN || 'payg';
+    if (!ALIBABA[plan]) throw new Error(`ORCA_ALIBABA_PLAN must be payg or coding, not ${plan}`);
+    return claudeVariant(orca, {
+      agent: 'alibaba', displayName: `Claude Code on Alibaba Model Studio (${plan})`, permissionMode: 'acceptEdits',
+      exec: alibabaExec(orca, plan),
+      notes: [
+        { code: 'route', note: `${ALIBABA[plan].baseUrl}, key ${ALIBABA[plan].keyVar} from the secret profile "alibaba". Singapore-region keys only; Coding Plan (sk-sp-) and pay-as-you-go keys are not interchangeable (ORCA_ALIBABA_PLAN=payg|coding).` },
+        { code: 'model_via_env', note: `--model picks any model the endpoint serves (default ORCA_ALIBABA_MODEL or ${ALIBABA[plan].model}); pay-as-you-go also serves deepseek-v4-pro, kimi-k3 and glm-5.3. Claude Code logs unrecognized_model and its costUsd uses Anthropic prices, so ignore that figure.` },
+        { code: 'accept_edits', note: 'Edit and Write are allowed in the lane cwd; Bash is denied.' },
+      ],
+      declared: { plan, permissionMode: 'acceptEdits' },
+    });
+  },
+  dsh: (orca) => new DshAdapter(orca),
+  opencode: (orca) => new OpenCodeAdapter(orca),
+  vibe: (orca) => new VibeAdapter(orca),
+};
+
+// ------------------------------------------------------------ AI policy
+// Every dispatch and resume asks shared/bin/ai-policy whether this project may
+// use the lane's service and model (policy: shared/ai-policy/policy.json).
+const CLAUDE_MODEL_ENV = ['ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL',
+  'ANTHROPIC_DEFAULT_HAIKU_MODEL', 'ANTHROPIC_DEFAULT_FABLE_MODEL', 'CLAUDE_CODE_SUBAGENT_MODEL'];
+
+function opencodeDefaultModel(cwd) {
+  for (const file of [path.join(cwd, 'opencode.json'), path.join(os.homedir(), '.config/opencode/opencode.json')]) {
+    try { const model = JSON.parse(fs.readFileSync(file, 'utf8')).model; if (model) return model; } catch { /* next */ }
+  }
+  return undefined;
+}
+
+function policyTarget(agent, cwd, model) {
+  const env = process.env;
+  switch (agent) {
+    case 'claude': case 'claude-edit':
+      return { models: [model, ...CLAUDE_MODEL_ENV.map((k) => env[k])], baseUrl: env.ANTHROPIC_BASE_URL, provider: env.ANTHROPIC_BASE_URL ? undefined : 'anthropic' };
+    case 'deepseek': {
+      const api = (env.ORCA_DEEPSEEK_ROUTE || 'opencode-go') === 'api';
+      return { models: [model || env.ORCA_DEEPSEEK_MODEL || (api ? 'deepseek-flash' : 'deepseek-v4.1-flash')],
+        baseUrl: api ? DEEPSEEK_API : 'https://opencode.ai/inference/go/anthropic' };
+    }
+    case 'alibaba': {
+      const plan = ALIBABA[env.ORCA_ALIBABA_PLAN || 'payg'] ?? ALIBABA.payg;
+      return { models: [model || env.ORCA_ALIBABA_MODEL || plan.model], baseUrl: plan.baseUrl };
+    }
+    case 'opencode': return { models: [model || opencodeDefaultModel(cwd)] };
+    case 'vibe': return { models: [model], provider: 'mistral' };
+    case 'codex': return { models: [model], provider: 'openai' };
+    case 'dsh': return { models: [model], provider: 'deepseek' };
+    default: return { models: [model], provider: agent };
+  }
+}
+
+async function enforcePolicy(orca, agent, cwd, model) {
+  const t = policyTarget(agent, cwd, model);
+  const args = ['check', '--json', '--cwd', cwd, ...t.models.filter(Boolean).flatMap((m) => ['--model', m]),
+    ...(t.baseUrl ? ['--base-url', t.baseUrl] : []), ...(t.provider ? ['--provider', t.provider] : [])];
+  const out = await run(path.join(BIN_DIR, 'ai-policy'), args);
+  if (out.code === 0) return;
+  if (out.code === 3) {
+    let d = {};
+    try { d = JSON.parse(out.stdout); } catch { /* keep the generic message */ }
+    throw new orca.AdapterError('agent_unavailable',
+      `ai-policy: ${d.term ?? 'this lane'} is prohibited in project ${d.project ?? '?'} (${d.because ?? ''}). ${d.reason ?? ''}`.trim(),
+      { remediation: 'Pick a lane or --model the project allows (ai-policy explain --cwd <dir> lists the rules).' });
+  }
+  throw new orca.AdapterError('adapter_error', `ai-policy check failed (exit ${out.code}): ${truncate(out.stderr.trim(), FAILURE_CHARS)}`,
+    { remediation: 'Fix shared/ai-policy/policy.json; lanes stay blocked until the policy can be read.' });
+}
+
+function guarded(orca, agent, adapter) {
+  const dispatch = adapter.dispatch.bind(adapter);
+  const resume = adapter.resume.bind(adapter);
+  adapter.dispatch = async (req) => { await enforcePolicy(orca, agent, req.cwd, req.model); return dispatch(req); };
+  adapter.resume = async (lane, prompt, opts) => { await enforcePolicy(orca, agent, lane.cwd, lane.model); return resume(lane, prompt, opts); };
+  return adapter;
+}
+
+async function main() {
+  const pkg = orcaPackageDir();
+  if (!pkg) {
+    process.stderr.write('orca-lanes: orcastrator is not installed (npm install -g --ignore-scripts orcastrator@' + PINNED_ORCA + ')\n');
+    return 3;
+  }
+  const version = JSON.parse(fs.readFileSync(path.join(pkg, 'package.json'), 'utf8')).version;
+  if (version !== PINNED_ORCA && process.env.ORCA_LANES_ALLOW_VERSION !== version) {
+    process.stderr.write(`orca-lanes: built against orcastrator ${PINNED_ORCA}, found ${version}. ` +
+      `Re-qualify the adapters, then set ORCA_LANES_ALLOW_VERSION=${version} or update PINNED_ORCA.\n`);
+    return 3;
+  }
+  const load = (rel) => import(path.join(pkg, 'dist', rel));
+  const [lane, cli, claude] = await Promise.all([load('lane/index.js'), load('cli/lane-commands.js'), load('adapters/claude/index.js')]);
+  const orca = {
+    AdapterError: lane.AdapterError, ContinuityError: lane.ContinuityError, resolveOrcaHome: lane.resolveOrcaHome,
+    ClaudeAdapter: claude.ClaudeAdapter, buildClaudeManifest: claude.buildClaudeManifest,
+    createProcessClaudeExec: claude.createProcessClaudeExec,
+  };
+  const loadAdapterModule = async (agent, registry, store) => {
+    if (registry.get(agent)) return;
+    // Built-in adapters register into a scratch registry so they can be wrapped.
+    const scratch = new lane.AdapterRegistry();
+    if (EXTRA[agent]) scratch.register(EXTRA[agent](orca));
+    else if (agent === 'claude') claude.registerClaudeAdapter(scratch);
+    else if (agent === 'codex') (await load('adapters/codex/index.js')).registerCodexAdapter({ store }, scratch);
+    else if (agent === 'cursor') (await load('adapters/cursor/index.js')).registerCursorAdapter(scratch);
+    else throw new Error(`Unknown adapter: ${agent}`);
+    registry.register(guarded(orca, agent, scratch.get(agent)));
+  };
+  const args = process.argv.slice(2);
+  if (!args.length || args[0] === '--help' || args[0] === '-h') {
+    process.stdout.write('Usage: orca-lanes <dispatch|inspect|answer|resume|lanes|kill|agents|contract> ...\n' +
+      `Agents: claude, codex, cursor, ${Object.keys(EXTRA).join(', ')}. See "orca dispatch --help" for flags.\n`);
+    return 0;
+  }
+  const code = await cli.runLaneCli(args, {
+    registry: new lane.AdapterRegistry(),
+    builtinAgents: ['claude', 'codex', 'cursor', ...Object.keys(EXTRA)],
+    loadAdapterModule,
+  });
+  if (code === null) {
+    process.stderr.write('orca-lanes runs lane verbs only; use orca for run/plan/status.\n');
+    return 2;
+  }
+  return code;
+}
+
+main().then((code) => { process.exitCode = code; }, (error) => {
+  process.stderr.write(`orca-lanes: ${error.stack || error}\n`);
+  process.exitCode = 3;
+});
