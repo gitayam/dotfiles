@@ -119,6 +119,14 @@ if [ "$(uname -s)" = "Darwin" ] && [ -f "$PAPERCLIP_PLIST" ]; then
     fi
 fi
 
+# 5d. Hermes (CLI and Hermes.app share ~/.hermes): the coding-stack skill that
+#     teaches it to drive claude-z, Paperclip, Orca and zq
+if [ -d "$HOME/.hermes/skills" ]; then
+    mkdir -p "$HOME/.hermes/skills/autonomous-ai-agents"
+    ln -sfn "$DOTFILES/shared/hermes/skills/coding-stack" "$HOME/.hermes/skills/autonomous-ai-agents/coding-stack"
+    echo "✓ Hermes skill coding-stack → $DOTFILES/shared/hermes/skills/coding-stack"
+fi
+
 # 6. Linux: install systemd user unit for LiteLLM autostart.
 #    `cc-vibe` requires litellm running on :4000; without autostart, you'd have to
 #    `nohup ~/.vibe/run-litellm.sh &` after every reboot/login.

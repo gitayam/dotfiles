@@ -9,6 +9,8 @@
 # run read-only: good for questions and review, not for edits (see
 # vibe-coding/orchestrator/swappable-agent-stack.md, Seam 2).
 set -euo pipefail
+# Apps and launchd start with a bare PATH; find claude-z and orca anyway
+PATH="$PATH:$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")"):/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin"
 env_lines="$(claude-z env "${OZ_MODEL:-1}")" || exit $?
 eval "$env_lines"
 exec orca "$@"

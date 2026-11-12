@@ -29,6 +29,13 @@ import urllib.error
 import urllib.request
 
 
+# Apps and launchd start with a bare PATH; find claude-z next to this script,
+# Homebrew and ~/.local/bin anyway
+os.environ["PATH"] = os.pathsep.join([
+    os.environ.get("PATH", ""), os.path.dirname(os.path.realpath(__file__)), "/opt/homebrew/bin",
+    "/usr/local/bin", os.path.expanduser("~/.local/bin")])
+
+
 def ensure(key):
     out = subprocess.run(["claude-z", "ensure", key], capture_output=True, text=True)
     if out.returncode != 0:
@@ -88,8 +95,13 @@ def chat(args):
     if args.json:
         print(json.dumps(resp, indent=2))
         return
-    msg = (resp.get("choices") or [{}])[0].get("message") or {}
-    print((msg.get("content") or "").strip())
+    choice = (resp.get("choices") or [{}])[0]
+    msg = choice.get("message") or {}
+    content = (msg.get("content") or "").strip()
+    if not content and choice.get("finish_reason") == "length":
+        # Reasoning models (GLM, gpt-oss) can spend the whole budget thinking
+        sys.exit(f"zq: no answer within {args.max_tokens} tokens (the model was still reasoning); raise -t")
+    print(content)
 
 
 def main():
@@ -123,7 +135,7 @@ def main():
     p.add_argument("-t", "--max-tokens", type=int, default=1024)
     p.add_argument("--think", action="store_true")
     p.add_argument("--json", action="store_true")
-    chat(p.parse_args(argv))
+    chat(p.parse_intermixed_args(argv))  # 3.9 (Apple python3) needs this for `1 -t 30 "prompt"`
 
 
 if __name__ == "__main__":

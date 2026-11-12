@@ -149,7 +149,8 @@ Claude Code is the only coding harness. `shared/zsh/claude-aliases.zsh` defines 
   - No z2 agent: gpt-oss posts comments but never marks issues done.
   - `scripts/install-claude-aliases.sh` re-adds the plist PATH that `paperclipai service install` drops.
   - Details: vibe-coding `lessons-learned/self-hosted-claude-code.md`, items 9–13.
-- **Hermes:** providers `z1`/`z2` in `~/.hermes/config.yaml` (tunnel ports, `chat_completions`); `h1`/`h2` launch it.
+- **Hermes:** the CLI and `Hermes.app` (`brew install --cask hermes-desktop`) share `~/.hermes`. Providers `z1`/`z2` point at the tunnel ports (`chat_completions`), z1 is the default, and `h1`/`h2` launch the CLI. The skill `shared/hermes/skills/coding-stack` (linked by `scripts/install-claude-aliases.sh`) teaches it to pick a backend, run `claude-z`, file Paperclip issues, use `oz` and `zq`, and check health. It uses absolute paths because the app starts with a bare PATH. Tested 2026-11-12 with a bare PATH: Hermes had Claude Code on z1 fix a failing test, and completed a Paperclip issue on the z1 agent.
+- **Bare PATH:** apps and launchd jobs start with `/usr/bin:/bin`, where `python3` is Apple's 3.9. `claude-z`, `oz` and `zq` add their own directory, Homebrew and `~/.local/bin` to PATH, and `zq` uses `parse_intermixed_args` so 3.9 accepts `zq 1 -t 30 "prompt"`.
 
 ## Tests
 
