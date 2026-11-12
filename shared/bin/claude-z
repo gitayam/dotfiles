@@ -21,6 +21,9 @@ set -euo pipefail
 
 OLLAMA_BIN="/opt/homebrew/opt/ollama/bin/ollama"
 SELF="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+# Apps and launchd start with PATH=/usr/bin:/bin; fall back to our siblings,
+# Homebrew (claude, autossh) and ~/.local/bin. Appended, so the caller's PATH wins
+PATH="$PATH:$(dirname "$SELF"):/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin"
 CONF="${ZMODELS_CONF:-$(dirname "$SELF")/../llm/models.conf}"
 [ -r "$CONF" ] || { echo "claude-z: model registry not found: $CONF" >&2; exit 1; }
 
