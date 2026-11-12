@@ -18,6 +18,11 @@ ai-policy install          # Claude Code hook + OpenCode plugin link
 ai-policy install --check  # report only
 ```
 
+After installing, stop OpenCode's background service if it was already running
+(`pkill -f 'opencode serve --service'`; the next `opencode` run starts a new one).
+On 2026-11-12 a service started before the plugin link kept serving the
+IrregularChat monorepo without it, while `--standalone` runs were blocked.
+
 ## Policy terms
 
 Rules deny terms for named projects:

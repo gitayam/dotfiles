@@ -311,6 +311,12 @@ def install(check_only=False):
             plugin_dst.unlink()
         plugin_dst.symlink_to(plugin_src)
         status['opencode-plugin'] = 'installed'
+        # A background service started before the link keeps serving projects
+        # without the plugin (seen 2026-11-12); it restarts on the next run.
+        running = subprocess.run(['pgrep', '-f', 'opencode serve --service'], capture_output=True).returncode == 0
+        if running:
+            print("note: OpenCode's background service is running without the plugin; stop it with "
+                  "pkill -f 'opencode serve --service' (the next opencode run starts a fresh one)")
     for k, v in status.items():
         print(f'{k}: {"ok" if v is True else v or "missing"}')
     return 0 if all(status.values()) else DENIED
