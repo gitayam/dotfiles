@@ -86,6 +86,11 @@ launchctl list | grep io.zenithflow.tunnel            # the two SSH tunnels (lau
 
 If a server model is DOWN, say so and offer cloud instead; don't restart servers yourself.
 
+## Credentials and memory
+
+- Never mint, sign, forge or re-sign tokens, and never read service secrets (for example under `~/.paperclip/`, `.env` files or keychains) to get past an authorization error. A 401, 403, 409 or 422 from a service means stop and tell the user what failed.
+- Don't save workarounds for access controls to memory or skills. Memory holds preferences and facts; if a lesson involves credentials or permissions, describe it to the user instead of writing it down.
+
 ## Ask first
 
 Production changes, deploys, pushes, merges, anything irreversible, and switching a task to the paid cloud backend for more than a quick call.
