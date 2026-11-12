@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+# claude-z — launch Claude Code against a self-hosted model.
+# Models live in shared/llm/models.conf (override with ZMODELS_CONF).
+#
+#   z1  z2  z2q  z2s  z2f  zl   one name per model: z<key> (symlinks to this file)
+#   claude-z <key> [claude args]  pick explicitly, by key or alias (1, glm, 2q, qwen...)
+#   claude-z                      smart: first reachable of server 1, then 2, else local
+#   claude-z status               every model: UP / DOWN / OFF, port, context window
+#   claude-z ensure <key>         start the tunnel if needed; print "port model opts" (used by zq)
+#   claude-z env <key>            print the export lines Claude Code needs for <key>, for
+#                                 tools that launch `claude` themselves (Paperclip, Orca)
+#   claude-z tunnel-run <ssh>     one foreground tunnel carrying every model on that server
+#                                 (run by launchd; see shared/launchd/io.zenithflow.tunnel.plist)
+#   claude-z tunnels-off          stop all tunnels started by this script
+#   claude-z local-off            stop the local model + Ollama daemon (free RAM)
+#
+# Remote models are reached through autossh tunnels to localhost; the local one
+# runs on Ollama. Chat models speak the Anthropic Messages API (/v1/messages)
+# that Claude Code needs, and the OpenAI API that zq uses.
+set -euo pipefail
+
+OLLAMA_BIN="/opt/homebrew/opt/ollama/bin/ollama"
+SELF="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+CONF="${ZMODELS_CONF:-$(dirname "$SELF")/../llm/models.conf}"
+[ -r "$CONF" ] || { echo "claude-z: model registry not found: $CONF" >&2; exit 1; }
+
+# Print "key use ssh remote port model opts" for a key or alias; fail if unknown
+model_def() {
+  awk -v k="$1" '!/^[[:space:]]*(#|$)/ {
+    n = split($1, keys, ",")
+    for (i = 1; i <= n; i++) if (keys[i] == k) { print keys[1], $2, $3, $4, $5, $6, ($7 == "" ? "-" : $7); found = 1; exit }
+  } END { exit !found }' "$CONF"
+}
+all_keys() { awk '!/^[[:space:]]*(#|$)/ { split($1, k, ","); print k[1] }' "$CONF"; }
+
+port_up() { nc -z 127.0.0.1 "$1" >/dev/null 2>&1; }
+wait_port() { for _ in $(seq 1 "${2:-20}"); do port_up "$1" && return 0; sleep 0.5; done; return 1; }
+
+# Self-healing tunnel. autossh stays alive as supervisor and respawns ssh if the
+# link drops (backgrounded here instead of autossh's -f, which on macOS exits the
+# supervisor and leaves an unmonitored ssh). ControlMaster=no/ControlPath=none
+# bypass Host * connection sharing, which would hand the forward to a persistent
+# master and make ssh exit 0, so autossh would stop supervising.
+start_tunnel() {  # ssh-host remote port
+  AUTOSSH_GATETIME=0 nohup autossh -M 0 -N \
+    -o ControlMaster=no -o ControlPath=none \
+    -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+    -o ExitOnForwardFailure=yes -L "$3:$2" "$1" >/dev/null 2>&1 &
+  disown 2>/dev/null || true
+}
+
+ensure_ollama() {
+  if ! port_up 11434; then
+    echo "claude-z: starting local Ollama daemon..." >&2
+    OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0 \
+      nohup "$OLLAMA_BIN" serve >/tmp/ollama.log 2>&1 &
+    wait_port 11434 30 || true
+  fi
+}
+
+ensure_up() {  # ssh remote port
+  if [ "$1" = "-" ]; then
+    ensure_ollama
+  elif ! port_up "$3"; then
+    echo "claude-z: starting tunnel $1 -> $2 (localhost:$3)..." >&2
+    start_tunnel "$1" "$2" "$3"; wait_port "$3" 20 || true
+  fi
+}
+
+# The served context window, as vLLM reports it (Ollama reports none)
+served_window() {  # port model
+  curl -s -m 10 "http://127.0.0.1:$1/v1/models" | python3 -Ic '
+import json, sys
+try:
+    for m in json.load(sys.stdin).get("data", []):
+        if m.get("id") == sys.argv[1] and m.get("max_model_len"):
+            print(m["max_model_len"])
+except ValueError:
+    pass' "$2" 2>/dev/null || true
+}
+
+answers() { curl -s -m "${2:-6}" -o /dev/null -f "http://127.0.0.1:$1/v1/models" >/dev/null; }
+
+case "${1:-}" in
+  tunnels-off)
+    pkill -f "autossh -M 0" >/dev/null 2>&1 && echo "claude-z: autossh tunnels stopped." || echo "claude-z: no autossh tunnels running."
+    pkill -f "ssh -N -o ServerAliveInterval=15" >/dev/null 2>&1 || true
+    pkill -f "ssh -f -N -M -S .*-tunnel" >/dev/null 2>&1 || true
+    exit 0 ;;
+  local-off)
+    "$OLLAMA_BIN" stop qwen3-coder:30b >/dev/null 2>&1 || true
+    pkill -f "[o]llama serve" >/dev/null 2>&1 && echo "claude-z: local model + daemon stopped." || echo "claude-z: local daemon was not running."
+    exit 0 ;;
+  status)
+    for k in $(all_keys); do
+      read -r key use ssh remote port model _ <<<"$(model_def "$k")"
+      if [ "$ssh" = "-" ] && ! port_up "$port"; then
+        printf "z%-4s %-9s OFF   %-6s %s (Ollama not running)\n" "$key" "$use" "$port" "$model"
+        continue
+      fi
+      ensure_up "$ssh" "$remote" "$port" 2>/dev/null
+      if answers "$port"; then
+        w="$(served_window "$port" "$model")"
+        printf "z%-4s %-9s UP    %-6s %s%s\n" "$key" "$use" "$port" "$model" "${w:+ ($((w / 1024))K)}"
+      else
+        printf "z%-4s %-9s DOWN  %-6s %s (via %s)\n" "$key" "$use" "$port" "$model" "$ssh"
+      fi
+    done
+    exit 0 ;;
+  tunnel-run)
+    host="${2:?usage: claude-z tunnel-run <ssh-host>}"
+    # -L for each distinct local port this server serves (2q and 2s share one)
+    read -r -a fwd <<<"$(awk -v h="$host" '!/^[[:space:]]*(#|$)/ && $3 == h && !seen[$5]++ { printf "-L %s:%s ", $5, $4 }' "$CONF")"
+    [ ${#fwd[@]} -gt 0 ] || { echo "claude-z: no models on '$host' in $CONF" >&2; exit 2; }
+    # Foreground: launchd (KeepAlive) supervises autossh, which supervises ssh
+    AUTOSSH_GATETIME=0 exec autossh -M 0 -N \
+      -o ControlMaster=no -o ControlPath=none \
+      -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+      -o ExitOnForwardFailure=yes "${fwd[@]}" "$host" ;;
+  env)
+    [ -n "${2:-}" ] || { echo "usage: claude-z env <key>" >&2; exit 2; }
+    PRINT_ENV=1; sel="$2"; shift 2 ;;
+  ensure)
+    def="$(model_def "${2:-}")" || { echo "claude-z: unknown model '${2:-}'" >&2; exit 2; }
+    read -r key use ssh remote port model opts <<<"$def"
+    ensure_up "$ssh" "$remote" "$port"
+    answers "$port" 20 || { echo "claude-z: z$key not reachable at localhost:$port" >&2; exit 1; }
+    echo "$port $model $opts"
+    exit 0 ;;
+esac
+
+# ---- resolve which model ------------------------------------------------------
+sel="${sel:-}"
+self="$(basename "$0")"
+[ -z "$sel" ] && case "$self" in
+  z?*) sel="${self#z}" ;;
+esac
+if [ -z "$sel" ] && [ $# -gt 0 ] && model_def "$1" >/dev/null 2>&1; then
+  sel="$1"; shift
+fi
+if [ -z "$sel" ]; then
+  # Smart default: first reachable remote (prefer server 1), else fall back local
+  for k in 1 2; do
+    read -r _ _ ssh remote port _ _ <<<"$(model_def "$k")"
+    ensure_up "$ssh" "$remote" "$port" 2>/dev/null
+    if answers "$port"; then sel="$k"; break; fi
+  done
+  if [ -z "$sel" ]; then sel=l; echo "claude-z: no remote reachable — falling back to LOCAL." >&2
+  else echo "claude-z: smart-selected backend z$sel" >&2; fi
+fi
+
+def="$(model_def "$sel")" || { echo "claude-z: unknown model '$sel' (see: claude-z status)" >&2; exit 2; }
+read -r key use ssh remote port model _ <<<"$def"
+if [ "$use" != "chat" ]; then
+  echo "claude-z: z$key is an $use model, not a chat model; call it with: zq $key" >&2
+  exit 2
+fi
+ensure_up "$ssh" "$remote" "$port"
+if ! answers "$port" 20; then
+  echo "claude-z: ERROR — z$key ($model) not reachable at localhost:$port." >&2
+  exit 1
+fi
+
+# Per-project model policy (shared/bin/ai-policy): refuse a model this repo
+# may not use, before any request is made
+if [ -z "${PRINT_ENV:-}" ] && command -v ai-policy >/dev/null 2>&1; then
+  ai-policy check --cwd "$PWD" --model "$model" --base-url "http://127.0.0.1:$port" >/dev/null || {
+    ai-policy check --cwd "$PWD" --model "$model" --base-url "http://127.0.0.1:$port" >&2 || true
+    exit 3
+  }
+fi
+
+window="$(served_window "$port" "$model")"
+label="$model@${ssh/-/localhost}"
+# Claude Code's opening request (system prompt, tools, CLAUDE.md, rules, skill
+# and agent lists) is 24.9K tokens even with the short system prompt (28.7K
+# without), so a 32K model fails on the first call (measured 2026-11-12).
+# --bare would fit but also drops hooks, including the safety guard.
+MIN_WINDOW="${CLAUDE_Z_MIN_WINDOW:-40000}"
+if [ -n "$window" ] && [ "$window" -lt "$MIN_WINDOW" ]; then
+  echo "claude-z: z$key has a ${window}-token window; Claude Code needs at least $MIN_WINDOW." >&2
+  echo "          Call it directly instead: zq $key \"prompt\"" >&2
+  exit 2
+fi
+[ -n "${PRINT_ENV:-}" ] || echo "claude-z: using $label${window:+ (${window} tokens)}" >&2
+export ANTHROPIC_BASE_URL="http://127.0.0.1:$port"
+export ANTHROPIC_AUTH_TOKEN="selfhosted"              # dummy; backends need no key
+export ANTHROPIC_MODEL="$model"
+export ANTHROPIC_CUSTOM_MODEL_OPTION="$model"
+export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="$label"
+# Every tier alias and every subagent resolves to the served model; otherwise an
+# agent with `model: sonnet` asks this server for a Claude model it doesn't have
+export ANTHROPIC_DEFAULT_OPUS_MODEL="$model"
+export ANTHROPIC_DEFAULT_SONNET_MODEL="$model"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="$model"
+export CLAUDE_CODE_SUBAGENT_MODEL="$model"
+export CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1
+unset ANTHROPIC_SMALL_FAST_MODEL                      # deprecated for the HAIKU variable
+if [ -n "$window" ]; then
+  # Unknown model IDs are assumed to have 200K; tell Claude Code the real window
+  # so it compacts before the server rejects the request
+  export CLAUDE_CODE_MAX_CONTEXT_TOKENS="$window"
+  if [ "$window" -lt 100000 ]; then
+    # Small windows (49K, 32K): shorter system prompt, and an output budget
+    # that leaves room for the conversation (default is 32K)
+    export CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT=1
+    export CLAUDE_CODE_MAX_OUTPUT_TOKENS=$(( window / 6 ))
+  fi
+fi
+
+if [ -n "${PRINT_ENV:-}" ]; then
+  for v in ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL ANTHROPIC_CUSTOM_MODEL_OPTION \
+           ANTHROPIC_CUSTOM_MODEL_OPTION_NAME ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL \
+           ANTHROPIC_DEFAULT_HAIKU_MODEL CLAUDE_CODE_SUBAGENT_MODEL CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS \
+           CLAUDE_CODE_MAX_CONTEXT_TOKENS CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT CLAUDE_CODE_MAX_OUTPUT_TOKENS; do
+    [ -n "${!v:-}" ] && printf 'export %s=%q\n' "$v" "${!v}"
+  done
+  exit 0
+fi
+
+exec claude "$@"

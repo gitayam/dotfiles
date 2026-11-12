@@ -142,8 +142,11 @@ def classify(policy, models=(), base_url=None, provider=None):
         if len(segments) > 1:
             service_for_provider(segments[0], f'model {raw}')
         leaf = segments[-1].split(':', 1)[0] if segments else model   # qwen3.6:latest
+        # Fine-tunes prefix the family: huihui-qwen3.8-27b-abliterated is Qwen.
+        # Also try every part of the leaf that starts after a - or _.
+        parts = [leaf[m.end():] for m in re.finditer(r'[-_]', leaf)]
         for name, spec in policy['vendors'].items():
-            if any(fnmatch.fnmatch(leaf, p) or fnmatch.fnmatch(s, p) for p in spec.get('models', []) for s in segments):
+            if any(fnmatch.fnmatch(c, p) for p in spec.get('models', []) for c in [leaf, *segments, *parts]):
                 add(f'vendor:{name}', f'model {raw}', spec.get('tags', []))
     if base_url:
         host = (urlsplit(base_url if '://' in base_url else f'https://{base_url}').hostname or '').lower()

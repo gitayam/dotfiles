@@ -60,7 +60,7 @@ syntax_bash() {
   local f bad=0
   for f in "$REPO"/macos/*.sh "$REPO"/linux/*.sh "$REPO"/shared/setup/*.sh "$REPO"/tests/*.sh \
            "$REPO"/shared/bin/git-wip "$REPO"/shared/bin/git-sync-all "$REPO"/shared/bin/secret \
-           "$REPO"/shared/bin/claude-switch "$REPO"/shared/vibe/run-litellm.sh \
+           "$REPO"/shared/bin/claude-switch "$REPO"/shared/bin/claude-z "$REPO"/shared/bin/oz "$REPO"/shared/vibe/run-litellm.sh \
            "$REPO"/scripts/install-claude-aliases.sh "$REPO"/shared/zsh/.zsh_*; do
     [[ "$f" == *.original ]] && continue
     bash -n "$f" || { echo "bash -n failed: $f"; bad=1; }
@@ -337,6 +337,51 @@ if command -v sops >/dev/null && command -v age-keygen >/dev/null; then
   check "secret: no plaintext or temp files left in the store" secret_no_plaintext_files
 fi
 
+echo "== Claude Code launchers"
+CZT="$(mktemp -d)"
+# Fakes: nc says every port is up, curl serves a vLLM model list, claude prints its env
+mkdir -p "$CZT/bin"
+printf '#!/bin/sh\nexit 0\n' > "$CZT/bin/nc"
+printf '#!/bin/sh\necho "{\\"data\\":[{\\"id\\":\\"openai/gpt-oss-120b\\",\\"max_model_len\\":49152},{\\"id\\":\\"glm-5.3-flash\\",\\"max_model_len\\":262144},{\\"id\\":\\"DavidAU/Qwen3.6-27B-Fable-711-FP8\\",\\"max_model_len\\":32768}]}"\n' > "$CZT/bin/curl"
+printf '#!/bin/sh\necho "args=$*"; env | grep -E "^(ANTHROPIC|CLAUDE_CODE)_" | sort\n' > "$CZT/bin/claude"
+chmod +x "$CZT"/bin/*
+claude_z_server_env() {
+  local out1 out2
+  out1=$(PATH="$CZT/bin:$PATH" bash "$REPO/shared/bin/claude-z" 1 -p x 2>/dev/null) || return 1
+  out2=$(PATH="$CZT/bin:$PATH" bash "$REPO/shared/bin/claude-z" 2 -p x 2>/dev/null) || return 1
+  [[ "$out1" == *"ANTHROPIC_DEFAULT_SONNET_MODEL=glm-5.3-flash"* && "$out1" == *"CLAUDE_CODE_SUBAGENT_MODEL=glm-5.3-flash"* ]] || { echo "z1 tiers: $out1"; return 1; }
+  [[ "$out1" == *"CLAUDE_CODE_MAX_CONTEXT_TOKENS=262144"* && "$out1" != *"SIMPLE_SYSTEM_PROMPT"* ]] || { echo "z1 window: $out1"; return 1; }
+  [[ "$out2" == *"CLAUDE_CODE_MAX_CONTEXT_TOKENS=49152"* && "$out2" == *"CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT=1"* && "$out2" == *"CLAUDE_CODE_MAX_OUTPUT_TOKENS=8192"* ]] || { echo "z2 window: $out2"; return 1; }
+  [[ "$out2" != *"ANTHROPIC_SMALL_FAST_MODEL"* ]] || { echo "deprecated var set"; return 1; }
+}
+check "claude-z: every tier and subagent uses the served model; window from vLLM" claude_z_server_env
+claude_z_registry() {
+  local out rc=0
+  out=$(PATH="$CZT/bin:$PATH" bash "$REPO/shared/bin/claude-z" ensure qwen 2>/dev/null)
+  [[ "$out" == "8003 huihui-ai/Huihui-Qwen3.8-27B-abliterated nothink" ]] || { echo "ensure alias: $out"; rc=1; }
+  out=$(PATH="$CZT/bin:$PATH" bash "$REPO/shared/bin/claude-z" ensure 1 2>/dev/null)
+  [[ "$out" == "8001 glm-5.3-flash -" ]] || { echo "ensure 1: $out"; rc=1; }
+  out=$(PATH="$CZT/bin:$PATH" bash "$REPO/shared/bin/claude-z" 2f -p x 2>&1); [[ $? -eq 2 && "$out" == *"zq 2f"* && "$out" != *"args="* ]] || { echo "32K not refused: $out"; rc=1; }
+  out=$(PATH="$CZT/bin:$PATH" bash "$REPO/shared/bin/claude-z" embed -p x 2>&1); [[ "$out" == *"embed model"* && "$out" != *"args="* ]] || { echo "embed not refused: $out"; rc=1; }
+  PATH="$CZT/bin:$PATH" bash "$REPO/shared/bin/claude-z" nope 2>/dev/null | grep -q "args=nope" || { echo "unknown first arg not passed to claude"; rc=1; }
+  return $rc
+}
+check "claude-z: registry keys and aliases; 32K and non-chat models refused for Claude Code" claude_z_registry
+cc_cloud_is_clean() {
+  local sh out rc=0
+  for sh in bash zsh; do
+    command -v $sh >/dev/null || continue
+    out=$(PATH="$CZT/bin:$PATH" ANTHROPIC_BASE_URL=http://127.0.0.1:8001 CLAUDE_CODE_SUBAGENT_MODEL=glm \
+      $sh -c 'alias cc=claude-z; source "$1"; source "$1"; cc -p x' _ "$REPO/shared/zsh/claude-aliases.zsh" 2>&1) ||
+      { echo "$sh: $out"; rc=1; continue; }
+    [[ "$out" == *"args=--dangerously-skip-permissions --teammate-mode auto -p x"* ]] || { echo "$sh flags: $out"; rc=1; }
+    [[ "$out" != *"ANTHROPIC_BASE_URL"* && "$out" != *"SUBAGENT_MODEL"* ]] || { echo "$sh leaked: $out"; rc=1; }
+  done
+  return $rc
+}
+check "cc: cloud run drops self-hosted variables; re-sourcing over old aliases is clean" cc_cloud_is_clean
+rm -rf "$CZT"
+
 echo "== ai-policy"
 AP="$REPO/shared/bin/ai-policy"
 APW="$WORK/ai-policy"; mkdir -p "$APW"
@@ -354,6 +399,9 @@ ap_decisions() {
   c ic 3 --model deepseek-v4-pro --base-url https://dashscope-intl.aliyuncs.com/apps/anthropic
   c ic 3 --model alibaba/glm-5.3
   c zf 3 --model qwen3.8-max
+  c zf 3 --model huihui-ai/Huihui-Qwen3.8-27B-abliterated   # fine-tune: family after a prefix
+  c zf 0 --model openai/gpt-oss-120b
+  c zf 0 --model translategemma:12b
   c icgl 3 --model Qwen/Qwen2.5-72B-Instruct
   c ic 0 --model claude-opus-5-5
   c ic 0 --model deepseek-v4-pro --base-url https://api.deepseek.com/anthropic

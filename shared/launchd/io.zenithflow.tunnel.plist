@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- One SSH tunnel per model server, carrying every model that server has in
+     shared/llm/models.conf, so Claude Code, zq, Hermes, Paperclip and Orca find
+     their ports up without starting tunnels themselves. __HOME__ and __HOST__
+     are replaced at install (scripts/install-claude-aliases.sh), one job per
+     ssh host; launchd does not expand ~ or $HOME. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>io.zenithflow.tunnel.__HOST__</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__HOME__/Git/dotfiles/shared/bin/claude-z</string>
+    <string>tunnel-run</string>
+    <string>__HOST__</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <!-- Server down or Tailscale off: retry at most every 30 s -->
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/zenithflow-tunnel-__HOST__.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/zenithflow-tunnel-__HOST__.log</string>
+</dict>
+</plist>

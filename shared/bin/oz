@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# oz — Orca with Claude lanes on a self-hosted server model (default z1, GLM).
+# Claude lanes take their model from the environment, so this exports what
+# `claude-z env` gives for the model, then hands over to orca:
+#   oz dispatch --agent claude "Explain the failing test"
+#   OZ_MODEL=2 oz dispatch --agent claude "..."     # gpt-oss on server 2
+#   oz agents | oz lanes | oz inspect <laneId>
+# Orca's CLI can't set a permission mode for the Claude adapter, so Claude lanes
+# run read-only: good for questions and review, not for edits (see
+# vibe-coding/orchestrator/swappable-agent-stack.md, Seam 2).
+set -euo pipefail
+env_lines="$(claude-z env "${OZ_MODEL:-1}")" || exit $?
+eval "$env_lines"
+exec orca "$@"

@@ -11,6 +11,17 @@ mkdir -p "$HOME/.local/bin"
 ln -sfn "$DOTFILES/shared/bin/claude-switch" "$HOME/.local/bin/claude-switch"
 echo "✓ ~/.local/bin/claude-switch → $DOTFILES/shared/bin/claude-switch"
 
+# 1b. claude-z (self-hosted servers) and its per-backend names z1 z2 z2q zl.
+#     An existing non-link claude-z is backed up first.
+CZ_DST="$HOME/.local/bin/claude-z"
+if [ -e "$CZ_DST" ] && [ ! -L "$CZ_DST" ]; then
+    mv "$CZ_DST" "$CZ_DST.bak.$(date +%Y%m%d%H%M%S)"
+fi
+ln -sfn "$DOTFILES/shared/bin/claude-z" "$CZ_DST"
+# one z<key> per chat model in shared/llm/models.conf
+for n in z1 z2 z2q z2s z2f z2f2 zl; do ln -sfn claude-z "$HOME/.local/bin/$n"; done
+echo "✓ ~/.local/bin/claude-z (+ z1 z2 z2q z2s z2f z2f2 zl) → $DOTFILES/shared/bin/claude-z"
+
 # 2. Source claude-aliases.zsh from every interactive-shell rc file present.
 #    The fragment is bash/zsh-compatible (POSIX function syntax + alias).
 #    Idempotent via guard markers. Does NOT create rc files that don't exist.
@@ -63,6 +74,48 @@ if [ "$(uname -s)" = "Darwin" ]; then
         echo "✓ loaded launchd job io.vibe.litellm (logs: ~/.vibe/logs/litellm.log)"
     else
         echo "⚠ could not load io.vibe.litellm; try: launchctl bootstrap gui/$(id -u) $PLIST_DST"
+    fi
+fi
+
+# 5b. macOS: one always-on tunnel per model server in shared/llm/models.conf.
+#     Ad-hoc tunnels that claude-z started earlier hold the same ports, so they
+#     are stopped first; launchd then owns the forwards.
+if [ "$(uname -s)" = "Darwin" ]; then
+    hosts=$(awk '!/^[[:space:]]*(#|$)/ && $3 != "-" { print $3 }' "$DOTFILES/shared/llm/models.conf" | sort -u)
+    pkill -f "autossh -M 0 -N -o ControlMaster=no" 2>/dev/null || true
+    for host in $hosts; do
+        label="io.zenithflow.tunnel.$host"
+        dst="$HOME/Library/LaunchAgents/$label.plist"
+        sed "s|__HOME__|$HOME|g; s|__HOST__|$host|g" "$DOTFILES/shared/launchd/io.zenithflow.tunnel.plist" > "$dst.tmp" &&
+            plutil -lint -s "$dst.tmp" && mv "$dst.tmp" "$dst"
+        launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+        if launchctl bootstrap "gui/$(id -u)" "$dst"; then
+            echo "✓ loaded $label (log: ~/Library/Logs/zenithflow-tunnel-$host.log)"
+        else
+            echo "⚠ could not load $label; try: launchctl bootstrap gui/$(id -u) $dst"
+        fi
+    done
+fi
+
+# 5c. macOS: Paperclip's service plist (written by `paperclipai service install`)
+#     has no PATH, so its agents get Apple's Python 3.9 and miss Homebrew tools.
+#     Add one when it's missing and reload the service; reinstalls drop it again,
+#     so this step is idempotent and safe to rerun.
+PAPERCLIP_PLIST="$HOME/Library/LaunchAgents/ing.paperclip.paperclipai.plist"
+if [ "$(uname -s)" = "Darwin" ] && [ -f "$PAPERCLIP_PLIST" ]; then
+    if /usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:PATH" "$PAPERCLIP_PLIST" >/dev/null 2>&1; then
+        echo "✓ Paperclip service already has a PATH"
+    else
+        pc_path="$DOTFILES/shared/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:PATH string $pc_path" "$PAPERCLIP_PLIST"
+        launchctl bootout "gui/$(id -u)/ing.paperclip.paperclipai" 2>/dev/null || true
+        # bootout returns before the old process is gone; bootstrap fails (EIO) until then
+        for _ in $(seq 1 60); do launchctl print "gui/$(id -u)/ing.paperclip.paperclipai" >/dev/null 2>&1 || break; sleep 1; done
+        if launchctl bootstrap "gui/$(id -u)" "$PAPERCLIP_PLIST"; then
+            echo "✓ added PATH to the Paperclip service and reloaded it"
+        else
+            echo "⚠ PATH added; reload with: launchctl bootstrap gui/$(id -u) $PAPERCLIP_PLIST"
+        fi
     fi
 fi
 
