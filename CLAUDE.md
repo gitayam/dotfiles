@@ -139,6 +139,7 @@ Both setup scripts install sops and age (Linux: pinned sops release, checked aga
 | `shared/ssh/config.template` | copied to `~/.ssh/config` only if absent | `Include ~/.ssh/config.d/*.conf`, `IgnoreUnknown UseKeychain` first (Linux), `ForwardAgent no`, keep-alives, ControlMaster sockets in `~/.ssh/sockets/%C`. |
 | `ssh-doctor [host]` | `.zsh_network` | Permissions as ssh enforces them, config parses, agent has keys, `IdentitiesOnly yes` with missing IdentityFile; with a host, resolved settings + key-only login test. `SSH_DOCTOR_CONFIG=file` checks another config. |
 | `ts-expiry [days]` | `.zsh_network` | This machine's and peers' Tailscale key expiry (online/offline, last seen). Finds the CLI inside Tailscale.app too. |
+| `orca-lanes` | `shared/bin/orca-lanes` | Orca 0.2.25's lane verbs with extra adapters: `claude-edit` (acceptEdits), `deepseek` (Claude Code on DeepSeek), `dsh`, `opencode`, `vibe`. Refuses other Orca versions. Probe results and where it fits: `docs/orca-lanes.md`. |
 | `tm [name]` | `.zsh_utils` | `tmux new -A -s main`; config in `shared/tmux/.tmux.conf` (copied only if absent). tmux and mosh are installed by both setup scripts. |
 
 Both setup scripts run `setup_shell_tools` (in `shared/setup/common.sh`) for the SSH/tmux/git pieces; both `harden.sh` scripts report backups (Time Machine age on macOS; scheduled restic/borg/Timeshift/… on Linux, reported as INFO since recency needs the tool's credentials).
