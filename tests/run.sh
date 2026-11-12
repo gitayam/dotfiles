@@ -439,6 +439,10 @@ if command -v node >/dev/null; then
   check "ai-policy OpenCode plugin parses" node --check "$REPO/shared/opencode/plugins/ai-policy/server.js"
 fi
 
+check "paperclip-wait: usage exits 0; unreachable API exits 3" bash -c '
+  python3 "$1" --help >/dev/null &&
+  { PAPERCLIP_API_URL=http://127.0.0.1:9 python3 "$1" SAC-1 1 >/dev/null 2>&1; [ $? -eq 3 ]; }' _ "$REPO/shared/bin/paperclip-wait"
+
 echo "== git wip"
 wip_setup() {
   local d="$WORK/wip"
