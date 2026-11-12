@@ -1,0 +1,377 @@
+#!/usr/bin/env python3
+"""ai-policy: which AI services and model families a project may use.
+
+The policy (shared/ai-policy/policy.json, or AI_POLICY_FILE) names projects by
+git remote, classifies models by vendor and endpoints by service, and denies
+terms per project: vendor:<id>, service:<id>, tag:<tag>, model:<glob>.
+
+  ai-policy check [--cwd DIR] [--model ID]... [--base-url URL] [--provider ID] [--json]
+  ai-policy explain [--cwd DIR]          projects matched and the rules that apply
+  ai-policy classify [--model ID] [--base-url URL] [--provider ID]
+  ai-policy scan [DIR] [--include-docs]  denied model or service names in tracked files
+  ai-policy claude-hook                  Claude Code UserPromptSubmit hook (stdin JSON)
+  ai-policy install [--check]            add the Claude Code hook and the OpenCode plugin link
+
+Exit codes: 0 allowed, 3 denied (or scan findings), 2 usage or unreadable policy.
+A policy that can't be read denies: the hook and plugins fail closed.
+"""
+import argparse
+import fnmatch
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+from urllib.parse import urlsplit
+
+DENIED, BROKEN = 3, 2
+TERM = re.compile(r'^(vendor|service|tag|model):(.+)$')
+
+
+class PolicyError(Exception):
+    pass
+
+
+def policy_path():
+    if os.environ.get('AI_POLICY_FILE'):
+        return Path(os.environ['AI_POLICY_FILE'])
+    return Path(os.path.realpath(__file__)).parent.parent / 'ai-policy' / 'policy.json'
+
+
+def load_policy(path=None):
+    path = Path(path or policy_path())
+    try:
+        policy = json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        raise PolicyError(f'cannot read policy {path}: {exc}') from None
+    if policy.get('version') != 1:
+        raise PolicyError(f'{path}: unsupported policy version {policy.get("version")!r}')
+    for key in ('vendors', 'services', 'projects', 'rules'):
+        if not isinstance(policy.get(key), (dict if key != 'rules' else list)):
+            raise PolicyError(f'{path}: "{key}" is missing or has the wrong type')
+    for i, rule in enumerate(policy['rules']):
+        for name in rule.get('projects', []):
+            if name not in policy['projects']:
+                raise PolicyError(f'{path}: rule {i} names unknown project {name!r}')
+        if not rule.get('deny'):
+            raise PolicyError(f'{path}: rule {i} denies nothing')
+        for term in rule['deny']:
+            m = TERM.match(term)
+            if not m:
+                raise PolicyError(f'{path}: rule {i}: bad term {term!r} (vendor:, service:, tag: or model:)')
+            kind, value = m.groups()
+            table = {'vendor': 'vendors', 'service': 'services'}.get(kind)
+            if table and value not in policy[table]:
+                raise PolicyError(f'{path}: rule {i}: unknown {kind} {value!r}')
+    return policy
+
+
+# ------------------------------------------------------------------ projects
+def normalize_remote(url):
+    """git@host:a/b.git, ssh://u@host:22/a/b, https://u:p@host/a/b -> host/a/b"""
+    url = url.strip()
+    m = re.match(r'^[\w.-]+@([\w.-]+):(?!\d+/)(.+)$', url)
+    if m:
+        host, path = m.groups()
+    else:
+        parts = urlsplit(url)
+        host, path = (parts.hostname or ''), parts.path
+    path = re.sub(r'\.git$', '', path.strip('/'))
+    return f'{host.lower()}/{path.lower()}' if host else path.lower()
+
+
+def git_remotes(cwd):
+    try:
+        out = subprocess.run(['git', '-C', str(cwd), 'remote', '-v'], capture_output=True,
+                             text=True, timeout=10, env=dict(os.environ, GIT_OPTIONAL_LOCKS='0'))
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if out.returncode:
+        return []
+    return sorted({normalize_remote(line.split()[1]) for line in out.stdout.splitlines() if len(line.split()) >= 2})
+
+
+def projects_for(policy, cwd):
+    cwd = Path(cwd or os.getcwd()).expanduser()
+    remotes = git_remotes(cwd) if cwd.exists() else []
+    real = os.path.realpath(cwd)
+    matched = {}
+    for name, spec in policy['projects'].items():
+        for pattern in spec.get('remotes', []):
+            hit = next((r for r in remotes if fnmatch.fnmatch(r, pattern.lower())), None)
+            if hit:
+                matched[name] = f'remote {hit}'
+                break
+        else:
+            for pattern in spec.get('paths', []):
+                pattern = os.path.expanduser(pattern)
+                if fnmatch.fnmatch(real, pattern) or real.startswith(pattern.rstrip('*').rstrip('/') + '/'):
+                    matched[name] = f'path {real}'
+                    break
+    return matched, remotes
+
+
+# ------------------------------------------------------------ classification
+def bare_model(model):
+    model = re.sub(r'\[[^\]]*\]$', '', model.strip().lower())   # deepseek-v4-pro[1m]
+    model = model.split('#', 1)[0]                              # provider/model#variant
+    return model
+
+
+def classify(policy, models=(), base_url=None, provider=None):
+    """Returns {term: why} for every vendor, service and tag these touch."""
+    terms = {}
+
+    def add(term, why, tags=()):
+        terms.setdefault(term, why)
+        for tag in tags:
+            terms.setdefault(f'tag:{tag}', why)
+
+    def service_for_provider(pid, why):
+        for name, spec in policy['services'].items():
+            if any(fnmatch.fnmatch(pid, p) for p in spec.get('providers', [])):
+                add(f'service:{name}', why, spec.get('tags', []))
+
+    for raw in models:
+        if not raw:
+            continue
+        model = bare_model(raw)
+        add(f'model:{model}', f'model {raw}')
+        segments = [s for s in model.split('/') if s]
+        if len(segments) > 1:
+            service_for_provider(segments[0], f'model {raw}')
+        leaf = segments[-1].split(':', 1)[0] if segments else model   # qwen3.6:latest
+        for name, spec in policy['vendors'].items():
+            if any(fnmatch.fnmatch(leaf, p) or fnmatch.fnmatch(s, p) for p in spec.get('models', []) for s in segments):
+                add(f'vendor:{name}', f'model {raw}', spec.get('tags', []))
+    if base_url:
+        host = (urlsplit(base_url if '://' in base_url else f'https://{base_url}').hostname or '').lower()
+        for name, spec in policy['services'].items():
+            if any(fnmatch.fnmatch(host, h) for h in spec.get('hosts', [])):
+                add(f'service:{name}', f'endpoint {host}', spec.get('tags', []))
+    if provider:
+        service_for_provider(provider.lower(), f'provider {provider}')
+    return terms
+
+
+def evaluate(policy, cwd, models=(), base_url=None, provider=None):
+    projects, remotes = projects_for(policy, cwd)
+    terms = classify(policy, models, base_url, provider)
+    model_ids = [t.split(':', 1)[1] for t in terms if t.startswith('model:')]
+    for rule in policy['rules']:
+        hit_projects = [p for p in rule.get('projects', []) if p in projects]
+        if not hit_projects:
+            continue
+        for term in rule['deny']:
+            kind, value = TERM.match(term).groups()
+            if kind == 'model':
+                why = next((f'model {m}' for m in model_ids if fnmatch.fnmatch(m, value.lower())), None)
+            else:
+                why = terms.get(term)
+            if why:
+                return {'allowed': False, 'project': hit_projects[0], 'matchedBy': projects[hit_projects[0]],
+                        'term': term, 'because': why, 'reason': rule.get('reason', '')}
+    return {'allowed': True, 'projects': projects, 'terms': sorted(terms)}
+
+
+def deny_message(decision):
+    return (f'ai-policy: {decision["term"]} is prohibited in project {decision["project"]} '
+            f'({decision["matchedBy"]}; matched {decision["because"]}). {decision["reason"]}').strip()
+
+
+# --------------------------------------------------------------------- scan
+SKIP_FILES = re.compile(r'(^|/)(pnpm-lock\.yaml|package-lock\.json|yarn\.lock|bun\.lockb?|Cargo\.lock|poetry\.lock|uv\.lock)$')
+DOCS = re.compile(r'\.(md|mdx|rst|txt)$', re.I)
+
+
+def glob_to_regex(glob):
+    return re.escape(glob).replace(r'\*', r'[\w.\-:]*')
+
+
+def scan(policy, root, include_docs=False):
+    projects, _ = projects_for(policy, root)
+    denied = [t for rule in policy['rules'] if any(p in projects for p in rule.get('projects', []))
+              for t in rule['deny']]
+    if not denied:
+        return projects, []
+    patterns = []
+    for term in denied:
+        kind, value = TERM.match(term).groups()
+        vendors = [value] if kind == 'vendor' else [v for v, s in policy['vendors'].items() if value in s.get('tags', [])] if kind == 'tag' else []
+        services = [value] if kind == 'service' else [v for v, s in policy['services'].items() if value in s.get('tags', [])] if kind == 'tag' else []
+        for v in vendors:
+            for g in policy['vendors'][v].get('models', []):
+                patterns.append((term, re.compile(r'(?<![\w-])' + glob_to_regex(g), re.I)))
+        for s in services:
+            for h in policy['services'][s].get('hosts', []):
+                patterns.append((term, re.compile(glob_to_regex(h).replace(r'[\w.\-:]*', r'[\w.-]*'), re.I)))
+        if kind == 'model':
+            patterns.append((term, re.compile(r'(?<![\w-])' + glob_to_regex(value), re.I)))
+    files = subprocess.run(['git', '-C', str(root), 'ls-files', '-z'], capture_output=True, timeout=60).stdout.split(b'\0')
+    findings = []
+    for rel in filter(None, (f.decode('utf-8', 'replace') for f in files)):
+        if SKIP_FILES.search(rel) or (DOCS.search(rel) and not include_docs):
+            continue
+        path = Path(root) / rel
+        try:
+            data = path.read_bytes()
+        except OSError:
+            continue
+        if b'\0' in data[:4096] or len(data) > 2_000_000:
+            continue
+        for n, line in enumerate(data.decode('utf-8', 'replace').splitlines(), 1):
+            if len(line) > 2000:
+                continue
+            for term, rx in patterns:
+                m = rx.search(line)
+                if m:
+                    findings.append({'file': rel, 'line': n, 'term': term, 'match': m.group(0)})
+                    break
+    return projects, findings
+
+
+# ------------------------------------------------------------- claude hook
+CLAUDE_MODEL_ENV = ('ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL',
+                    'ANTHROPIC_DEFAULT_HAIKU_MODEL', 'ANTHROPIC_DEFAULT_FABLE_MODEL', 'ANTHROPIC_SMALL_FAST_MODEL',
+                    'CLAUDE_CODE_SUBAGENT_MODEL', 'ANTHROPIC_CUSTOM_MODEL_OPTION')
+
+
+def transcript_models(path, tail=256 * 1024):
+    """Models that answered in this session (a /model switch shows up here)."""
+    try:
+        with open(path, 'rb') as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - tail))
+            text = f.read().decode('utf-8', 'replace')
+    except OSError:
+        return []
+    return sorted(set(re.findall(r'"model"\s*:\s*"([^"]{1,120})"', text)) - {'<synthetic>'})
+
+
+def claude_hook():
+    try:
+        event = json.loads(sys.stdin.read() or '{}')
+    except ValueError:
+        event = {}
+    cwd = event.get('cwd') or os.getcwd()
+    models = [os.environ[k] for k in CLAUDE_MODEL_ENV if os.environ.get(k)]
+    models += transcript_models(event['transcript_path']) if event.get('transcript_path') else []
+    try:
+        decision = evaluate(load_policy(), cwd, models, os.environ.get('ANTHROPIC_BASE_URL'))
+    except PolicyError as exc:
+        print(f'ai-policy: {exc}. Blocking until the policy file is fixed.', file=sys.stderr)
+        return 2
+    if decision['allowed']:
+        return 0
+    print(deny_message(decision) + ' Switch backends (source claude-switch cloud) or work in another project.', file=sys.stderr)
+    return 2   # exit 2 blocks the prompt; stderr is shown to the user
+
+
+# ------------------------------------------------------------------ install
+def repo_root():
+    return Path(os.path.realpath(__file__)).parent.parent.parent
+
+
+def install(check_only=False):
+    """Claude Code hook in ~/.claude/settings.json and the OpenCode plugin link."""
+    home = Path.home()
+    hook_cmd = f'{repo_root()}/shared/bin/ai-policy claude-hook'
+    plugin_src = repo_root() / 'shared/opencode/plugins/ai-policy'
+    plugin_dst = home / '.config/opencode/plugins/ai-policy'
+    settings_path = home / '.claude/settings.json'
+    status = {}
+    try:
+        settings = json.loads(settings_path.read_text()) if settings_path.exists() else {}
+    except ValueError as exc:
+        print(f'ai-policy: {settings_path} is not valid JSON ({exc}); not touching it', file=sys.stderr)
+        return BROKEN
+    entries = settings.setdefault('hooks', {}).setdefault('UserPromptSubmit', [])
+    present = any(h.get('command', '').endswith('ai-policy claude-hook') for e in entries for h in e.get('hooks', []))
+    status['claude-hook'] = present
+    if not present and not check_only:
+        entries.append({'hooks': [{'type': 'command', 'command': hook_cmd, 'timeout': 15}]})
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        if settings_path.exists():
+            backup = settings_path.with_name(f'settings.json.bak-ai-policy-{os.getpid()}')
+            backup.write_bytes(settings_path.read_bytes())
+            print(f'backed up {settings_path} -> {backup.name}')
+        tmp = settings_path.with_name('.settings.json.ai-policy.tmp')
+        tmp.write_text(json.dumps(settings, indent=2) + '\n')
+        os.replace(tmp, settings_path)
+        status['claude-hook'] = 'installed'
+    linked = plugin_dst.is_symlink() and os.path.realpath(plugin_dst) == os.path.realpath(plugin_src)
+    status['opencode-plugin'] = linked
+    if not linked and not check_only:
+        if plugin_dst.exists() and not plugin_dst.is_symlink():
+            print(f'ai-policy: {plugin_dst} exists and is not a link; not replacing it', file=sys.stderr)
+            return BROKEN
+        plugin_dst.parent.mkdir(parents=True, exist_ok=True)
+        if plugin_dst.is_symlink():
+            plugin_dst.unlink()
+        plugin_dst.symlink_to(plugin_src)
+        status['opencode-plugin'] = 'installed'
+    for k, v in status.items():
+        print(f'{k}: {"ok" if v is True else v or "missing"}')
+    return 0 if all(status.values()) else DENIED
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog='ai-policy', description=__doc__.split('\n\n')[0])
+    sub = ap.add_subparsers(dest='cmd', required=True)
+    for name in ('check', 'explain', 'classify'):
+        p = sub.add_parser(name)
+        p.add_argument('--cwd', default=os.getcwd())
+        p.add_argument('--model', action='append', default=[])
+        p.add_argument('--base-url')
+        p.add_argument('--provider')
+        p.add_argument('--json', action='store_true')
+    p = sub.add_parser('scan')
+    p.add_argument('dir', nargs='?', default=os.getcwd())
+    p.add_argument('--include-docs', action='store_true')
+    p.add_argument('--json', action='store_true')
+    sub.add_parser('claude-hook')
+    p = sub.add_parser('install')
+    p.add_argument('--check', action='store_true', help='report only')
+    args = ap.parse_args(argv)
+    if args.cmd == 'claude-hook':
+        return claude_hook()
+    if args.cmd == 'install':
+        return install(args.check)
+    try:
+        policy = load_policy()
+    except PolicyError as exc:
+        print(f'ai-policy: {exc}', file=sys.stderr)
+        return BROKEN
+    if args.cmd == 'classify':
+        print(json.dumps(classify(policy, args.model, args.base_url, args.provider), indent=1))
+        return 0
+    if args.cmd == 'explain':
+        projects, remotes = projects_for(policy, args.cwd)
+        rules = [r for r in policy['rules'] if any(p in projects for p in r.get('projects', []))]
+        out = {'cwd': str(args.cwd), 'remotes': remotes, 'projects': projects, 'rules': rules, 'policy': str(policy_path())}
+        print(json.dumps(out, indent=1) if args.json else
+              f'projects: {", ".join(f"{k} ({v})" for k, v in projects.items()) or "none"}\n' +
+              ''.join(f'deny {", ".join(r["deny"])}: {r.get("reason", "")}\n' for r in rules) or 'no rules apply\n', end='')
+        return 0
+    if args.cmd == 'check':
+        decision = evaluate(policy, args.cwd, args.model, args.base_url, args.provider)
+        if args.json:
+            print(json.dumps(decision))
+        elif not decision['allowed']:
+            print(deny_message(decision), file=sys.stderr)
+        return 0 if decision['allowed'] else DENIED
+    if args.cmd == 'scan':
+        projects, findings = scan(policy, args.dir, args.include_docs)
+        if args.json:
+            print(json.dumps({'projects': projects, 'findings': findings}, indent=1))
+        else:
+            for f in findings:
+                print(f'{f["file"]}:{f["line"]}: {f["term"]} ({f["match"]})')
+            print(f'{len(findings)} finding(s); projects: {", ".join(projects) or "none (no rules apply)"}', file=sys.stderr)
+        return DENIED if findings else 0
+    return BROKEN
+
+
+if __name__ == '__main__':
+    sys.exit(main())

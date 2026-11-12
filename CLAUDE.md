@@ -140,6 +140,7 @@ Both setup scripts install sops and age (Linux: pinned sops release, checked aga
 | `shared/ssh/config.template` | copied to `~/.ssh/config` only if absent | `Include ~/.ssh/config.d/*.conf`, `IgnoreUnknown UseKeychain` first (Linux), `ForwardAgent no`, keep-alives, ControlMaster sockets in `~/.ssh/sockets/%C`. |
 | `ssh-doctor [host]` | `.zsh_network` | Permissions as ssh enforces them, config parses, agent has keys, `IdentitiesOnly yes` with missing IdentityFile; with a host, resolved settings + key-only login test. `SSH_DOCTOR_CONFIG=file` checks another config. |
 | `ts-expiry [days]` | `.zsh_network` | This machine's and peers' Tailscale key expiry (online/offline, last seen). Finds the CLI inside Tailscale.app too. |
+| `ai-policy` | `shared/bin/ai-policy`, `shared/ai-policy/policy.json` | Which AI vendors/services each project may use (Alibaba is denied for IrregularChat and ZenithFlow). Enforced by a Claude Code hook, `orca-lanes` and an OpenCode plugin; `ai-policy install` sets them up, `scan` checks a repo. See `docs/ai-policy.md`. |
 | `orca-lanes` | `shared/bin/orca-lanes` | Orca 0.2.25's lane verbs with extra adapters: `claude-edit` (acceptEdits), `alibaba` (Claude Code on Alibaba Model Studio: Qwen, Kimi, GLM, DeepSeek), `deepseek` (Claude Code on DeepSeek), `dsh`, `opencode`, `vibe`. Refuses other Orca versions. Probe results and where it fits: `docs/orca-lanes.md`. |
 | `tm [name]` | `.zsh_utils` | `tmux new -A -s main`; config in `shared/tmux/.tmux.conf` (copied only if absent). tmux and mosh are installed by both setup scripts. |
 

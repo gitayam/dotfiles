@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "about": "Which AI services and model families each project may use. Read by shared/bin/ai-policy, which Claude Code (UserPromptSubmit hook), orca-lanes and the OpenCode plugin call before any model request. Terms: vendor:<id> (who made the model, wherever it runs), service:<id> (who serves the request), tag:<tag> (any vendor or service carrying the tag), model:<glob> (a model id).",
+  "vendors": {
+    "alibaba": { "models": ["qwen*", "qwq*", "qvq*", "tongyi*", "wan2*"], "tags": ["cn-jurisdiction"] },
+    "deepseek": { "models": ["deepseek*"], "tags": ["cn-jurisdiction"] },
+    "moonshot": { "models": ["kimi*", "moonshot*"], "tags": ["cn-jurisdiction"] },
+    "zhipu": { "models": ["glm*", "chatglm*", "codegeex*"], "tags": ["cn-jurisdiction"] },
+    "minimax": { "models": ["minimax*", "abab*"], "tags": ["cn-jurisdiction"] },
+    "mistral": { "models": ["mistral*", "devstral*", "codestral*", "magistral*", "ministral*", "pixtral*"], "tags": ["eu-jurisdiction"] },
+    "openai": { "models": ["gpt*", "o1*", "o3*", "o4*", "codex*", "chatgpt*"], "tags": ["us-jurisdiction"] },
+    "anthropic": { "models": ["claude*", "opus*", "sonnet*", "haiku*", "fable*"], "tags": ["us-jurisdiction"] },
+    "google": { "models": ["gemini*", "gemma*"], "tags": ["us-jurisdiction"] },
+    "meta": { "models": ["llama*"], "tags": ["us-jurisdiction"] }
+  },
+  "services": {
+    "alibaba-cloud": { "hosts": ["*.aliyuncs.com", "*.alibabacloud.com", "*.aliyun.com"], "providers": ["alibaba", "alibaba-*", "dashscope", "bailian", "modelstudio"], "tags": ["cn-jurisdiction"] },
+    "deepseek-api": { "hosts": ["api.deepseek.com"], "providers": ["deepseek"], "tags": ["cn-jurisdiction"] },
+    "moonshot-api": { "hosts": ["api.moonshot.ai", "api.moonshot.cn"], "providers": ["moonshot", "moonshotai", "kimi"], "tags": ["cn-jurisdiction"] },
+    "zhipu-api": { "hosts": ["open.bigmodel.cn", "api.z.ai"], "providers": ["zhipu", "zhipuai", "zai"], "tags": ["cn-jurisdiction"] },
+    "opencode": { "hosts": ["opencode.ai"], "providers": ["opencode", "opencode-go"], "tags": ["us-jurisdiction"] },
+    "mistral-api": { "hosts": ["api.mistral.ai"], "providers": ["mistral"], "tags": ["eu-jurisdiction"] },
+    "openai-api": { "hosts": ["api.openai.com", "chatgpt.com"], "providers": ["openai", "codex"], "tags": ["us-jurisdiction"] },
+    "anthropic-api": { "hosts": ["api.anthropic.com"], "providers": ["anthropic", "claude"], "tags": ["us-jurisdiction"] },
+    "self-hosted": { "hosts": ["localhost", "127.0.0.1", "100.*", "10.*", "192.168.*", "*.ts.net"], "providers": ["ollama", "local", "lmstudio", "vllm", "litellm"], "tags": ["self-hosted"] }
+  },
+  "projects": {
+    "irregularchat": {
+      "about": "IrregularChat community code: GitLab group irregulars, GitHub org irregularchat.",
+      "remotes": ["*/irregulars/*", "github.com/irregularchat/*"]
+    },
+    "zenithflow": {
+      "about": "ZenithFlow: GitLab group zenithflowinc, GitHub org zenithflowinc.",
+      "remotes": ["*/zenithflowinc/*", "github.com/zenithflowinc/*"]
+    }
+  },
+  "rules": [
+    {
+      "projects": ["irregularchat", "zenithflow"],
+      "deny": ["vendor:alibaba", "service:alibaba-cloud"],
+      "reason": "Alibaba models and Alibaba Cloud are prohibited for IrregularChat and ZenithFlow (decided 2026-11-12). That covers Qwen wherever it runs and every model Alibaba Cloud serves."
+    }
+  ]
+}
