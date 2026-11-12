@@ -280,7 +280,11 @@ if command -v sops >/dev/null && command -v age-keygen >/dev/null; then
   claude_switch_deepseek() {
     local fake="$SEC/fakebin" log="$SEC/curl.argv" rc=0 out
     printf 'ds-test-456' | d1 set deepseek DEEPSEEK_API_KEY >/dev/null || return 1
+    printf '#!/bin/sh\nprintf "%%s\\n" "$@" >> "%s"\nprintf "%%s" "${FAKE_HTTP_CODE:-200}"\n' "$log" > "$fake/curl"
     : > "$log"
+    out=$(HOME="$SEC/h1" SECRETS_DIR="$SEC/store" SECRET_KEY_BACKEND=file CLAUDE_BACKENDS_CONFIG="$SEC/backends.env" \
+      FAKE_HTTP_CODE=402 PATH="$fake:$REPO/shared/bin:$PATH" zsh -fc 'source "$1" deepseek; echo "url:${ANTHROPIC_BASE_URL-}"' _ "$REPO/shared/bin/claude-switch" 2>&1)
+    [[ "$out" == *"no balance (HTTP 402)"* && "$out" != *"url:http"* ]] || { echo "402: $out"; rc=1; }
     out=$(HOME="$SEC/h1" SECRETS_DIR="$SEC/store" SECRET_KEY_BACKEND=file CLAUDE_BACKENDS_CONFIG="$SEC/backends.env" \
       PATH="$fake:$REPO/shared/bin:$PATH" zsh -fc '
         source "$1" deepseek >/dev/null 2>&1 || exit 3
@@ -307,7 +311,7 @@ if command -v sops >/dev/null && command -v age-keygen >/dev/null; then
     ! d1 aws-credentials awsbad > "$SEC/aws-bad.json" 2>/dev/null && [[ ! -s "$SEC/aws-bad.json" ]]
   }
   check "secret: aws-credentials prints credential_process JSON, fails without both keys" secret_aws_credentials
-  command -v zsh >/dev/null && check "claude-switch deepseek: profile key, Pro model, cloud clears it" claude_switch_deepseek
+  command -v zsh >/dev/null && check "claude-switch deepseek: profile key, Pro model, 402 named, cloud clears it" claude_switch_deepseek
   secret_no_plaintext_files() { ! ls -a "$SEC/store" | grep -qE '^\.tmp|\.dec$|\.plain$'; }
   check "secret: no plaintext or temp files left in the store" secret_no_plaintext_files
 fi

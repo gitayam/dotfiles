@@ -39,8 +39,8 @@ Read = "reply with the secret word in README.md"; write = "create `hello-<agent>
 | `codex` | | 10 s, file correct | | earlier probe |
 | `opencode` (`deepseek-v4.1-flash-free`) | 6 s | 13 s, file correct | verified; deleted session → exit 4 `continuity_unverified` | 5 s deadline → exit 5, group killed |
 | `vibe` (Mistral) | 16 s | 19 s, file correct | verified | `kill` mid-run stopped the process group before any file was written |
-| `deepseek` | fails: OpenCode Go monthly limit (429) | | | resets about 2026-11-20; or store a DeepSeek API key |
-| `dsh` | fails: `MISSING_CREDENTIAL` | | | needs `secret set deepseek DEEPSEEK_API_KEY` |
+| `deepseek` | fails: OpenCode Go monthly limit (429); with `ORCA_DEEPSEEK_ROUTE=api`, 402 Insufficient Balance | | | key stored and accepted (`/models` 200); the account balance is $0.00 |
+| `dsh` | fails: 402 Insufficient Balance (`QUOTA`) | | | same key and account |
 
 OpenCode Zen's pay-as-you-go DeepSeek models need Zen credit (402 without it).
 Zen `*-free` models may use prompts for training: public or throwaway code only.

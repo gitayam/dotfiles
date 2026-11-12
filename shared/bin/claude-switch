@@ -197,14 +197,18 @@ switch_deepseek() {
     return 1
   fi
   # Pre-flight: one tiny message; the key goes to curl through a header file
-  if ! curl -fsS -o /dev/null -m 15 "${base}/v1/messages" \
+  local code
+  code=$(curl -sS -o /dev/null -w '%{http_code}' -m 15 "${base}/v1/messages" \
        -H @<(printf 'x-api-key: %s\n' "${DEEPSEEK_API_KEY}") \
        -H "anthropic-version: 2023-06-01" \
        -H "Content-Type: application/json" \
-       -d '{"model":"deepseek-flash","max_tokens":1,"messages":[{"role":"user","content":"x"}]}' 2>/dev/null; then
-    echo "ERROR: DeepSeek at ${base} rejected the key or is unreachable; not switching."
-    return 1
-  fi
+       -d '{"model":"deepseek-flash","max_tokens":1,"messages":[{"role":"user","content":"x"}]}' 2>/dev/null)
+  case "$code" in
+    2??) ;;
+    401) echo "ERROR: DeepSeek rejected the key (HTTP 401); not switching."; return 1 ;;
+    402) echo "ERROR: the DeepSeek account has no balance (HTTP 402); top up at platform.deepseek.com. Not switching."; return 1 ;;
+    *) echo "ERROR: DeepSeek at ${base} answered HTTP ${code:-none} or is unreachable; not switching."; return 1 ;;
+  esac
   export ANTHROPIC_BASE_URL="${base}"
   export ANTHROPIC_AUTH_TOKEN="${DEEPSEEK_API_KEY}"
   export ANTHROPIC_MODEL="${model}[1m]"
