@@ -117,6 +117,7 @@ How each tool should get its credentials:
 | Claude Code, subscription | macOS: nothing (Keychain). Linux: `claude setup-token`, then `secret set ai CLAUDE_CODE_OAUTH_TOKEN`, and start it with `secret run ai -- claude`. |
 | Claude Code, API key | `apiKeyHelper: "secret get ai ANTHROPIC_API_KEY"` in `~/.claude/settings.json`. Opt-in only: it outranks the subscription login, so it switches billing to the API. |
 | `claude-switch` / `cc-*` | Settings stay in `~/.claude-backends.env`. Tokens move to the profiles `claude` (e.g. `LOCAL_AUTH_TOKEN`) and `vibe` (`LITELLM_MASTER_KEY`), which `claude-switch` overlays when they exist. |
+| `claude-switch alibaba` / `alibaba-coding` | `secret set alibaba DASHSCOPE_API_KEY` (pay-as-you-go, Singapore) or `DASHSCOPE_CODING_API_KEY` (Coding Plan, `sk-sp-`). The two keys and endpoints are not interchangeable. |
 | `cc-deepseek` / `cc-deepseek-pro` | `secret set deepseek DEEPSEEK_API_KEY`; `claude-switch deepseek` points Claude Code at `api.deepseek.com/anthropic` (Flash main, V4 Pro for the opus tier) and `cloud` clears it again. |
 | AWS CLI / SDKs | One profile per AWS profile (`aws-irregularchat` with `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`), and in `~/.aws/config` `credential_process = /full/path/shared/bin/secret aws-credentials aws-irregularchat`, so `AWS_PROFILE=…` keeps working with no `~/.aws/credentials`. |
 | Codex | `secret codex-keyring` (sets `cli_auth_credentials_store = "keyring"`, with a backup), then log in again. |
@@ -139,7 +140,7 @@ Both setup scripts install sops and age (Linux: pinned sops release, checked aga
 | `shared/ssh/config.template` | copied to `~/.ssh/config` only if absent | `Include ~/.ssh/config.d/*.conf`, `IgnoreUnknown UseKeychain` first (Linux), `ForwardAgent no`, keep-alives, ControlMaster sockets in `~/.ssh/sockets/%C`. |
 | `ssh-doctor [host]` | `.zsh_network` | Permissions as ssh enforces them, config parses, agent has keys, `IdentitiesOnly yes` with missing IdentityFile; with a host, resolved settings + key-only login test. `SSH_DOCTOR_CONFIG=file` checks another config. |
 | `ts-expiry [days]` | `.zsh_network` | This machine's and peers' Tailscale key expiry (online/offline, last seen). Finds the CLI inside Tailscale.app too. |
-| `orca-lanes` | `shared/bin/orca-lanes` | Orca 0.2.25's lane verbs with extra adapters: `claude-edit` (acceptEdits), `deepseek` (Claude Code on DeepSeek), `dsh`, `opencode`, `vibe`. Refuses other Orca versions. Probe results and where it fits: `docs/orca-lanes.md`. |
+| `orca-lanes` | `shared/bin/orca-lanes` | Orca 0.2.25's lane verbs with extra adapters: `claude-edit` (acceptEdits), `alibaba` (Claude Code on Alibaba Model Studio: Qwen, Kimi, GLM, DeepSeek), `deepseek` (Claude Code on DeepSeek), `dsh`, `opencode`, `vibe`. Refuses other Orca versions. Probe results and where it fits: `docs/orca-lanes.md`. |
 | `tm [name]` | `.zsh_utils` | `tmux new -A -s main`; config in `shared/tmux/.tmux.conf` (copied only if absent). tmux and mosh are installed by both setup scripts. |
 
 Both setup scripts run `setup_shell_tools` (in `shared/setup/common.sh`) for the SSH/tmux/git pieces; both `harden.sh` scripts report backups (Time Machine age on macOS; scheduled restic/borg/Timeshift/… on Linux, reported as INFO since recency needs the tool's credentials).

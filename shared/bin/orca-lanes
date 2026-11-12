@@ -8,6 +8,7 @@
 //   claude-edit  Claude Code with --permission-mode acceptEdits
 //   deepseek     Claude Code on DeepSeek (route: OpenCode Go, or the DeepSeek API)
 //   dsh          DeepSeek Harness headless (`dsh --profile headless --json`)
+//   alibaba      Claude Code on Alibaba Model Studio (Qwen, Kimi, GLM, DeepSeek)
 //   opencode     native OpenCode (`opencode run --standalone --format json`)
 //   vibe         Mistral Vibe headless (`vibe -p --output streaming`)
 // Lanes, envelopes, exit codes, inspect and kill are Orca's. Every lane still
@@ -18,7 +19,8 @@
 // Env:   ORCA_VIBE_AGENT (default accept-edits), ORCA_DEEPSEEK_ROUTE
 //        (opencode-go | api; default opencode-go), ORCA_DEEPSEEK_MODEL
 //        (default per route: deepseek-flash or deepseek-v4.1-flash), ORCA_DSH_BINARY, ORCA_DSH_CREDENTIALS
-//        (secret | native), ORCA_PACKAGE_DIR (orcastrator root).
+//        (secret | native), ORCA_ALIBABA_PLAN (payg | coding), ORCA_ALIBABA_MODEL,
+//        ORCA_PACKAGE_DIR (orcastrator root).
 'use strict';
 
 const fs = require('node:fs');
@@ -118,13 +120,15 @@ function failed(name, exitCode, message, extra = {}) {
 const POSIX = process.platform !== 'win32';
 
 // ---------------------------------------------------------------- OpenCode
+const OPENCODE_PROVIDER_PROFILES = { alibaba: 'alibaba' };  // provider id -> secret profile (DASHSCOPE_API_KEY)
+
 class OpenCodeAdapter {
   constructor(orca, { agent = 'opencode', displayName = 'OpenCode (run --standalone)', defaultModel } = {}) {
     this.orca = orca;
     this.agent = agent;
     this.displayName = displayName;
     this.defaultModel = defaultModel;
-    this.exec = orca.createProcessClaudeExec('opencode');
+    this.exec = orca.createProcessClaudeExec('/usr/bin/env');
   }
 
   capabilities() {
@@ -140,9 +144,12 @@ class OpenCodeAdapter {
     };
   }
 
+  // Providers whose key lives in a secret profile get it for this run only.
   args(model, sessionId) {
     const chosen = model ?? this.defaultModel;
-    return ['run', '--standalone', '--format', 'json',
+    const profile = chosen && OPENCODE_PROVIDER_PROFILES[chosen.split('/')[0]];
+    return [...(profile ? [path.join(BIN_DIR, 'secret'), 'run', profile, '--'] : []), 'opencode',
+      'run', '--standalone', '--format', 'json',
       ...(chosen ? ['--model', chosen] : []), ...(sessionId ? ['--session', sessionId] : [])];
   }
 
@@ -470,29 +477,53 @@ function claudeVariant(orca, { agent, displayName, notes, declared, ...options }
 }
 
 const DEEPSEEK_API = 'https://api.deepseek.com/anthropic';
+const ALIBABA = {
+  payg: { baseUrl: 'https://dashscope-intl.aliyuncs.com/apps/anthropic', keyVar: 'DASHSCOPE_API_KEY', model: 'qwen3.8-max', small: 'qwen3.8-flash' },
+  coding: { baseUrl: 'https://coding-intl.dashscope.aliyuncs.com/apps/anthropic', keyVar: 'DASHSCOPE_CODING_API_KEY', model: 'qwen3.7-plus' },
+};
 
-// The model goes into the route's environment, not Claude's --model flag:
-// cc-opencode passes its own --model, and DeepSeek's tiers need env names.
+// Pops `--model X` from Claude's argv: the model goes into the route's
+// environment instead (tiers need env names, and cc-opencode adds its own).
+function takeModel(args, fallback) {
+  const at = args.indexOf('--model');
+  return at === -1 ? fallback : args.splice(at, 2)[1];
+}
+
+// Claude Code against an Anthropic-compatible API whose key is in a secret
+// profile. The key stays in the store until the final exec; never in argv.
+function anthropicApiArgs({ baseUrl, profile, keyVar, model, opus = model, small = model, suffix = '' }, args) {
+  const routing = [`ANTHROPIC_BASE_URL=${baseUrl}`, `ANTHROPIC_MODEL=${model}${suffix}`,
+    `ANTHROPIC_DEFAULT_OPUS_MODEL=${opus}${suffix}`, `ANTHROPIC_DEFAULT_SONNET_MODEL=${model}${suffix}`,
+    `ANTHROPIC_DEFAULT_HAIKU_MODEL=${small}`, `CLAUDE_CODE_SUBAGENT_MODEL=${small}`,
+    'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1'];
+  return ['-u', 'ANTHROPIC_API_KEY', '-u', 'CLAUDE_CODE_OAUTH_TOKEN', ...routing,
+    path.join(BIN_DIR, 'secret'), 'run', profile, '--', '/bin/sh', '-c',
+    `export ANTHROPIC_AUTH_TOKEN="$${keyVar}"; unset ${keyVar}; exec claude "$@"`, 'claude', ...args];
+}
+
 function deepseekExec(orca, route) {
   const base = orca.createProcessClaudeExec('/usr/bin/env');
   return (req) => {
     const args = [...req.args];
-    const at = args.indexOf('--model');
     // Model ids differ by route: the API serves deepseek-flash/deepseek-v4-pro,
     // OpenCode Go deepseek-v4.1-flash/deepseek-v4-pro.
-    let model = process.env.ORCA_DEEPSEEK_MODEL || (route === 'api' ? 'deepseek-flash' : 'deepseek-v4.1-flash');
-    if (at !== -1) model = args.splice(at, 2)[1];
+    const model = takeModel(args, process.env.ORCA_DEEPSEEK_MODEL || (route === 'api' ? 'deepseek-flash' : 'deepseek-v4.1-flash'));
     if (route === 'api') {
-      // The key stays in the secret store until the final exec; never in argv.
-      const routing = [`ANTHROPIC_BASE_URL=${DEEPSEEK_API}`, `ANTHROPIC_MODEL=${model}[1m]`,
-        'ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek-v4-pro[1m]', `ANTHROPIC_DEFAULT_SONNET_MODEL=${model}[1m]`,
-        `ANTHROPIC_DEFAULT_HAIKU_MODEL=${model}`, `CLAUDE_CODE_SUBAGENT_MODEL=${model}`,
-        'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1'];
-      return base({ ...req, args: ['-u', 'ANTHROPIC_API_KEY', '-u', 'CLAUDE_CODE_OAUTH_TOKEN', ...routing,
-        path.join(BIN_DIR, 'secret'), 'run', 'deepseek', '--', '/bin/sh', '-c',
-        'export ANTHROPIC_AUTH_TOKEN="$DEEPSEEK_API_KEY"; unset DEEPSEEK_API_KEY; exec claude "$@"', 'claude', ...args] });
+      return base({ ...req, args: anthropicApiArgs({ baseUrl: DEEPSEEK_API, profile: 'deepseek', keyVar: 'DEEPSEEK_API_KEY',
+        model, opus: 'deepseek-v4-pro', small: model, suffix: '[1m]' }, args) });
     }
     return base({ ...req, args: [`OPENCODE_GO_MODEL=${model}`, path.join(BIN_DIR, 'cc-opencode'), ...args] });
+  };
+}
+
+function alibabaExec(orca, plan) {
+  const base = orca.createProcessClaudeExec('/usr/bin/env');
+  const p = ALIBABA[plan];
+  return (req) => {
+    const args = [...req.args];
+    const model = takeModel(args, process.env.ORCA_ALIBABA_MODEL || p.model);
+    return base({ ...req, args: anthropicApiArgs({ baseUrl: p.baseUrl, profile: 'alibaba', keyVar: p.keyVar,
+      model, small: p.small ?? model }, args) });
   };
 }
 
@@ -516,6 +547,20 @@ const EXTRA = {
         { code: 'accept_edits', note: 'Edit and Write are allowed in the lane cwd; Bash is denied.' },
       ],
       declared: { route, permissionMode: 'acceptEdits' },
+    });
+  },
+  alibaba: (orca) => {
+    const plan = process.env.ORCA_ALIBABA_PLAN || 'payg';
+    if (!ALIBABA[plan]) throw new Error(`ORCA_ALIBABA_PLAN must be payg or coding, not ${plan}`);
+    return claudeVariant(orca, {
+      agent: 'alibaba', displayName: `Claude Code on Alibaba Model Studio (${plan})`, permissionMode: 'acceptEdits',
+      exec: alibabaExec(orca, plan),
+      notes: [
+        { code: 'route', note: `${ALIBABA[plan].baseUrl}, key ${ALIBABA[plan].keyVar} from the secret profile "alibaba". Singapore-region keys only; Coding Plan (sk-sp-) and pay-as-you-go keys are not interchangeable (ORCA_ALIBABA_PLAN=payg|coding).` },
+        { code: 'model_via_env', note: `--model picks any model the endpoint serves (default ORCA_ALIBABA_MODEL or ${ALIBABA[plan].model}); pay-as-you-go also serves deepseek-v4-pro, kimi-k3 and glm-5.3. Claude Code logs unrecognized_model and its costUsd uses Anthropic prices, so ignore that figure.` },
+        { code: 'accept_edits', note: 'Edit and Write are allowed in the lane cwd; Bash is denied.' },
+      ],
+      declared: { plan, permissionMode: 'acceptEdits' },
     });
   },
   dsh: (orca) => new DshAdapter(orca),
