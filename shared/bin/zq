@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""zq — call a self-hosted model directly (no Claude Code), over its OpenAI API.
+
+  zq                              list every model (same as: claude-z status)
+  zq <key> "prompt"               one chat completion; prompt may also come on stdin
+  zq <key> -s "system" "prompt"   with a system prompt
+  zq <key> -t 2000 "prompt"       max output tokens (default 1024)
+  zq <key> --think "prompt"       keep thinking on for models marked nothink in the
+                                  registry (their reasoning then lands in the answer)
+  zq <key> --json "prompt"        print the raw response
+  zq embed "text" ["text" ...]    embeddings (JSON, one vector per line)
+  zq url <key>                    base URL and model id, for curl or an SDK
+  zq env <key>                    `eval "$(zq env 2q)"` sets OPENAI_BASE_URL/_API_KEY/_MODEL
+
+Keys come from shared/llm/models.conf (1, 2, 2q, 2s, 2f, 2t, 2e, l, or their
+aliases glm, gptoss, qwen, fable, translate, embed...). claude-z starts the
+tunnel when it isn't up.
+"""
+
+import argparse
+import json
+import os
+import select
+import stat
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+
+
+def ensure(key):
+    out = subprocess.run(["claude-z", "ensure", key], capture_output=True, text=True)
+    if out.returncode != 0:
+        sys.exit(out.stderr.strip() or f"zq: cannot reach model '{key}'")
+    port, model, opts = out.stdout.split()
+    return f"http://127.0.0.1:{port}/v1", model, opts.split(",")
+
+
+def piped_input():
+    """Text piped or redirected into zq. A terminal, or an open but idle stdin
+    (as in editors and agent shells), is not input and must not block."""
+    try:
+        mode = os.fstat(sys.stdin.fileno()).st_mode
+    except (OSError, ValueError):
+        return ""
+    if stat.S_ISREG(mode):
+        return sys.stdin.read()
+    if stat.S_ISFIFO(mode) and select.select([sys.stdin], [], [], 0.5)[0]:
+        return sys.stdin.read()
+    return ""
+
+
+def post(url, body, timeout=600):
+    req = urllib.request.Request(url, data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json",
+                                          "Authorization": "Bearer selfhosted"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        sys.exit(f"zq: HTTP {e.code} from {url}: {e.read().decode(errors='replace')[:500]}")
+    except urllib.error.URLError as e:
+        sys.exit(f"zq: {url}: {e.reason}")
+
+
+def chat(args):
+    base, model, opts = ensure(args.key)
+    prompt = " ".join(args.prompt) if args.prompt else ""
+    piped = piped_input()
+    if piped:
+        prompt = f"{prompt}\n\n{piped}" if prompt else piped
+    if not prompt.strip():
+        sys.exit("zq: no prompt (pass it as an argument or on stdin)")
+    messages = ([{"role": "system", "content": args.system}] if args.system else []) + \
+               [{"role": "user", "content": prompt}]
+    body = {"model": model, "messages": messages, "max_tokens": args.max_tokens}
+    if "nothink" in opts and not args.think:
+        body["chat_template_kwargs"] = {"enable_thinking": False}
+    resp = post(f"{base}/chat/completions", body)
+    if args.json:
+        print(json.dumps(resp, indent=2))
+        return
+    msg = (resp.get("choices") or [{}])[0].get("message") or {}
+    print((msg.get("content") or "").strip())
+
+
+def main():
+    argv = sys.argv[1:]
+    if not argv or argv[0] in ("ls", "list", "status"):
+        sys.exit(subprocess.call(["claude-z", "status"]))
+    if argv[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return
+    if argv[0] == "url" and len(argv) == 2:
+        base, model, _ = ensure(argv[1])
+        print(f"{base}  {model}")
+        return
+    if argv[0] == "env" and len(argv) == 2:
+        base, model, _ = ensure(argv[1])
+        print(f"export OPENAI_BASE_URL='{base}' OPENAI_API_KEY='selfhosted' OPENAI_MODEL='{model}'")
+        return
+    if argv[0] == "embed":
+        if len(argv) < 2:
+            sys.exit("zq: embed needs text")
+        base, model, _ = ensure("embed")
+        resp = post(f"{base}/embeddings", {"model": model, "input": argv[1:]})
+        for d in resp.get("data", []):
+            print(json.dumps(d["embedding"]))
+        return
+
+    p = argparse.ArgumentParser(prog="zq", description="Chat with a self-hosted model")
+    p.add_argument("key")
+    p.add_argument("prompt", nargs="*")
+    p.add_argument("-s", "--system")
+    p.add_argument("-t", "--max-tokens", type=int, default=1024)
+    p.add_argument("--think", action="store_true")
+    p.add_argument("--json", action="store_true")
+    chat(p.parse_args(argv))
+
+
+if __name__ == "__main__":
+    main()

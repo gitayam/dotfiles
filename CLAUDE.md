@@ -116,13 +116,34 @@ How each tool should get its credentials:
 |---|---|
 | Claude Code, subscription | macOS: nothing (Keychain). Linux: `claude setup-token`, then `secret set ai CLAUDE_CODE_OAUTH_TOKEN`, and start it with `secret run ai -- claude`. |
 | Claude Code, API key | `apiKeyHelper: "secret get ai ANTHROPIC_API_KEY"` in `~/.claude/settings.json`. Opt-in only: it outranks the subscription login, so it switches billing to the API. |
-| `claude-switch` / `cc-*` | Settings stay in `~/.claude-backends.env`. Tokens move to the profiles `claude` (e.g. `LOCAL_AUTH_TOKEN`) and `vibe` (`LITELLM_MASTER_KEY`), which `claude-switch` overlays when they exist. |
-| `cc-deepseek` / `cc-deepseek-pro` | `secret set deepseek DEEPSEEK_API_KEY`; `claude-switch deepseek` points Claude Code at `api.deepseek.com/anthropic` (Flash main, V4 Pro for the opus tier) and `cloud` clears it again. |
+| `cc1` / `cc2` / `zq` (private servers) | Nothing: the vLLM servers take no key, and the tunnels use your SSH key. See "Claude Code backends" below. |
+| `claude-switch` (legacy, no aliases use it now) | Settings stay in `~/.claude-backends.env`. Tokens move to the profiles `claude` (e.g. `LOCAL_AUTH_TOKEN`), `vibe` (`LITELLM_MASTER_KEY`) and `deepseek` (`DEEPSEEK_API_KEY`), which `claude-switch` overlays when they exist. |
 | AWS CLI / SDKs | One profile per AWS profile (`aws-irregularchat` with `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`), and in `~/.aws/config` `credential_process = /full/path/shared/bin/secret aws-credentials aws-irregularchat`, so `AWS_PROFILE=…` keeps working with no `~/.aws/credentials`. |
 | Codex | `secret codex-keyring` (sets `cli_auth_credentials_store = "keyring"`, with a backup), then log in again. |
 | Vibe, OpenCode, AWS, any `.env` | `secret run PROFILE -- tool`. For OpenCode, don't save an account in the app (it outranks env vars). |
 
 Both setup scripts install sops and age (Linux: pinned sops release, checked against its sha256 list) and offer `secret init`. Both `harden.sh` scripts list plaintext credential files with the right migration route for each. `.stignore` keeps `.env` files, keys and backups out of Syncthing: this repo folder is synced, and Syncthing ignores `.gitignore`.
+
+## Claude Code backends
+
+Claude Code is the only coding harness. `shared/zsh/claude-aliases.zsh` defines the launchers:
+
+| Command | Backend |
+|---|---|
+| `cc` | Anthropic cloud; strips every self-hosted variable for that process |
+| `cc1`, `cc2` | Server 1 GLM-5.3-Flash (256K), server 2 gpt-oss-120b (48K), via `claude-z` |
+| `ccm <key>`, `ccz` | Any registry chat model with a 40K+ window; first reachable server |
+| `zq <key> "prompt"` | Any model directly over its OpenAI API (chat, `translate`, `embed`, the 32K Qwen models) |
+| `cc-status` / `claude-z status` | Every model: UP/DOWN, local port, context window |
+| `oz …` | Orca with Claude lanes on z1 (`OZ_MODEL=2` for server 2); read-only lanes |
+| `claude-cloud` | Clears self-hosted variables left in this shell by an old `source claude-switch` |
+
+- **Registry:** `shared/llm/models.conf` is the only place a model, port or tunnel target is written. `claude-z` (`shared/bin`, symlinked as `~/.local/bin/claude-z` plus `z1 z2 z2q z2s z2f z2f2 zl`) reads it for tunnels, the Claude Code environment (`claude-z env <key>`) and `zq`. Adding a model means adding a row and a `z<key>` symlink.
+- **Tunnels:** launchd jobs `io.zenithflow.tunnel.<ssh-host>` (`shared/launchd/io.zenithflow.tunnel.plist`) run `claude-z tunnel-run <host>`, one autossh per server carrying every model on it. `scripts/install-claude-aliases.sh` installs them. Logs: `~/Library/Logs/zenithflow-tunnel-<host>.log`.
+- **What claude-z sets** (for the one `claude` process): base URL, a dummy token, the model, every tier alias and `CLAUDE_CODE_SUBAGENT_MODEL` (so `model: sonnet` agents run on the server), `CLAUDE_CODE_MAX_CONTEXT_TOKENS` from vLLM's `max_model_len`, and below 100K the short system prompt and an output cap of window/6. It refuses windows under 40K: Claude Code's opening prompt is ~27K.
+- **Qwen models** (`nothink` in the registry) have no reasoning parser on the server; `zq` sends `enable_thinking: false` for them only (GLM gets worse with it).
+- **Paperclip** (launchd `ing.paperclip.paperclipai`, `127.0.0.1:3100`): agents `Claude Cloud` (Opus), `Claude GLM (z1)`, `Claude gpt-oss (z2)` (env from `claude-z env`) and `Hermes GLM (z1)`, all reporting to Claude Cloud, heartbeats off. `paperclipai service install` rewrites its plist without a PATH; re-add `EnvironmentVariables:PATH` (see vibe-coding `lessons-learned/self-hosted-claude-code.md`, items 9–11).
+- **Hermes:** providers `z1`/`z2` in `~/.hermes/config.yaml` (tunnel ports, `chat_completions`); `h1`/`h2` launch it.
 
 ## Tests
 
