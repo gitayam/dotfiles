@@ -31,7 +31,8 @@ PAPERCLIP=/opt/homebrew/bin/paperclipai
 | Bounded coding with a clear check (fix this test, add this endpoint) | `$BIN/claude-z 1 -p` (server 1, GLM-5.3-Flash, 256K) | Private server, no per-token cost |
 | Short bounded task, small context | `$BIN/claude-z 2 -p` (server 2, gpt-oss-120b, 48K) | Second server; keep prompts and files small |
 | One-shot question, summary, translation, embeddings | `$BIN/zq <key> "prompt"` | No Claude Code needed (`zq --help`) |
-| Several read-only questions about a repo | `$BIN/oz dispatch --agent claude --cwd <repo> "<question>"` | Orca lanes on server 1; they cannot edit files |
+| Several questions about a repo, in parallel | `$BIN/oz dispatch --agent claude --cwd <repo> "<question>"` | Read-only Orca lanes on server 1 |
+| A small edit as a tracked lane | `$BIN/oz dispatch --agent claude-edit --cwd <repo> "<change>"` | Edit/Write allowed, shell denied; check the result yourself (lanes always report outcome "unknown") |
 | Work the user wants tracked on the board | Paperclip issue (below) | Assigned agents work it and comment |
 
 Check first when unsure: `$BIN/claude-z status` lists every server model as UP or DOWN, with its port and context window.

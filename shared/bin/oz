@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
-# oz — Orca with Claude lanes on a self-hosted server model (default z1, GLM).
+# oz — Orca lanes on a self-hosted server model (default z1, GLM).
 # Claude lanes take their model from the environment, so this exports what
-# `claude-z env` gives for the model, then hands over to orca:
-#   oz dispatch --agent claude "Explain the failing test"
-#   OZ_MODEL=2 oz dispatch --agent claude "..."     # gpt-oss on server 2
+# `claude-z env` gives for the model, then hands over to orca-lanes (Orca's lane
+# verbs plus extra adapters; plain orca when orca-lanes is missing):
+#   oz dispatch --agent claude "Explain the failing test"        # read-only
+#   oz dispatch --agent claude-edit --cwd repo "Fix calc.py"     # Edit/Write; Bash denied
+#   OZ_MODEL=2 oz dispatch --agent claude "..."                  # gpt-oss on server 2
 #   oz agents | oz lanes | oz inspect <laneId>
-# Orca's CLI can't set a permission mode for the Claude adapter, so Claude lanes
-# run read-only: good for questions and review, not for edits (see
-# vibe-coding/orchestrator/swappable-agent-stack.md, Seam 2).
+# Every lane reports semanticOutcome "unknown": check the files or tests yourself.
 set -euo pipefail
 # Apps and launchd start with a bare PATH; find claude-z and orca anyway
 PATH="$PATH:$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")"):/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin"
 env_lines="$(claude-z env "${OZ_MODEL:-1}")" || exit $?
 eval "$env_lines"
+if command -v orca-lanes >/dev/null 2>&1; then exec orca-lanes "$@"; fi
 exec orca "$@"
