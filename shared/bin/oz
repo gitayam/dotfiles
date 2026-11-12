@@ -9,8 +9,14 @@
 #   oz agents | oz lanes | oz inspect <laneId>
 # Every lane reports semanticOutcome "unknown": check the files or tests yourself.
 set -euo pipefail
-# Apps and launchd start with a bare PATH; find claude-z and orca anyway
-PATH="$PATH:$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")"):/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin"
+# Apps and launchd start with a bare PATH: then put Homebrew and ~/.local/bin
+# first (as claude-z does); otherwise append them so the caller's PATH wins
+_self_dir="$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")"
+_extra="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin"
+case ":$PATH:" in
+  *:/opt/homebrew/bin:*|*:/usr/local/bin:*|*:"$HOME"/*) PATH="$PATH:$_self_dir:$_extra" ;;
+  *) PATH="$_extra:$PATH:$_self_dir" ;;
+esac
 env_lines="$(claude-z env "${OZ_MODEL:-1}")" || exit $?
 eval "$env_lines"
 if command -v orca-lanes >/dev/null 2>&1; then exec orca-lanes "$@"; fi
