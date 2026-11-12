@@ -83,6 +83,15 @@ check "launchd plists are valid XML" python3 -c "import plistlib,sys; [plistlib.
 check "git-inventory compiles" python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$REPO/shared/bin/git-inventory"
 if command -v node >/dev/null; then
   check "secrets scripts parse" bash -c "node --check '$REPO/typescript/sync-secrets.js' && node --check '$REPO/typescript/get-secrets.js'"
+  check "orca-lanes parses" node --check "$REPO/shared/bin/orca-lanes"
+  OL=$(mktemp -d); printf '{"name":"orcastrator","version":"0.0.1"}' > "$OL/package.json"
+  expect "orca-lanes refuses an unqualified Orca version" 'built against orcastrator' \
+    env ORCA_PACKAGE_DIR="$OL" node "$REPO/shared/bin/orca-lanes" agents
+  rm -rf "$OL"
+  if [[ "$(npm ls -g --depth=0 --json orcastrator 2>/dev/null)" == *'"version": "0.2.25"'* ]]; then
+    expect "orca-lanes registers the extra harnesses" 'claude-edit.*deepseek.*dsh.*opencode.*vibe' \
+      bash -c "'$REPO/shared/bin/orca-lanes' agents 2>/dev/null | tr -d '\\n'"
+  fi
 fi
 
 echo "== Shell startup"
