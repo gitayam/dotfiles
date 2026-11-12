@@ -29,11 +29,17 @@ import urllib.error
 import urllib.request
 
 
-# Apps and launchd start with a bare PATH; find claude-z next to this script,
-# Homebrew and ~/.local/bin anyway
-os.environ["PATH"] = os.pathsep.join([
-    os.environ.get("PATH", ""), os.path.dirname(os.path.realpath(__file__)), "/opt/homebrew/bin",
-    "/usr/local/bin", os.path.expanduser("~/.local/bin")])
+# Apps and launchd start with a bare PATH (/usr/bin:/bin): then put Homebrew and
+# ~/.local/bin first, like a login shell; otherwise append them so the caller's
+# PATH wins. Either way claude-z next to this script is found.
+_extra = ["/opt/homebrew/bin", "/usr/local/bin", os.path.expanduser("~/.local/bin")]
+_path = os.environ.get("PATH", "").split(os.pathsep)
+_here = os.path.dirname(os.path.realpath(__file__))
+if any(d in _path for d in _extra[:2]) or any(d.startswith(os.path.expanduser("~") + os.sep) for d in _path):
+    _path = _path + [_here] + _extra
+else:
+    _path = _extra + _path + [_here]
+os.environ["PATH"] = os.pathsep.join(_path)
 
 
 def ensure(key):
