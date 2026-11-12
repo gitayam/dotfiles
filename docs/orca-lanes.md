@@ -25,6 +25,8 @@ orca-lanes kill lane_1234abcd
 | `opencode` | `opencode run --standalone --format json` | Per `opencode.json`; anything set to "ask" is rejected and reported | `session export` before and after (`--session` would silently create a new one) |
 | `vibe` | `vibe -p --output streaming --trust --agent accept-edits` | Edit/Write; shell denied | `--resume` (unknown ids fail) + `export.json` session id |
 
+Before every dispatch and resume, `ai-policy` checks that the lane's project may use its endpoint and model (see `docs/ai-policy.md`); a denied lane fails with `agent_unavailable`.
+
 Every lane reports `semanticOutcome: unknown`. Denied tools surface as
 `permissionDenials` progress events, but a lane whose work was blocked can still
 say `completed`. Check the files, tests or diff yourself.

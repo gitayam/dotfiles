@@ -337,6 +337,59 @@ if command -v sops >/dev/null && command -v age-keygen >/dev/null; then
   check "secret: no plaintext or temp files left in the store" secret_no_plaintext_files
 fi
 
+echo "== ai-policy"
+AP="$REPO/shared/bin/ai-policy"
+APW="$WORK/ai-policy"; mkdir -p "$APW"
+ap_repo() { mkdir -p "$APW/$1" && git -C "$APW/$1" init -q && git -C "$APW/$1" remote add origin "$2"; }
+ap_repo ic https://github.com/irregularchat/probe.git
+ap_repo zf git@github.com:zenithflowinc/probe.git
+ap_repo icgl ssh://git@100.87.20.88:2224/irregulars/irregularchat-monorepo.git
+ap_repo own https://git.irregularchat.com/sac/own-project.git
+ap_decisions() {
+  local rc=0 c
+  c() { "$AP" check --cwd "$APW/$1" "${@:3}" 2>/dev/null; [[ $? -eq $2 ]] || { echo "$1 ${*:3}: expected $2"; rc=1; }; }
+  c ic 3 --model qwen3.8-max
+  c ic 3 --model opencode-go/qwen3.7-plus
+  c ic 3 --model qwen3.6:latest
+  c ic 3 --model deepseek-v4-pro --base-url https://dashscope-intl.aliyuncs.com/apps/anthropic
+  c ic 3 --model alibaba/glm-5.3
+  c zf 3 --model qwen3.8-max
+  c icgl 3 --model Qwen/Qwen2.5-72B-Instruct
+  c ic 0 --model claude-opus-5-5
+  c ic 0 --model deepseek-v4-pro --base-url https://api.deepseek.com/anthropic
+  c own 0 --model qwen3.8-max --base-url https://dashscope-intl.aliyuncs.com/apps/anthropic
+  return $rc
+}
+check "ai-policy: Alibaba models and services denied only in IrregularChat/ZenithFlow repos" ap_decisions
+ap_hook() {
+  printf '{"cwd":"%s"}' "$APW/ic" | env -u ANTHROPIC_MODEL ANTHROPIC_BASE_URL=https://dashscope-intl.aliyuncs.com/apps/anthropic "$AP" claude-hook 2>/dev/null
+  [[ $? -eq 2 ]] || return 1
+  printf '{"cwd":"%s"}' "$APW/ic" | env -u ANTHROPIC_BASE_URL -u ANTHROPIC_MODEL "$AP" claude-hook || return 1
+  printf '{"cwd":"%s"}' "$APW/own" | env -u ANTHROPIC_MODEL AI_POLICY_FILE=/nonexistent "$AP" claude-hook 2>/dev/null
+  [[ $? -eq 2 ]]
+}
+check "ai-policy: Claude hook blocks (exit 2) on a denied backend and on an unreadable policy" ap_hook
+ap_scan() {
+  printf 'const model = env.M || "qwen3.6:latest"\n' > "$APW/ic/ai.ts"
+  printf 'We tried Qwen once.\n' > "$APW/ic/notes.md"
+  git -C "$APW/ic" add ai.ts notes.md
+  local out; out=$("$AP" scan "$APW/ic" 2>/dev/null) && return 1
+  [[ "$out" == *"ai.ts:1: vendor:alibaba"* && "$out" != *notes.md* ]] || { echo "$out"; return 1; }
+  "$AP" scan "$APW/own" >/dev/null 2>&1
+}
+check "ai-policy: scan finds Qwen in tracked code, skips docs and unrestricted repos" ap_scan
+ap_install() {
+  local h="$APW/home"; mkdir -p "$h/.claude"; printf '{"theme":"dark"}' > "$h/.claude/settings.json"
+  HOME="$h" "$AP" install >/dev/null && HOME="$h" "$AP" install >/dev/null || return 1
+  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); e=d["hooks"]["UserPromptSubmit"]; sys.exit(0 if d["theme"]=="dark" and len(e)==1 else 1)' "$h/.claude/settings.json" &&
+    [[ -L "$h/.config/opencode/plugins/ai-policy" ]] && HOME="$h" "$AP" install --check >/dev/null
+}
+check "ai-policy: install adds the hook once and links the OpenCode plugin" ap_install
+check "ai-policy: the shipped policy parses" "$AP" explain --cwd "$APW/ic"
+if command -v node >/dev/null; then
+  check "ai-policy OpenCode plugin parses" node --check "$REPO/shared/opencode/plugins/ai-policy/server.js"
+fi
+
 echo "== git wip"
 wip_setup() {
   local d="$WORK/wip"
