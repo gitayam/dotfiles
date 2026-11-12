@@ -66,12 +66,11 @@ Company `3809d0ba-0e17-4f9b-bc8a-e014670114d6`. Agents that run the real Claude 
 ```
 $PAPERCLIP issue create -C 3809d0ba-0e17-4f9b-bc8a-e014670114d6 --standalone \
   --title "<title>" --description "<goal, files, done-when>" --assignee-agent-id <agent id> --status todo --json
-$PAPERCLIP issue get <issue id> --json          # status: todo, in_progress, done, blocked
-curl -s http://127.0.0.1:3100/api/issues/<issue id>/comments
+$BIN/paperclip-wait <SAC-n or issue id> [seconds]   # waits (default 300 s), prints status + comments
 $PAPERCLIP service status                         # is the board running?
 ```
 
-Assigning starts the agent; nothing runs on a timer. Report the issue identifier (e.g. SAC-7) and its final status and comment.
+Assigning starts the agent; nothing runs on a timer. The create command prints JSON; read `identifier` (e.g. SAC-7) from it. Then run `paperclip-wait` once and report the identifier, final status and the agent's comment. Don't write polling loops or inline scripts (`python3 -c`, `node -e`): Hermes asks the user to approve each one, and `paperclip-wait` needs no approval. Exit codes: 0 done, 1 blocked or cancelled, 2 still open at the timeout.
 
 ## Health checks
 
