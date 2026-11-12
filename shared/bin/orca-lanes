@@ -17,7 +17,7 @@
 //        orca-lanes agents | inspect <laneId> | resume <laneId> <prompt> | kill <laneId>
 // Env:   ORCA_VIBE_AGENT (default accept-edits), ORCA_DEEPSEEK_ROUTE
 //        (opencode-go | api; default opencode-go), ORCA_DEEPSEEK_MODEL
-//        (default deepseek-v4.1-flash), ORCA_DSH_BINARY, ORCA_DSH_CREDENTIALS
+//        (default per route: deepseek-flash or deepseek-v4.1-flash), ORCA_DSH_BINARY, ORCA_DSH_CREDENTIALS
 //        (secret | native), ORCA_PACKAGE_DIR (orcastrator root).
 'use strict';
 
@@ -478,7 +478,9 @@ function deepseekExec(orca, route) {
   return (req) => {
     const args = [...req.args];
     const at = args.indexOf('--model');
-    let model = process.env.ORCA_DEEPSEEK_MODEL || 'deepseek-v4.1-flash';
+    // Model ids differ by route: the API serves deepseek-flash/deepseek-v4-pro,
+    // OpenCode Go deepseek-v4.1-flash/deepseek-v4-pro.
+    let model = process.env.ORCA_DEEPSEEK_MODEL || (route === 'api' ? 'deepseek-flash' : 'deepseek-v4.1-flash');
     if (at !== -1) model = args.splice(at, 2)[1];
     if (route === 'api') {
       // The key stays in the secret store until the final exec; never in argv.
@@ -510,7 +512,7 @@ const EXTRA = {
         { code: 'route', note: route === 'api'
           ? 'DeepSeek API key from the secret profile "deepseek" (secret set deepseek DEEPSEEK_API_KEY).'
           : 'OpenCode Go subscription through cc-opencode; its monthly limit fails the lane with a 429 in the error text.' },
-        { code: 'model_via_env', note: '--model picks the DeepSeek model (default ORCA_DEEPSEEK_MODEL or deepseek-v4.1-flash); it is passed as routing env, not as a Claude model alias.' },
+        { code: 'model_via_env', note: '--model picks the DeepSeek model (default ORCA_DEEPSEEK_MODEL, else deepseek-flash on the API route and deepseek-v4.1-flash on OpenCode Go); it is passed as routing env, not as a Claude model alias.' },
         { code: 'accept_edits', note: 'Edit and Write are allowed in the lane cwd; Bash is denied.' },
       ],
       declared: { route, permissionMode: 'acceptEdits' },
