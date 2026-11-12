@@ -137,7 +137,7 @@ Claude Code is the only coding harness. `shared/zsh/claude-aliases.zsh` defines 
 | `ccm <key>`, `ccz` | Any registry chat model with a 40K+ window; first reachable server |
 | `zq <key> "prompt"` | Any model directly over its OpenAI API (chat, `translate`, `embed`, the 32K Qwen models) |
 | `cc-status` / `claude-z status` | Every model: UP/DOWN, local port, context window |
-| `oz …` | Orca with Claude lanes on z1 (`OZ_MODEL=2` for server 2); read-only lanes |
+| `oz …` | Orca lanes on z1 (`OZ_MODEL=2` for server 2) through `orca-lanes`: `--agent claude` read-only, `--agent claude-edit` can edit (Bash denied) |
 | `claude-cloud` | Clears self-hosted variables left in this shell by an old `source claude-switch` |
 
 - **Registry:** `shared/llm/models.conf` is the only place a model, port or tunnel target is written. `claude-z` (`shared/bin`, symlinked as `~/.local/bin/claude-z` plus `z1 z2 z2q z2s z2f z2f2 zl`) reads it for tunnels, the Claude Code environment (`claude-z env <key>`) and `zq`. Adding a model means adding a row and a `z<key>` symlink.
