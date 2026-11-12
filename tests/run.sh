@@ -207,6 +207,11 @@ if command -v sops >/dev/null && command -v age-keygen >/dev/null; then
     [[ "$(d1 run ai -- sh -c 'echo "$API_TOKEN"')" == "abc def" ]] && [[ -z "${API_TOKEN:-}" ]]
   }
   check "secret: run injects values into that command only" secret_run_scoped
+  secret_run_missing_profile() {
+    local out; out=$(d1 run nosuch -- sh -c 'echo RAN' 2>/dev/null) && return 1
+    [[ "$out" != *RAN* ]]
+  }
+  check "secret: run refuses to start the command without its profile" secret_run_missing_profile
   secret_set_stdin() { printf 'n3w\n' | d1 set ai NEW >/dev/null && [[ "$(d1 get ai NEW)" == "n3w" ]]; }
   check "secret: set reads the value from stdin" secret_set_stdin
   secret_devices() {
@@ -219,6 +224,12 @@ if command -v sops >/dev/null && command -v age-keygen >/dev/null; then
     ! d2 get ai API_TOKEN >/dev/null 2>&1                      # and not after removal
   }
   check "secret: add-device grants, remove-device revokes" secret_devices
+  secret_set_needs_decrypt() {
+    local before; before=$(d1 list ai | tr '\n' ' ')
+    printf 'x\n' | d2 set ai OTHER >/dev/null 2>&1 && return 1   # h2 is no longer a recipient
+    [[ "$(d1 list ai | tr '\n' ' ')" == "$before" && "$(d1 get ai API_TOKEN)" == "abc def" ]]
+  }
+  check "secret: set on a device that can't decrypt keeps the profile" secret_set_needs_decrypt
   secret_skips_references() {
     printf 'REAL=v\nREF=${OTHER}\nLIT='"'"'a$b'"'"'\n' > "$SEC/refs.env"
     d1 import refs "$SEC/refs.env" 2>"$SEC/refs.err" >/dev/null || return 1
