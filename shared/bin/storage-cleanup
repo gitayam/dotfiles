@@ -1,0 +1,750 @@
+#!/usr/bin/env python3
+"""storage-cleanup: free disk space from caches and stale build output.
+
+Reports by default and changes nothing; --apply does the work. Only things
+that rebuild or re-download on their own are ever deleted, through each tool's
+own clean command where one exists. Large folders that are yours to decide on
+(models, emulator images, photo libraries, Xcode archives, device backups) are
+listed under "Review" with a hint and never touched.
+
+    storage-cleanup                      what would be freed (dry run)
+    storage-cleanup --apply              clear package-manager and build caches
+    storage-cleanup --node-modules 14    also node_modules in projects untouched for 14+ days
+    storage-cleanup --all --apply        every category except --system
+    storage-cleanup --only npm,uv        just these categories
+    storage-cleanup --top                also the largest folders in $HOME (slow)
+
+Default categories: npm npx pnpm yarn uv pip brew go node-gyp xcode.
+Opt-in: --node-modules [DAYS] (roots ~/Git and ~/Code, or --root DIR),
+--playwright, --updaters (downloaded app updates), --docker (local daemon:
+dangling images and build cache older than 7 days), --trash, --system (Linux:
+apt cache and archived journal older than 14 days; uses sudo).
+
+Safety: every deletion goes through one function that refuses symlinks, other
+filesystems (cloud FUSE mounts), $HOME and its top-level folders, ~/.claude,
+~/.ssh, ~/.config and cloud-synced folders (iCloud Drive, ~/Library/CloudStorage),
+and reports anything it could not remove. A cleaner whose program is running
+(npx tools such as MCP servers, pnpm, Xcode, Playwright) is skipped. A
+node_modules is kept when git tracks it, it holds a git clone, a running
+program uses its project, anything in it or its project changed recently, or
+part of the project cannot be read.
+"""
+import argparse
+import glob
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import time
+
+HOME = os.path.realpath(os.path.expanduser("~"))
+MAC = sys.platform == "darwin"
+LINUX = sys.platform.startswith("linux")
+CACHE_HOME = os.path.join(HOME, "Library", "Caches") if MAC else \
+    os.environ.get("XDG_CACHE_HOME") or os.path.join(HOME, ".cache")
+DEFAULT_ROOTS = ["~/Git", "~/Code"]
+H = glob.escape(HOME)  # for glob patterns built from $HOME
+
+
+def home(*parts):
+    return os.path.join(HOME, *parts)
+
+
+# Never deleted, and never deleted around: exact matches and their ancestors
+PROTECTED = {"/", HOME} | {home(p) for p in (
+    ".claude", ".codex", ".ssh", ".gnupg", ".aws", ".config", ".local", ".local/share",
+    "Documents", "Desktop", "Downloads", "Pictures", "Movies", "Music", "Library",
+    "Library/Application Support", "Library/Containers", "Library/Group Containers",
+    "Library/Caches", "Library/Developer", "Library/Developer/Xcode/Archives")}
+# Never deleted inside: deletions here sync to every other device
+CLOUD = [home("Library", "Mobile Documents"), home("Library", "CloudStorage")]
+
+
+def human(n):
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(n) < 1024 or unit == "TB":
+            return f"{n:.1f} {unit}" if unit != "B" else f"{n} B"
+        n /= 1024
+
+
+def parse_size(text):
+    m = re.match(r"([\d.]+)\s*([KMGT]?)B", text.strip(), re.I)
+    if not m:
+        return 0
+    return int(float(m.group(1)) * 1024 ** " KMGT".index(m.group(2).upper() or " "))
+
+
+def short(path):
+    return "~" + path[len(HOME):] if path.startswith(HOME + os.sep) else path
+
+
+def free_bytes():
+    return shutil.disk_usage(HOME).free
+
+
+def run(*cmd, timeout=120, env=None):
+    """(ok, stdout) for a command; (False, reason) when missing or failing."""
+    if not shutil.which(cmd[0]):
+        return False, f"{cmd[0]} not installed"
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                           env=dict(os.environ, **(env or {})))
+    except subprocess.TimeoutExpired:
+        return False, f"timed out after {timeout}s"
+    except OSError as e:
+        return False, str(e)
+    if r.returncode != 0:
+        lines = (r.stderr or r.stdout).strip().splitlines()
+        return False, lines[-1] if lines else f"exit {r.returncode}"
+    return True, r.stdout.strip()
+
+
+def tool_path(*cmd):
+    ok, out = run(*cmd, timeout=30)
+    out = out.splitlines()[-1].strip() if ok and out else ""
+    return out if out and os.path.isdir(out) else None
+
+
+_PROCS = None
+
+
+def process_args():
+    """Command lines and working directories of running processes (cached)."""
+    global _PROCS
+    if _PROCS is None:
+        def out(*cmd):
+            # lsof exits 1 when it cannot inspect some processes; keep what it read
+            try:
+                return subprocess.run(cmd, capture_output=True, text=True, timeout=60).stdout
+            except (OSError, subprocess.TimeoutExpired):
+                return ""
+        # Our own command line (and a shell that ran it) names the roots
+        args = [a for a in out("ps", "-axo", "args=").splitlines() if "storage-cleanup" not in a]
+        cwds = [l[1:] for l in out("lsof", "-w", "-d", "cwd", "-Fn").splitlines() if l.startswith("n/")]
+        # Resolve path arguments so they compare with the scan's real paths
+        # (/var vs /private/var on macOS, symlinked project folders)
+        paths = {os.path.realpath(t) for a in args for t in a.split() if t.startswith("/")}
+        _PROCS = (args, {os.path.realpath(c) for c in cwds} | paths)
+    return _PROCS
+
+
+def running(needle):
+    """Running processes whose command line contains needle."""
+    return [a for a in process_args()[0] if needle in a and "storage-cleanup" not in a]
+
+
+def running_program(*names):
+    """Running processes whose executable or script file is one of names."""
+    return [a for a in process_args()[0]
+            if any(os.path.basename(t) in names for t in a.split()[:3])]
+
+
+def in_use(project):
+    """A running process works in, or was started from a file in, project."""
+    project = os.path.realpath(project)
+    prefix = project.rstrip(os.sep) + os.sep
+    return any(p == project or p.startswith(prefix) for p in process_args()[1])
+
+
+# ------------------------------------------------------------------ deletion
+
+def refusal(path):
+    """Why path must not be deleted, or None."""
+    real = os.path.realpath(path)
+    if os.path.islink(path):
+        return "is a symlink"
+    if real in PROTECTED or any(p.startswith(real.rstrip(os.sep) + os.sep) for p in PROTECTED):
+        return "protected folder"
+    if any(real == c or real.startswith(c + os.sep) for c in CLOUD):
+        return "inside a cloud-synced folder"
+    if os.path.ismount(real):
+        return "is a mount point"
+    try:
+        if os.lstat(real).st_dev != os.lstat(HOME).st_dev:
+            return "on another filesystem"
+    except OSError as e:
+        return e.strerror
+    return None
+
+
+def remove(path, contents_only=False):
+    """Delete a directory (or only its contents) on $HOME's filesystem.
+    Never follows symlinks or enters other filesystems. Returns error strings."""
+    why = refusal(path)
+    if why:
+        return [f"{short(path)}: refused ({why})"]
+    dev = os.lstat(HOME).st_dev
+    errors, dirs, stack = [], [], [path]
+    while stack:
+        d = stack.pop()
+        try:
+            entries = list(os.scandir(d))
+        except OSError as e:
+            errors.append(f"{short(d)}: {e.strerror}")
+            continue
+        for e in entries:
+            try:
+                if e.is_dir(follow_symlinks=False):
+                    if e.stat(follow_symlinks=False).st_dev != dev:
+                        errors.append(f"{short(e.path)}: another filesystem, left alone")
+                        continue
+                    stack.append(e.path)
+                    dirs.append(e.path)
+                else:
+                    os.unlink(e.path)
+            except OSError as x:
+                errors.append(f"{short(e.path)}: {x.strerror}")
+    for d in reversed(dirs):  # children were listed after their parents
+        try:
+            os.rmdir(d)
+        except OSError as x:
+            if os.path.lexists(d):
+                errors.append(f"{short(d)}: {x.strerror}")
+    if not contents_only:
+        try:
+            os.rmdir(path)
+        except OSError as x:
+            errors.append(f"{short(path)}: {x.strerror}")
+    return errors
+
+
+def size_of(path):
+    """Allocated bytes under path on one filesystem. Hardlinked files are left
+    out: their space is only freed when every link goes (pnpm, uv stores)."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return 0
+    if not stat.S_ISDIR(st.st_mode):
+        return st.st_blocks * 512 if st.st_nlink == 1 else 0
+    total = 0
+    for dirpath, dirnames, filenames in os.walk(path):
+        dirnames[:] = same_fs_dirs(dirpath, dirnames, st.st_dev)
+        for f in filenames:
+            try:
+                s = os.lstat(os.path.join(dirpath, f))
+            except OSError:
+                continue
+            if s.st_nlink == 1:
+                total += s.st_blocks * 512
+    return total
+
+
+def same_fs_dirs(dirpath, names, dev):
+    """Child directories to descend into: no symlinks, same filesystem."""
+    keep = []
+    for d in names:
+        try:
+            s = os.lstat(os.path.join(dirpath, d))
+        except OSError:
+            continue
+        if stat.S_ISDIR(s.st_mode) and s.st_dev == dev:
+            keep.append(d)
+    return keep
+
+
+# ---------------------------------------------------------------- categories
+# A plan: {"size", "what", "path", "do"} plus optional "upto" (size is a
+# ceiling, e.g. prune), "show" (list even at size 0) and "blocked" (reason it
+# must not run now). Planners return None when there is nothing to do.
+
+def blocked_plan(path, what, reason):
+    return {"size": 0, "what": what, "path": path, "show": True, "blocked": reason,
+            "do": lambda: (False, reason)}
+
+
+def plan_command(path, what, cmd, env=None, timeout=300, upto=False, size=None):
+    if not path:
+        return None
+
+    def do():
+        ok, msg = run(*cmd, timeout=timeout, env=env)
+        return ok, "" if ok else msg
+    return {"size": size_of(path) if size is None else size, "what": what, "path": path,
+            "do": do, "upto": upto}
+
+
+def plan_remove(paths, what, contents_only=False):
+    paths = [p for p in paths if os.path.isdir(p) and not os.path.islink(p)]
+    if not paths:
+        return None
+
+    def do():
+        errors = [e for p in paths for e in remove(p, contents_only)]
+        if errors:
+            more = f" (+{len(errors) - 1} more)" if len(errors) > 1 else ""
+            return False, errors[0] + more
+        return True, ""
+    return {"size": sum(size_of(p) for p in paths), "what": what,
+            "path": paths[0] if len(paths) == 1 else f"{len(paths)} folders", "do": do}
+
+
+def npm_cache():
+    return tool_path("npm", "config", "get", "cache")
+
+
+def plan_npm(_):
+    cache = npm_cache()
+    return plan_command(cache and os.path.join(cache, "_cacache"), "npm cache clean --force",
+                        ("npm", "cache", "clean", "--force"))
+
+
+def plan_npx(_):
+    cache = npm_cache()
+    path = cache and os.path.join(cache, "_npx")
+    if not path or not os.path.isdir(path):
+        return None
+    users = running(os.sep + "_npx" + os.sep)
+    if users:
+        return blocked_plan(path, "npm cache npx rm --force",
+                            f"{len(users)} running program(s) use npx packages (MCP servers?); stop them first")
+    return plan_command(path, "npm cache npx rm --force (npx re-downloads on next use)",
+                        ("npm", "cache", "npx", "rm", "--force"))
+
+
+def plan_pnpm(_):
+    path = tool_path("pnpm", "store", "path")
+    if path and running_program("pnpm", "pnpm.cjs", "pnpm.mjs", "pnpx"):
+        return blocked_plan(path, "pnpm store prune", "pnpm is running")
+    return plan_command(path, "pnpm store prune (unreferenced packages only)",
+                        ("pnpm", "store", "prune"), upto=True)
+
+
+def plan_yarn(_):
+    ok, ver = run("yarn", "--version", timeout=30)
+    if not ok or not ver.startswith("1."):
+        return None  # Yarn 2+ global cache is listed under Review
+    return plan_command(tool_path("yarn", "cache", "dir"), "yarn cache clean", ("yarn", "cache", "clean"))
+
+
+def plan_uv(_):
+    # prune keeps entries in use; a running uv holds the lock, so give up quickly
+    return plan_command(tool_path("uv", "cache", "dir"), "uv cache prune (unused entries only)",
+                        ("uv", "cache", "prune"), env={"UV_LOCK_TIMEOUT": "15"}, upto=True)
+
+
+def plan_pip(_):
+    return plan_command(tool_path("python3", "-m", "pip", "cache", "dir"), "pip cache purge",
+                        ("python3", "-m", "pip", "cache", "purge"))
+
+
+def plan_brew(_):
+    if not shutil.which("brew"):
+        return None
+    # Without NO_AUTOREMOVE, cleanup also uninstalls formulae left over as dependencies
+    env = {"HOMEBREW_NO_AUTOREMOVE": "1", "HOMEBREW_NO_AUTO_UPDATE": "1"}
+    cmd = ("brew", "cleanup", "-s", "--prune=all")
+    ok, out = run(*cmd, "--dry-run", timeout=600, env=env)
+    m = re.search(r"free approximately ([\d.]+\s*[KMGT]?B)", out) if ok else None
+    return plan_command(tool_path("brew", "--cache") or "brew",
+                        "brew cleanup -s --prune=all (old versions and downloads)", cmd,
+                        env=env, timeout=900, size=parse_size(m.group(1)) if m else 0)
+
+
+def plan_go(_):
+    return plan_command(tool_path("go", "env", "GOCACHE"), "go clean -cache (build cache)",
+                        ("go", "clean", "-cache"))
+
+
+def plan_node_gyp(_):
+    return plan_remove([os.path.join(CACHE_HOME, "node-gyp")], "delete node-gyp header cache")
+
+
+def plan_xcode(_):
+    if not MAC:
+        return None
+    path = home("Library", "Developer", "Xcode", "DerivedData")
+    if os.path.isdir(path) and running("Xcode.app/Contents/MacOS/Xcode"):
+        return blocked_plan(path, "empty Xcode DerivedData", "Xcode is running")
+    return plan_remove([path], "empty Xcode DerivedData", contents_only=True)
+
+
+def plan_updaters(_):
+    if not MAC:
+        return None
+    # Sparkle keeps downloaded updates here; one still waiting to install on
+    # quit is re-downloaded if removed, so leave anything from the last 2 days
+    cutoff = time.time() - 2 * 86400
+    old = [p for p in glob.glob(os.path.join(glob.escape(CACHE_HOME), "*", "org.sparkle-project.Sparkle"))
+           if not recently_changed(p, cutoff)]
+    return plan_remove(old, "delete app-update downloads older than 2 days (Sparkle)")
+
+
+def plan_playwright(_):
+    path = os.path.join(CACHE_HOME, "ms-playwright")
+    if os.path.isdir(path) and running("ms-playwright"):
+        return blocked_plan(path, "delete Playwright browsers", "a Playwright browser is running")
+    return plan_remove([path], "delete Playwright browsers (npx playwright install restores them)")
+
+
+def plan_trash(_):
+    path = home(".Trash") if MAC else home(".local", "share", "Trash")
+    if not os.path.isdir(path):
+        return None
+    try:
+        os.listdir(path)
+    except PermissionError:
+        return blocked_plan(path, "empty the Trash",
+                            "no access: grant your terminal Full Disk Access, or empty it in Finder")
+    return plan_remove([path], "empty the Trash", contents_only=True)
+
+
+def plan_docker(_):
+    ok, host = run("docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}", timeout=30)
+    host = os.environ.get("DOCKER_HOST") or (host if ok else "")
+    if host and not host.startswith(("unix://", "npipe://")):
+        return blocked_plan("docker", "docker prune", f"Docker context points at {host}, not this machine")
+    ok, out = run("docker", "system", "df", "--format", "{{.Type}}: {{.Reclaimable}}", timeout=30)
+    if not ok:
+        return None
+
+    def do():
+        for cmd in (("docker", "image", "prune", "-f", "--filter", "until=168h"),
+                    ("docker", "builder", "prune", "-f", "--filter", "until=168h")):
+            ok, msg = run(*cmd, timeout=900)
+            if not ok:
+                return False, msg
+        return True, ""
+    shown = "; ".join(l for l in out.splitlines() if l.startswith(("Images", "Build")))
+    return {"size": 0, "what": f"dangling images + build cache older than 7 days ({shown})",
+            "path": "docker", "do": do, "show": True}
+
+
+def plan_system(_):
+    if not LINUX:
+        return None
+    apt = "/var/cache/apt/archives"
+
+    def do():
+        msgs = []
+        if shutil.which("apt-get"):
+            ok, msg = run("sudo", "apt-get", "clean", timeout=300)
+            ok or msgs.append(f"apt: {msg}")
+        if shutil.which("journalctl"):
+            ok, msg = run("sudo", "journalctl", "--rotate", "--vacuum-time=14d", timeout=300)
+            ok or msgs.append(f"journal: {msg}")
+        return not msgs, "; ".join(msgs)
+    return {"size": size_of(apt) if os.path.isdir(apt) else 0, "path": apt, "do": do, "show": True,
+            "what": "sudo apt-get clean; journalctl --rotate --vacuum-time=14d (archived journal files)"}
+
+
+# ------------------------------------------------------------- node_modules
+
+def recently_changed(root, cutoff, skip=("node_modules", ".git")):
+    """Any file under root (outside skip) modified after cutoff. Unreadable
+    folders count as changed, so doubt keeps things."""
+    failed = []
+    try:
+        dev = os.lstat(root).st_dev
+    except OSError:
+        return True
+    for dirpath, dirnames, filenames in os.walk(root, onerror=failed.append):
+        if failed:
+            return True
+        dirnames[:] = [d for d in same_fs_dirs(dirpath, dirnames, dev) if d not in skip]
+        for f in filenames:
+            try:
+                if os.lstat(os.path.join(dirpath, f)).st_mtime > cutoff:
+                    return True
+            except OSError:
+                return True
+    return bool(failed)
+
+
+def holds_git_clone(nm):
+    for depth in ("*", "*/*", "@*/*/*"):
+        if glob.glob(os.path.join(glob.escape(nm), depth, ".git")):
+            return True
+    return False
+
+
+def project_root(path):
+    ok, out = run("git", "-C", path, "rev-parse", "--show-toplevel", timeout=30)
+    return os.path.realpath(out) if ok and out else path
+
+
+def git_tracked(nm):
+    ok, out = run("git", "-C", os.path.dirname(nm), "ls-files", "--", "node_modules", timeout=60)
+    return ok and bool(out)
+
+
+def find_node_modules(roots):
+    """node_modules folders beside a package.json under the roots. Hidden
+    folders and ~/Library are not scanned (tool installs, editor extensions)."""
+    found = set()
+    home_dev = os.lstat(HOME).st_dev
+    for root in roots:
+        dev = os.lstat(root).st_dev
+        if dev != home_dev:
+            continue
+        for dirpath, dirnames, filenames in os.walk(root):
+            if "node_modules" in dirnames and "package.json" in filenames:
+                nm = os.path.join(dirpath, "node_modules")
+                try:
+                    s = os.lstat(nm)
+                except OSError:
+                    s = None
+                if s and stat.S_ISDIR(s.st_mode) and s.st_dev == dev and not os.path.ismount(nm):
+                    found.add(nm)
+            dirnames[:] = [d for d in same_fs_dirs(dirpath, dirnames, dev)
+                           if d != "node_modules" and not d.startswith(".")
+                           and not (dirpath == HOME and d == "Library")]
+    return sorted(found)
+
+
+def classify_node_modules(roots, days):
+    """(found, stale, kept-by-reason)."""
+    cutoff = time.time() - days * 86400
+    found = find_node_modules(roots)
+    kept, stale, recent = {}, [], {}
+    for nm in found:
+        root = project_root(os.path.dirname(nm))
+        if root not in recent:
+            recent[root] = recently_changed(root, cutoff)
+        if recent[root]:
+            reason = "project changed recently"
+        elif holds_git_clone(nm):
+            reason = "holds a git clone"
+        elif git_tracked(nm):
+            reason = "committed to git"
+        elif in_use(root):
+            reason = "a running program uses the project"
+        elif recently_changed(nm, cutoff, skip=()):
+            reason = "changed inside recently"
+        else:
+            stale.append(nm)
+            continue
+        kept[reason] = kept.get(reason, 0) + 1
+    return found, stale, kept
+
+
+def resolve_roots(raw):
+    roots, problems = [], []
+    for r in raw:
+        p = os.path.realpath(os.path.expanduser(r))
+        if not os.path.isdir(p):
+            continue
+        if os.lstat(p).st_dev != os.lstat(HOME).st_dev:
+            problems.append(f"{short(p)} is on another filesystem; not scanned")
+            continue
+        roots.append(p)
+    # Drop roots inside other roots so nothing is counted twice
+    roots = sorted(set(roots))
+    return [r for r in roots if not any(r != o and r.startswith(o.rstrip(os.sep) + os.sep) for o in roots)], problems
+
+
+def plan_node_modules(args):
+    roots, problems = resolve_roots(args.root or DEFAULT_ROOTS)
+    for p in problems:
+        print(f"note: {p}")
+    if not roots:
+        return None
+    found, stale, kept = classify_node_modules(roots, args.node_modules)
+    if not stale:
+        return None
+    why = ", ".join(f"{n} {r}" for r, n in sorted(kept.items()))
+    plan = plan_remove(stale, f"remove {len(stale)} of {len(found)} node_modules "
+                              f"(projects untouched for {args.node_modules}+ days"
+                              f"{'; kept: ' + why if why else ''})")
+    plan["path"] = ", ".join(short(r) for r in roots)
+    return plan
+
+
+CATEGORIES = [
+    # name, planner, on by default
+    ("npm", plan_npm, True),
+    ("npx", plan_npx, True),
+    ("pnpm", plan_pnpm, True),
+    ("yarn", plan_yarn, True),
+    ("uv", plan_uv, True),
+    ("pip", plan_pip, True),
+    ("brew", plan_brew, True),
+    ("go", plan_go, True),
+    ("node-gyp", plan_node_gyp, True),
+    ("xcode", plan_xcode, True),
+    ("node-modules", plan_node_modules, False),
+    ("playwright", plan_playwright, False),
+    ("updaters", plan_updaters, False),
+    ("docker", plan_docker, False),
+    ("trash", plan_trash, False),
+    ("system", plan_system, False),
+]
+OPT_IN = ("playwright", "updaters", "docker", "trash", "system")
+
+# Large things that are not plain caches: report with a hint, never delete
+REVIEW = [
+    ("/.ollama/models", "local LLM models: `ollama list`, then `ollama rm NAME`"),
+    ("/.lmstudio/models", "LM Studio models: remove unused ones in the app"),
+    ("/.cache/huggingface", "Hugging Face models: `hf cache ls`, then `hf cache rm` or `hf cache prune`"),
+    ("/.android/avd", "Android emulator images: delete unused ones in Device Manager"),
+    ("/.ghcup", "Haskell toolchains: `ghcup tui` to remove old GHC/HLS"),
+    ("/.rustup/toolchains", "Rust toolchains: `rustup toolchain list`, then uninstall"),
+    ("/.cargo/registry", "Cargo downloads: registry/cache and registry/src re-download; never delete ~/.cargo/bin"),
+    ("/.gradle/caches", "Gradle caches: cleaned by Gradle itself after 30 days"),
+    ("/.yarn/berry/cache", "Yarn 2+ global cache: `yarn cache clean --mirror` inside a Yarn project"),
+    ("/.bun/install/cache", "Bun package cache: `bun pm cache rm`"),
+    ("/Library/Caches/CocoaPods", "CocoaPods cache: `pod cache clean --all`"),
+    ("/Library/Caches/ms-playwright", "Playwright browsers: --playwright removes them"),
+    ("/Library/Developer/Xcode/Archives", "Xcode archives: keep one for every build you shipped; delete the rest in Organizer"),
+    ("/Library/Developer/Xcode/*DeviceSupport", "iOS DeviceSupport: keep the newest per OS; Xcode re-copies from the device"),
+    ("/Library/Developer/CoreSimulator", "iOS simulators: `xcrun simctl delete unavailable`"),
+    ("/Library/Application Support/MobileSync/Backup", "iPhone/iPad backups: Finder > device > Manage Backups"),
+    ("/Pictures/*.photoslibrary", "Photos: Settings > iCloud > Optimize Mac Storage keeps originals in iCloud"),
+    ("/.pcloud/Cache", "pCloud Drive cache: lower the cache size in pCloud's settings"),
+    ("/Downloads", "Downloads: sort by size and clear what you no longer need"),
+]
+REVIEW_MIN = 500 * 1024 ** 2
+
+ARCHIVE_HINT = ("Folders you keep but rarely open: copy them into an encrypted vault "
+                "(e.g. Cryptomator) in iCloud Drive or pCloud, confirm the upload, then delete "
+                "the local copy.")
+
+
+def other_pnpm_stores():
+    """Stores of other pnpm majors (projects pin their own via packageManager):
+    only that major's `pnpm store prune` can clean them."""
+    current = tool_path("pnpm", "store", "path")
+    if not current:
+        return []
+    current = current.rstrip(os.sep)
+    return [(p, "pnpm store for another pnpm major: `npx -y pnpm@<major> store prune`")
+            for p in sorted(glob.glob(os.path.join(glob.escape(os.path.dirname(current)), "v*")))
+            if p != current]
+
+
+def review_items():
+    items = [(p, hint) for pattern, hint in REVIEW for p in glob.glob(H + pattern)]
+    out = []
+    for path, hint in items + other_pnpm_stores():
+        size = size_of(path)
+        if size >= REVIEW_MIN:
+            out.append((size, path, hint))
+    return sorted(out, reverse=True)
+
+
+def local_snapshots():
+    if not MAC:
+        return 0
+    ok, out = run("tmutil", "listlocalsnapshots", "/", timeout=30)
+    return sum(1 for l in out.splitlines() if "com.apple.TimeMachine" in l) if ok else 0
+
+
+def top_folders(n=15):
+    rows = []
+    dev = os.lstat(HOME).st_dev
+    for name in os.listdir(HOME):
+        p = home(name)
+        try:
+            s = os.lstat(p)
+        except OSError:
+            continue
+        if not stat.S_ISDIR(s.st_mode) or s.st_dev != dev:
+            continue  # symlinks and other filesystems (cloud mounts)
+        try:
+            r = subprocess.run(["du", "-skx", p], capture_output=True, text=True, timeout=1800)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        # du exits non-zero when it cannot read some subfolder; keep its total
+        if r.stdout.strip():
+            rows.append((int(r.stdout.split()[0]) * 1024, p, r.returncode != 0))
+    return sorted(rows, reverse=True)[:n]
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--apply", action="store_true", help="do it (default: dry run)")
+    ap.add_argument("--node-modules", type=int, nargs="?", const=14, metavar="DAYS",
+                    help="also stale node_modules (default 14 days)")
+    ap.add_argument("--root", action="append", metavar="DIR",
+                    help="where to look for node_modules (repeatable; default ~/Git ~/Code)")
+    for flag in OPT_IN:
+        ap.add_argument(f"--{flag}", action="store_true", help=f"also the {flag} category")
+    ap.add_argument("--all", action="store_true", help="every category except --system")
+    ap.add_argument("--only", metavar="LIST", help="comma-separated categories, e.g. npm,uv,node-modules")
+    ap.add_argument("--top", action="store_true", help="also list the largest folders in $HOME (slow)")
+    args = ap.parse_args()
+
+    names = [c[0] for c in CATEGORIES]
+    if args.only:
+        chosen = [x.strip() for x in args.only.split(",") if x.strip()]
+        unknown = [x for x in chosen if x not in names]
+        if unknown:
+            ap.error(f"unknown categories: {', '.join(unknown)} (known: {', '.join(names)})")
+    else:
+        chosen = [n for n, _, default in CATEGORIES if default]
+        chosen += [f for f in OPT_IN if getattr(args, f) or (args.all and f != "system")]
+        if args.node_modules is not None or args.all:
+            chosen.append("node-modules")
+    if args.node_modules is None:
+        args.node_modules = 14
+    if args.node_modules < 1:
+        ap.error("--node-modules DAYS must be at least 1")
+
+    total = shutil.disk_usage(HOME).total
+    start = free_bytes()
+    mode = "applying" if args.apply else "dry run, nothing changed"
+    print(f"storage-cleanup ({mode}). Free: {human(start)} of {human(total)}\n")
+
+    plans, idle = [], []
+    for name, planner, _ in CATEGORIES:
+        if name in chosen:
+            plan = planner(args)
+            if plan and (plan["size"] or plan.get("show")):
+                plans.append((name, plan))
+            else:
+                idle.append(name)  # tool missing, daemon down, or already empty
+    if plans:
+        print(f"{'CATEGORY':<13} {'SIZE':>11}  ACTION")
+        for name, p in plans:
+            size = ("up to " if p.get("upto") else "") + human(p["size"]) if p["size"] else "-"
+            note = f"  SKIPPED: {p['blocked']}" if p.get("blocked") else ""
+            print(f"{name:<13} {size:>11}  {p['what']}  [{short(p['path'])}]{note}")
+        sure = sum(p["size"] for _, p in plans if not p.get("upto") and not p.get("blocked"))
+        upto = sum(p["size"] for _, p in plans if p.get("upto") and not p.get("blocked"))
+        print(f"\nEstimate: {human(sure)}" + (f", plus up to {human(upto)} from prunes" if upto else "")
+              + ". Hardlinked files are not counted; Docker is not included.")
+    else:
+        print("Nothing to clean in the selected categories.")
+    if idle:
+        print(f"Nothing to do (not installed, not running or already empty): {', '.join(idle)}")
+
+    failed = 0
+    if args.apply and plans:
+        print()
+        for name, p in plans:
+            if p.get("blocked"):
+                print(f"{'SKIPPED':<8} {name}: {p['blocked']}")
+                continue
+            ok, msg = p["do"]()
+            print(f"{'done' if ok else 'FAILED':<8} {name}{'' if ok else ': ' + msg}")
+            failed += not ok
+        end = free_bytes()
+        print(f"\nFreed {human(max(0, end - start))} (measured). Free now: {human(end)}")
+        print("APFS clones, local snapshots and other partitions can make this differ from the estimate.")
+
+    if not args.only:
+        review = review_items()
+        snaps = local_snapshots()
+        if review or snaps:
+            print("\nReview (not touched):")
+            for size, path, hint in review:
+                print(f"  {human(size):>9}  {short(path)}  {hint}")
+            if snaps:
+                print(f"  {snaps} Time Machine local snapshot(s): space from deleted files returns when they "
+                      "expire; `tmutil thinlocalsnapshots / <bytes> 4` frees it now")
+
+    if args.top:
+        print("\nLargest folders in your home:")
+        for size, path, partial in top_folders():
+            print(f"  {human(size):>9}  {short(path)}{'  (some folders unreadable)' if partial else ''}")
+        print(f"\n{ARCHIVE_HINT}")
+
+    if not args.apply and plans:
+        print("\nRun again with --apply to do it.")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
