@@ -89,7 +89,7 @@ if command -v node >/dev/null; then
     env ORCA_PACKAGE_DIR="$OL" node "$REPO/shared/bin/orca-lanes" agents
   rm -rf "$OL"
   if [[ "$(npm ls -g --depth=0 --json orcastrator 2>/dev/null)" == *'"version": "0.2.25"'* ]]; then
-    expect "orca-lanes registers the extra harnesses" 'claude-edit.*deepseek.*dsh.*opencode.*vibe' \
+    expect "orca-lanes registers the extra harnesses" 'alibaba.*claude-edit.*deepseek.*dsh.*opencode.*vibe' \
       bash -c "'$REPO/shared/bin/orca-lanes' agents 2>/dev/null | tr -d '\\n'"
   fi
 fi
@@ -301,6 +301,27 @@ if command -v sops >/dev/null && command -v age-keygen >/dev/null; then
     ! grep -q 'ds-test-456' "$log" || { echo "key on curl's command line"; rc=1; }
     return $rc
   }
+  # alibaba: key from the profile, never in curl argv; the Coding Plan backend
+  # wants its own key and refuses the pay-as-you-go one
+  claude_switch_alibaba() {
+    local fake="$SEC/fakebin" log="$SEC/curl.argv" rc=0 out
+    printf 'sk-ws-test-789' | d1 set alibaba DASHSCOPE_API_KEY >/dev/null || return 1
+    printf '#!/bin/sh\nprintf "%%s\\n" "$@" >> "%s"\nprintf "\\n%%s" "${FAKE_HTTP_CODE:-200}"\n' "$log" > "$fake/curl"
+    : > "$log"
+    out=$(HOME="$SEC/h1" SECRETS_DIR="$SEC/store" SECRET_KEY_BACKEND=file CLAUDE_BACKENDS_CONFIG="$SEC/backends.env" \
+      PATH="$fake:$REPO/shared/bin:$PATH" zsh -fc '
+        source "$1" alibaba >/dev/null 2>&1 || exit 3
+        echo "payg:$ANTHROPIC_AUTH_TOKEN:$ANTHROPIC_MODEL:$ANTHROPIC_DEFAULT_HAIKU_MODEL"' _ "$REPO/shared/bin/claude-switch" 2>&1) ||
+      { echo "switch failed: $out"; return 1; }
+    [[ "$out" == *"payg:sk-ws-test-789:qwen3.8-max:qwen3.8-flash"* ]] || { echo "payg: $out"; rc=1; }
+    out=$(HOME="$SEC/h1" SECRETS_DIR="$SEC/store" SECRET_KEY_BACKEND=file CLAUDE_BACKENDS_CONFIG="$SEC/backends.env" \
+      PATH="$fake:$REPO/shared/bin:$PATH" zsh -fc 'source "$1" alibaba-coding; echo "coding:${ANTHROPIC_AUTH_TOKEN-}"' _ "$REPO/shared/bin/claude-switch" 2>&1)
+    [[ "$out" == *"DASHSCOPE_CODING_API_KEY is not in the secret profile"* && "$out" != *"coding:sk-"* ]] || { echo "coding: $out"; rc=1; }
+    grep -q 'dashscope-intl.aliyuncs.com/apps/anthropic/v1/messages' "$log" || { echo "preflight never ran"; rc=1; }
+    ! grep -q 'sk-ws-test-789' "$log" || { echo "key on curl's command line"; rc=1; }
+    return $rc
+  }
+  command -v zsh >/dev/null && check "claude-switch alibaba: profile key, plan keys kept apart" claude_switch_alibaba
   # Output goes to a file and is checked by structure only
   secret_aws_credentials() {
     printf 'AKIATESTTESTTESTTEST' | d1 set awst AWS_ACCESS_KEY_ID >/dev/null &&

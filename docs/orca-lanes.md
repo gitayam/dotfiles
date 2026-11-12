@@ -20,6 +20,7 @@ orca-lanes kill lane_1234abcd
 | `claude-edit` | Claude Code, `--permission-mode acceptEdits` | Edit/Write; Bash denied | same as `claude` |
 | `codex` | Orca's app-server adapter | Yes | thread id |
 | `deepseek` | Claude Code on DeepSeek, through `cc-opencode` (OpenCode Go) or, with `ORCA_DEEPSEEK_ROUTE=api`, the DeepSeek API key from `secret` profile `deepseek` | Edit/Write; Bash denied | same as `claude` |
+| `alibaba` | Claude Code on Alibaba Model Studio (Singapore): pay-as-you-go (`DASHSCOPE_API_KEY`) or, with `ORCA_ALIBABA_PLAN=coding`, the Coding Plan (`DASHSCOPE_CODING_API_KEY`), both in `secret` profile `alibaba`. `--model` picks Qwen, DeepSeek, Kimi or GLM | Edit/Write; Bash denied | same as `claude` |
 | `dsh` | DeepSeek Harness, `dsh --profile headless --json -`; key from `secret` profile `deepseek` | not yet observed | `--session-id` (unknown ids fail) + echo |
 | `opencode` | `opencode run --standalone --format json` | Per `opencode.json`; anything set to "ask" is rejected and reported | `session export` before and after (`--session` would silently create a new one) |
 | `vibe` | `vibe -p --output streaming --trust --agent accept-edits` | Edit/Write; shell denied | `--resume` (unknown ids fail) + `export.json` session id |
@@ -41,6 +42,16 @@ Read = "reply with the secret word in README.md"; write = "create `hello-<agent>
 | `vibe` (Mistral) | 16 s | 19 s, file correct | verified | `kill` mid-run stopped the process group before any file was written |
 | `deepseek` | fails: OpenCode Go monthly limit (429); with `ORCA_DEEPSEEK_ROUTE=api`, 402 Insufficient Balance | | | key stored and accepted (`/models` 200); the account balance is $0.00 |
 | `dsh` | fails: 402 Insufficient Balance (`QUOTA`) | | | same key and account |
+| `alibaba` (pay-as-you-go, `qwen3.8-max`) | 19 s | 16 s, file correct | verified | `--model deepseek-v4-pro` and `--model kimi-k3` also wrote correct files (20 s, 18 s) |
+| `opencode` (`alibaba/qwen3.8-max`) | 9 s | 33 s, file correct | | key from `secret` profile `alibaba` for that run only |
+
+Alibaba's pay-as-you-go key works only on the Singapore endpoint (`dashscope-intl`); the
+Beijing and US endpoints return 401. The Coding Plan (`sk-sp-` keys) has its own endpoint
+and a shorter model list (`qwen3.7-plus`, `qwen3.6-plus`, `qwen3.5-plus`, `kimi-k2.5`,
+`glm-5`, `MiniMax-M2.5`). Claude Code logs `unrecognized_model` for these models and
+prices them as Anthropic models, so ignore its `costUsd`; check spend in the Model Studio
+console. `source claude-switch alibaba` (or `alibaba-coding`) gives an interactive
+session on the same routes.
 
 OpenCode Zen's pay-as-you-go DeepSeek models need Zen credit (402 without it).
 Zen `*-free` models may use prompts for training: public or throwaway code only.
