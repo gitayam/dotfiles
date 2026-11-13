@@ -58,17 +58,24 @@ Never put the contract in quotes on the command line. Backticks or `$( )` inside
 
 ## Paperclip (issue board at http://127.0.0.1:3100)
 
-Company `3809d0ba-0e17-4f9b-bc8a-e014670114d6`. Agents that run the real Claude Code CLI:
-
-| Agent | ID | Use for |
-|---|---|---|
-| Claude Code Cloud (Opus), the lead | `bd03e97b-8ca8-4693-b802-c7a933c33f62` | Planning, review, hard calls |
-| Claude Code z1 (GLM) | `35f35fad-2c51-42e7-b4a2-31f2b9d36c50` | Bounded implementation |
-
-(The third agent, Hermes GLM, is you; don't assign yourself through Paperclip.)
+Each machine runs its own Paperclip, so the IDs differ per machine. Look them up first (plain commands, one line per item):
 
 ```
-/opt/homebrew/bin/paperclipai issue create -C 3809d0ba-0e17-4f9b-bc8a-e014670114d6 --standalone \
+/opt/homebrew/bin/paperclipai company list                        # id= of company SAC
+/opt/homebrew/bin/paperclipai agent list -C <company id>          # id=, name=, status= per agent
+```
+
+Agents that run the real Claude Code CLI (not every machine has all of them; a machine without the servers has only the cloud agent):
+
+| Agent | Use for |
+|---|---|
+| Claude Code Cloud (Opus), the lead | Planning, review, hard calls |
+| Claude Code z1 (GLM) | Bounded implementation |
+
+(An agent named Hermes is you; don't assign yourself through Paperclip. Skip agents whose status is `paused` or `error`, and say so.)
+
+```
+/opt/homebrew/bin/paperclipai issue create -C <company id> --standalone \
   --title "<title>" --description "<goal, files, done-when>" --assignee-agent-id <agent id> --status todo --json
 $HOME/Git/dotfiles/shared/bin/paperclip-wait <SAC-n or issue id> [seconds]   # waits (default 300 s), prints status + comments
 /opt/homebrew/bin/paperclipai service status                         # is the board running?
