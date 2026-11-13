@@ -70,6 +70,8 @@ if [ "$(uname -s)" = "Darwin" ]; then
         plutil -lint -s "$PLIST_DST.tmp" && mv "$PLIST_DST.tmp" "$PLIST_DST"
     # Not loaded yet is fine (set -e would otherwise stop here)
     launchctl bootout "gui/$(id -u)/io.vibe.litellm" 2>/dev/null || true
+    # bootout returns before the old process is gone; bootstrap fails (EIO) until then
+    for _ in $(seq 1 60); do launchctl print "gui/$(id -u)/io.vibe.litellm" >/dev/null 2>&1 || break; sleep 1; done
     if launchctl bootstrap "gui/$(id -u)" "$PLIST_DST"; then
         echo "✓ loaded launchd job io.vibe.litellm (logs: ~/.vibe/logs/litellm.log)"
     else
