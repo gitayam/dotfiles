@@ -68,6 +68,13 @@ named `lumo` (`https://chat.untitledstartup.xyz/api`, models `lumo-max` and
       models: {lumo-max: {context_length: 128000}, lumo-lite: {context_length: 128000}}
   ```
   Switch to it with `/model` or `--provider custom:lumo -m lumo-max`.
+- **Switching in a shared group chat:** use
+  `/model lumo-max --provider lumo --once`, which applies to the next reply
+  only. A plain `/model lumo-max` keeps the whole group on Lumo until someone
+  switches back, and Hermes 0.22 has no `/model reset`. Wait for the bot to
+  confirm the switch before sending the next message. A message sent earlier
+  is merged into the pending command: once it became part of the model ID.
+  A message sent while a turn is running is folded into that turn.
 - **Pin Hermes' auxiliary tasks to another provider**
   (`auxiliary.title_generation`, `compression`, `vision`).
   - Streaming replies are normal SSE.
@@ -80,6 +87,17 @@ Tested 2026-11-14:
 - **Hermes:** each of three server Hermes bots made a `read_file` tool call
   through `lumo` and returned the exact contents. The bots' default models were
   unchanged.
+- **Hermes through SimpleX, as a member:** a test member in the coding bot's
+  group chat ran `/model` (the picker listed `lumo-max` and `lumo-lite`), then,
+  for each model, a `--once` switch and a turn that called the coding broker's
+  read-only project list.
+  - Both answers were correct: the number of admitted projects, and one
+    project's baseline commit.
+  - The bot's log showed both calls going to the gateway on the requested
+    model, with two API calls, a completed tool call and a normal end.
+  - Each turn took 60–80 seconds, mostly in the tool.
+  - Title generation stayed on the pinned provider.
+  - The next reply each time came from the bot's default model again.
 - **OpenCode 2.2.5:** `lumo/lumo-max` made a read tool call and returned the
   exact marker.
 - **Prompt size:** the gateway accepted prompts of 112K, 175K and 250K tokens
