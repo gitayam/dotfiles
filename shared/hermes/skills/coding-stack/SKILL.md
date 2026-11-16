@@ -41,6 +41,7 @@ Goal: <one sentence>.
 Only change: <files or directories>.
 Do not: push, deploy, touch .env, edit tests, or add stub/fake packages to make checks pass.
 If a tool or dependency is missing, stop and report it instead of working around it.
+New tests copy the runner and imports of an existing test next to them. Don't change test scripts or CI config to make a check pass.
 Done when: <exact command> passes. Report the diff summary and that command's output.
 ```
 
@@ -83,6 +84,8 @@ $HOME/Git/dotfiles/shared/bin/paperclip-wait <SAC-n or issue id> [seconds]   # w
 
 Assigning starts the agent; nothing runs on a timer. The create command prints JSON; read `identifier` (e.g. SAC-7) from it. Then run `paperclip-wait` once and report the identifier, final status and the agent's comment. Don't write polling loops or inline scripts (`python3 -c`, `node -e`): Hermes asks the user to approve each one, and `paperclip-wait` needs no approval. Exit codes: 0 done, 1 blocked or cancelled, 2 still open at the timeout.
 
+A comment on an assigned issue wakes its agent. Don't comment and then close or reassign the issue a few seconds later; that kills the run it just started. Change the status first, or let the agent finish.
+
 ## Health checks
 
 ```
@@ -92,6 +95,8 @@ launchctl list | grep io.zenithflow.tunnel            # the two SSH tunnels (lau
 ```
 
 If a server model is DOWN, say so and offer cloud instead; don't restart servers yourself.
+
+If a Paperclip issue goes `blocked` within seconds with "no live execution path", or agents show `error` without having run, the board's service can't start agents (for example after a Node upgrade). Tell the user to rerun the dotfiles installer (`scripts/install-claude-aliases.sh`) or restart Paperclip; don't retry the issue.
 
 ## Credentials and memory
 
