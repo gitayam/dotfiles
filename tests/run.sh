@@ -443,6 +443,27 @@ check "paperclip-wait: usage exits 0; unreachable API exits 3" bash -c '
   python3 "$1" --help >/dev/null &&
   { PAPERCLIP_API_URL=http://127.0.0.1:9 python3 "$1" SAC-1 1 >/dev/null 2>&1; [ $? -eq 3 ]; }' _ "$REPO/shared/bin/paperclip-wait"
 
+if [[ "$(uname -s)" == Darwin ]]; then
+  # Fake HOME and a launchctl stub: the step must never touch the real service
+  paperclip_node_pin() {
+    local h; h="$(mktemp -d)"; mkdir -p "$h/Library/LaunchAgents" "$h/.local/bin" "$h/.paperclip" "$h/stub"
+    printf '#!/bin/sh\necho "$*" >> "%s/launchctl.log"\n[ "$1" = print ] && exit 1\nexit 0\n' "$h" > "$h/stub/launchctl"; chmod +x "$h/stub/launchctl"
+    /usr/libexec/PlistBuddy -c "Add :Label string ing.paperclip.paperclipai" "$h/Library/LaunchAgents/ing.paperclip.paperclipai.plist" >/dev/null
+    printf '#!/bin/sh\nexport PATH=/opt/homebrew/Cellar/node/1.0.0_1/bin:"$PATH"\nexec /opt/homebrew/Cellar/node/1.0.0_1/bin/node x.js "$@"\n' > "$h/.local/bin/paperclipai"
+    local step; step="$(awk '/^# 5c\./,/^# 5d\./' "$REPO/scripts/install-claude-aliases.sh" | sed '$d')"
+    HOME="$h" DOTFILES="$REPO" PATH="$h/stub:$PATH" bash -c "$step" >/dev/null || return 1
+    if [ -x /opt/homebrew/opt/node/bin/node ]; then
+      grep -q '/opt/homebrew/opt/node/bin/node x.js' "$h/.local/bin/paperclipai" && ! grep -q Cellar "$h/.local/bin/paperclipai" || { echo "shim not repointed"; return 1; }
+    fi
+    /usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:PATH" "$h/Library/LaunchAgents/ing.paperclip.paperclipai.plist" >/dev/null || { echo "no PATH added"; return 1; }
+    [ "$(grep -c '^bootstrap' "$h/launchctl.log")" -eq 1 ] || { echo "expected one reload"; cat "$h/launchctl.log"; return 1; }
+    HOME="$h" DOTFILES="$REPO" PATH="$h/stub:$PATH" bash -c "$step" >/dev/null || return 1
+    [ "$(grep -c '^bootstrap' "$h/launchctl.log")" -eq 1 ] || { echo "rerun reloaded again"; return 1; }
+    rm -rf "$h"
+  }
+  check "installer: Paperclip PATH added and Node pin repointed, one reload, rerun is a no-op" paperclip_node_pin
+fi
+
 echo "== git wip"
 wip_setup() {
   local d="$WORK/wip"

@@ -106,24 +106,46 @@ if [ "$(uname -s)" = "Darwin" ]; then
     done
 fi
 
-# 5c. macOS: Paperclip's service plist (written by `paperclipai service install`)
-#     has no PATH, so its agents get Apple's Python 3.9 and miss Homebrew tools.
-#     Add one when it's missing and reload the service; reinstalls drop it again,
-#     so this step is idempotent and safe to rerun.
+# 5c. macOS: Paperclip's service (written by `paperclipai service install`) needs
+#     two repairs, and reinstalls undo both, so this step is idempotent:
+#     - its plist has no PATH, so agents get Apple's Python 3.9 and miss Homebrew;
+#     - its launcher shim (~/.local/bin/paperclipai) pins Node by version
+#       (/opt/homebrew/Cellar/node/<version>/bin). `brew upgrade node` deletes that
+#       folder: every agent run then fails with "spawn … node ENOENT" and the
+#       service can't restart. Point it at Homebrew's stable /opt/homebrew/opt/node.
+#     The service is reloaded once, only if something changed.
 PAPERCLIP_PLIST="$HOME/Library/LaunchAgents/ing.paperclip.paperclipai.plist"
+PAPERCLIP_SHIM="$HOME/.local/bin/paperclipai"
 if [ "$(uname -s)" = "Darwin" ] && [ -f "$PAPERCLIP_PLIST" ]; then
+    pc_reload=false
     if /usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:PATH" "$PAPERCLIP_PLIST" >/dev/null 2>&1; then
         echo "✓ Paperclip service already has a PATH"
     else
         pc_path="$DOTFILES/shared/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
         /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:PATH string $pc_path" "$PAPERCLIP_PLIST"
+        echo "✓ added PATH to the Paperclip service"
+        pc_reload=true
+    fi
+    if [ -f "$PAPERCLIP_SHIM" ] && grep -qE '/opt/homebrew/Cellar/node/[^/]+/bin' "$PAPERCLIP_SHIM"; then
+        if [ -x /opt/homebrew/opt/node/bin/node ]; then
+            cp "$PAPERCLIP_SHIM" "$HOME/.paperclip/paperclipai-shim.backup.$(date +%Y%m%d%H%M%S)"
+            sed -i '' -E 's#/opt/homebrew/Cellar/node/[^/]+/bin#/opt/homebrew/opt/node/bin#g' "$PAPERCLIP_SHIM"
+            echo "✓ Paperclip shim now uses /opt/homebrew/opt/node (survives brew upgrade node)"
+            pc_reload=true
+        else
+            echo "⚠ Paperclip shim pins a Node version and /opt/homebrew/opt/node is missing; leaving it"
+        fi
+    else
+        echo "✓ Paperclip shim doesn't pin a Node version"
+    fi
+    if $pc_reload; then
         launchctl bootout "gui/$(id -u)/ing.paperclip.paperclipai" 2>/dev/null || true
         # bootout returns before the old process is gone; bootstrap fails (EIO) until then
         for _ in $(seq 1 60); do launchctl print "gui/$(id -u)/ing.paperclip.paperclipai" >/dev/null 2>&1 || break; sleep 1; done
         if launchctl bootstrap "gui/$(id -u)" "$PAPERCLIP_PLIST"; then
-            echo "✓ added PATH to the Paperclip service and reloaded it"
+            echo "✓ reloaded the Paperclip service"
         else
-            echo "⚠ PATH added; reload with: launchctl bootstrap gui/$(id -u) $PAPERCLIP_PLIST"
+            echo "⚠ reload with: launchctl bootstrap gui/$(id -u) $PAPERCLIP_PLIST"
         fi
     fi
 fi
