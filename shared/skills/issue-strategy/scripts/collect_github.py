@@ -103,13 +103,15 @@ def collect(client,out,numbers=(),max_pages=20):
                 try:
                     issue=client.get(prefix)
                     if 'pull_request' in issue:raise ReadError('Selected number is a pull request, not an issue.')
-                    detail={'issue':issue}
+                    detail={'issue':issue,'issue_source':client.base+prefix}
                     for key,path in [('comments',prefix+'/comments'),('timeline',prefix+'/timeline'),
                                      ('blocked_by',prefix+'/dependencies/blocked_by'),
                                      ('blocking',prefix+'/dependencies/blocking'),('sub_issues',prefix+'/sub_issues')]:
                         detail[key]=optional(client.get,path,max_pages)
+                        detail[key]['source']=client.base+path
                     try:detail['parent']={'item':client.get(prefix+'/parent'),'available':True}
                     except ReadError as exc:detail['parent']={'available':False,'reason':str(exc)}
+                    detail['parent']['source']=client.base+prefix+'/parent'
                     save(f'issue-{number}.json',detail)
                     manifest['coverage'][str(number)]={key:detail[key]['coverage'] for key in ['comments','timeline','blocked_by','blocking','sub_issues']}
                     manifest['coverage'][str(number)]['parent_available']=detail['parent']['available']
