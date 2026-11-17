@@ -95,6 +95,14 @@ def paperclip_context(metadata, api_base):
         'default':{},'company':{'apiBase':api_base,'companyId':company,'persona':'board'}}}
 
 
+def company_shell_text(existing):
+    """Put managed launchers after shell/package-manager PATH initialization."""
+    start='# >>> company managed launchers >>>'
+    end='# <<< company managed launchers <<<'
+    existing=re.sub(re.escape(start)+r'.*?'+re.escape(end)+r'\n?', '', existing, flags=re.S)
+    return existing.rstrip()+f'\n\n{start}\nexport PATH="$HOME/.local/bin:$PATH"\n{end}\n'
+
+
 def repair_paperclip_shim(path, stable_node, apply):
     """Keep an existing managed CLI payload; repair only its Homebrew Node pin."""
     if path.is_symlink() or not path.is_file() or not stable_node.is_file():return
@@ -166,6 +174,11 @@ def main():
     else:
         print('INFO company Paperclip metadata not provisioned; zf-paperclip will refuse API commands.')
     if a.scope=='device':
+        shell=home/'.zshrc'
+        if shell.is_symlink():
+            print('ACTION REQUIRED: put ~/.local/bin first after all PATH initialization in the source of .zshrc; symlink preserved.')
+        else:
+            write(shell,company_shell_text(shell.read_text() if shell.exists() else ''),a.apply)
         registry=[]
         for line in (REPO/'shared/llm/models.conf').read_text().splitlines():
             fields=line.split()
@@ -252,6 +265,10 @@ Use `{state}/bin/zf-orca dispatch --agent claude --cwd <scratch> "<question>"`
 for bounded read-only lanes; `inspect <lane>` retrieves the result. This company
 wrapper does not provide an Orca edit adapter or a Paperclip-to-Orca handoff.
 Orca reports semanticOutcome unknown: independently check the answer/artifacts.
+Its read-only adapter may refuse shell commands and files outside the selected
+cwd. Supply a sanitized current-state inventory in the prompt, or perform those
+checks separately; do not turn a denied check into a claim that software is
+missing. Distinguish package installation channel from Enterprise account auth.
 Git commits, review, CI and deployment remain separate authorized steps; neither
 board nor lane completion grants permission to publish. Paperclip must use the
 real Claude Code legacy runner with approved model/tier environment. There is no
