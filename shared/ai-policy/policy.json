@@ -12,7 +12,8 @@
     "anthropic": { "models": ["claude*", "opus*", "sonnet*", "haiku*", "fable*"], "tags": ["us-jurisdiction"] },
     "google": { "models": ["gemini*", "gemma*"], "tags": ["us-jurisdiction"] },
     "meta": { "models": ["llama*"], "tags": ["us-jurisdiction"] },
-    "lumo": { "models": ["lumo*"], "tags": ["external-gateway"] }
+    "lumo": { "models": ["lumo*"], "tags": ["external-gateway"] },
+    "reflection": { "models": ["beam*", "Beam-*", "reflection*"], "tags": ["us-jurisdiction"] }
   },
   "services": {
     "alibaba-cloud": { "hosts": ["*.aliyuncs.com", "*.alibabacloud.com", "*.aliyun.com"], "providers": ["alibaba", "alibaba-*", "dashscope", "bailian", "modelstudio"], "tags": ["cn-jurisdiction"] },
@@ -24,6 +25,7 @@
     "openai-api": { "hosts": ["api.openai.com", "chatgpt.com"], "providers": ["openai", "codex"], "tags": ["us-jurisdiction"] },
     "anthropic-api": { "hosts": ["api.anthropic.com"], "providers": ["anthropic", "claude"], "tags": ["us-jurisdiction"] },
     "lumo-gateway": { "hosts": ["chat.untitledstartup.xyz"], "providers": ["lumo"], "tags": ["external-gateway"] },
+    "reflection-api": { "hosts": ["api.reflection.ai"], "providers": ["reflection"], "tags": ["us-jurisdiction"] },
     "self-hosted": { "hosts": ["localhost", "127.0.0.1", "100.*", "10.*", "192.168.*", "*.ts.net"], "providers": ["ollama", "local", "lmstudio", "vllm", "litellm"], "tags": ["self-hosted"] }
   },
   "projects": {

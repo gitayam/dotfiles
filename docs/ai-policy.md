@@ -38,6 +38,12 @@ Projects are matched by git remote (`host/group/repo`, normalized from HTTPS, SS
 and scp-style URLs), or by `paths`. A model the catalog doesn't know has no vendor
 term, so deny lists stop known families; add new families to `vendors` as they appear.
 
+Known vendors: alibaba, deepseek, moonshot, zhipu, minimax (`cn-jurisdiction`), mistral
+(`eu-jurisdiction`), openai, anthropic, google, meta, reflection (`us-jurisdiction`; Beam,
+`beam*` / `Beam-*`, served directly by `api.reflection.ai` as service `reflection-api` or
+as `beam-free` through OpenCode), and lumo (`external-gateway`). How each one is reached
+from these machines: [model-providers.md](model-providers.md).
+
 ## Current rules (2026-11-14)
 
 | Projects | Denied | Why |
