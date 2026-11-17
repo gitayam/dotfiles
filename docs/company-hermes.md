@@ -23,6 +23,13 @@ available. The work-only Mac uses its existing Hermes home and Enterprise
 account, with an organization pin. Configuration changes retain timestamped
 backups and existing unrelated Claude hooks.
 
+For a workstation that moves networks, point the SSH relay at a stable private
+SSH alias and update that alias's `HostName` when its address changes. Verify the
+new address against the previous host key first. Loopback model/decision URLs
+remain unchanged. After reconnecting, reconcile existing issues and runs before
+retrying: a run can be cancelled while a later controller retry finishes the
+same issue. Verify inference and a decision through the relay, not just its port.
+
 On a work-only device the ordinary alias installer detects the private device
 configuration and refreshes just that setup. It does not install the personal
 provider catalog. `~/.config/ai-policy/device-models.conf` also restricts the
