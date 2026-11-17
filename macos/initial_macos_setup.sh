@@ -397,7 +397,9 @@ install_gui_apps() {
         4) install_cli claude claude-code --cask ;;
         5) install_cli codex codex --cask ;;
         6) install_cli opencode opencode --formula ;;
-        7) install_cli hermes hermes-agent --formula ;;
+        7)
+          install_cli hermes hermes-agent --formula
+          note_next_step "Hermes: run 'hermes setup' (providers), then 'hermes-setup --apply' (computer use, Kanban, approvals, skill)" ;;
         8)
           if [[ "$ARCH" == "arm64" ]]; then
             install_cask deepseek-harness

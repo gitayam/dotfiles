@@ -153,12 +153,11 @@ if [ "$(uname -s)" = "Darwin" ] && [ -f "$PAPERCLIP_PLIST" ]; then
     fi
 fi
 
-# 5d. Hermes (CLI and Hermes.app share ~/.hermes): the coding-stack skill that
-#     teaches it to drive claude-z, Paperclip, Orca and zq
-if [ -d "$HOME/.hermes/skills" ]; then
-    mkdir -p "$HOME/.hermes/skills/autonomous-ai-agents"
-    ln -sfn "$DOTFILES/shared/hermes/skills/coding-stack" "$HOME/.hermes/skills/autonomous-ai-agents/coding-stack"
-    echo "✓ Hermes skill coding-stack → $DOTFILES/shared/hermes/skills/coding-stack"
+# 5d. Hermes (CLI and Hermes.app share ~/.hermes): computer use, Kanban, write
+#     approvals and the coding-stack skill. hermes-setup reports what still needs a
+#     person (macOS permissions, Linux packages); its exit 1 must not stop this script.
+if command -v hermes >/dev/null 2>&1 && [ -f "$HOME/.hermes/config.yaml" ]; then
+    DOTFILES="$DOTFILES" "$DOTFILES/shared/bin/hermes-setup" --apply || echo "⚠ hermes-setup left items above to finish"
 fi
 
 # 6. Linux: install systemd user unit for LiteLLM autostart.

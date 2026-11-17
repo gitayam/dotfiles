@@ -60,7 +60,7 @@ syntax_bash() {
   local f bad=0
   for f in "$REPO"/macos/*.sh "$REPO"/linux/*.sh "$REPO"/shared/setup/*.sh "$REPO"/tests/*.sh \
            "$REPO"/shared/bin/git-wip "$REPO"/shared/bin/git-sync-all "$REPO"/shared/bin/secret \
-           "$REPO"/shared/bin/claude-switch "$REPO"/shared/bin/claude-z "$REPO"/shared/bin/oz "$REPO"/shared/vibe/run-litellm.sh \
+           "$REPO"/shared/bin/claude-switch "$REPO"/shared/bin/claude-z "$REPO"/shared/bin/oz "$REPO"/shared/bin/hermes-setup "$REPO"/shared/vibe/run-litellm.sh \
            "$REPO"/scripts/install-claude-aliases.sh "$REPO"/shared/zsh/.zsh_*; do
     [[ "$f" == *.original ]] && continue
     bash -n "$f" || { echo "bash -n failed: $f"; bad=1; }
@@ -651,6 +651,52 @@ if command -v npm >/dev/null; then
   expect "storage-cleanup skips the npx cache while a program runs from it" 'SKIPPED: 1 running' sc_cmd --only npx
   kill "$SC_PID" 2>/dev/null; wait "$SC_PID" 2>/dev/null
 fi
+
+echo "== hermes-setup"
+# A fake hermes that keeps config values and enabled toolsets in files under $HERMES_HOME
+HS="$WORK/hermes"; mkdir -p "$HS/bin" "$HS/home/.hermes/tools" "$HS/home/.hermes/skills"
+cat > "$HS/bin/hermes" <<'FAKE'
+#!/usr/bin/env bash
+s="$HERMES_HOME"
+case "$1 $2" in
+  "config get") cat "$s/.cfg-$3" 2>/dev/null || echo false ;;
+  "config set") echo "$4" > "$s/.cfg-$3" ;;
+  "tools list") for t in computer_use kanban; do
+                  [ -f "$s/.on-$t" ] && echo "  ✓ enabled  $t  x" || echo "  ✗ disabled  $t  x"; done ;;
+  "tools enable") touch "$s/.on-${!#}" ;;
+  "kanban init") touch "$s/kanban.db" ;;
+  "status "*) echo "  Gateway:      ✗ stopped" ;;
+  "computer-use status") echo "  ✓ Runtime contract ready (Hermes PM pin)." ;;
+  "computer-use permissions") echo "  ✅ Accessibility"; echo "  ✅ Screen Recording" ;;
+  "computer-use screen") echo "stopped" ;;
+esac
+FAKE
+chmod +x "$HS/bin/hermes"
+printf 'providers:\n  z1:\n    models:\n      glm-5.3-flash: {}\nmodel:\n  provider: z1\n' > "$HS/home/.hermes/config.yaml"
+hs_run() { env -u DISPLAY -u WAYLAND_DISPLAY HOME="$HS/home" HERMES_HOME="$HS/home/.hermes" DOTFILES="$REPO" \
+             PATH="$HS/bin:$PATH" bash "$REPO/shared/bin/hermes-setup" "$@"; }
+hs_report_changes_nothing() {
+  local before; before=$(cat "$HS/home/.hermes/config.yaml")
+  ! hs_run >/dev/null && [ "$(cat "$HS/home/.hermes/config.yaml")" = "$before" ] &&
+    [ ! -e "$HS/home/.hermes/kanban.db" ] && [ ! -e "$HS/home/.hermes/.on-kanban" ]
+}
+check "hermes-setup without --apply reports failures and changes nothing" hs_report_changes_nothing
+expect "hermes-setup reports the missing supports_vision" 'FAIL +glm-5.3-flash lacks supports_vision' hs_run
+hs_apply() {
+  hs_run --apply >/dev/null || return 1
+  grep -A1 '^      glm-5.3-flash:$' "$HS/home/.hermes/config.yaml" | grep -q '^        supports_vision: true$' &&
+    ls "$HS/home/.hermes"/config.yaml.backup.* >/dev/null 2>&1 &&
+    [ -e "$HS/home/.hermes/.on-kanban" ] && [ -e "$HS/home/.hermes/.on-computer_use" ] &&
+    [ -e "$HS/home/.hermes/kanban.db" ] && [ "$(cat "$HS/home/.hermes/.cfg-memory.write_approval")" = true ] &&
+    [ -L "$HS/home/.hermes/skills/autonomous-ai-agents/coding-stack" ]
+}
+check "hermes-setup --apply sets vision (with a backup), toolsets, kanban, approvals and the skill" hs_apply
+hs_idempotent() {
+  local before; before=$(cat "$HS/home/.hermes/config.yaml")
+  hs_run --apply >/dev/null && [ "$(cat "$HS/home/.hermes/config.yaml")" = "$before" ] &&
+    [ "$(grep -c supports_vision "$HS/home/.hermes/config.yaml")" = 1 ]
+}
+check "hermes-setup --apply twice changes nothing more" hs_idempotent
 
 echo "== ssh-doctor"
 if command -v ssh-agent >/dev/null; then
