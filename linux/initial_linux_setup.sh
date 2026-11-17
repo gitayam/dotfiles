@@ -486,7 +486,9 @@ install_editors_and_agents() {
       3) run_vendor_installer "Claude Code" claude https://claude.ai/install.sh bash ;;
       4) run_vendor_installer "Codex" codex https://chatgpt.com/codex/install.sh sh ;;
       5) run_vendor_installer "OpenCode" opencode https://opencode.ai/v2/install bash ;;
-      6) run_vendor_installer "Hermes Agent" hermes https://hermes-agent.nousresearch.com/install.sh bash ;;
+      6)
+        run_vendor_installer "Hermes Agent" hermes https://hermes-agent.nousresearch.com/install.sh bash
+        note_next_step "Hermes: run 'hermes setup' (providers), then 'hermes-setup --apply' (computer use, Kanban, approvals, skill)" ;;
       7)
         apt_install nodejs npm
         # ~/.local prefix: no sudo, and ~/.local/bin is on PATH via the dotfiles
