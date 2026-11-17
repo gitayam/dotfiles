@@ -114,8 +114,9 @@ def paperclip_args(cfg, args):
         return [cfg['paperclip'], *args]
     if args[0] not in {'company','agent','issue','project','goal'}:
         raise LauncherError('Use the company issue, agent, project, goal or company commands.')
-    overrides={'--context','--profile','--api-base','--company-id','-C','--config','--data-dir'}
-    if any(arg.split('=',1)[0] in overrides for arg in args):
+    overrides={'--context','--profile','--api-base','--company-id','--config','--data-dir'}
+    if any(arg.split('=',1)[0] in overrides or
+           any(arg.startswith(short) for short in ('-C','-c','-d')) for arg in args):
         raise LauncherError('Company routing is pinned by this launcher.')
     context=Path(cfg['paperclip_context'])
     if not context.is_file():

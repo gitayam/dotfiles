@@ -68,7 +68,8 @@ class WorkRoutes(unittest.TestCase):
             self.assertIn('--company-id',argv)
             self.assertEqual(argv[argv.index('--company-id')+1],'12345678-1234-1234-1234-123456789abc')
             self.assertNotIn('--company-id',ai.paperclip_args(cfg,['issue','get','ZEN-1']))
-            for extra in [['--profile','personal'],['--api-base=https://other.invalid'],['-C','other']]:
+            for extra in [['--profile','personal'],['--api-base=https://other.invalid'],
+                          ['-C','other'],['-Cother'],['-c','personal.json'],['-cpersonal.json'],['-d/tmp/other']]:
                 with self.assertRaises(ValueError):ai.paperclip_args(cfg,['agent','list',*extra])
             p.unlink()
             with self.assertRaises(ValueError):ai.paperclip_args(cfg,['agent','list'])
