@@ -35,8 +35,10 @@ generation, compression, vision) to another provider. Denied for ZenithFlow.
 ## Beam (Reflection AI)
 
 - Direct API: `https://api.reflection.ai/openai/v1`, key `REFLECTION_API_KEY`, model
-  `Beam-1.0-501B-A23B` (open weights, 1M context, tool calls, reasoning). About 200
-  tokens/s. No key is stored yet: `secret set reflection REFLECTION_API_KEY`.
+  `Beam-1.0-501B-A23B` (open weights, 1M context, tool calls, reasoning). Measured
+  2026-11-17: 0.3 s to the first token and about 125 tokens/s on a short answer (the owner
+  sees about 200 on longer ones). The key is in secret profile `reflection`
+  (`secret run reflection -- …`); a Hermes server gets it in its `.env` over stdin.
 - Through OpenCode: `opencode/beam-free` and `opencode-go/beam-free` both answered on
   2026-11-17 and are outside the Go monthly cap.
 - Free tiers may use prompts for training. Check the provider's data terms before
