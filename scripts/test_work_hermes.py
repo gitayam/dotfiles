@@ -9,7 +9,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from setup_work_hermes import hermes_config, SLOTS, write
+from setup_work_hermes import hermes_config, SLOTS, write, paperclip_context, repair_paperclip_shim
+from setup_work_desktop import desktop_config, ui_readiness
 
 loader=importlib.machinery.SourceFileLoader('work_ai',str(Path(__file__).parents[1]/'shared/bin/work-ai'))
 spec=importlib.util.spec_from_loader(loader.name,loader)
@@ -21,6 +22,65 @@ CFG=dict(routes=ROUTES,scope='workspace',workspace='/tmp/company',enterprise_org
 
 
 class WorkRoutes(unittest.TestCase):
+    def test_backend_setup_does_not_imply_desktop_plugins_are_enabled(self):
+        self.assertEqual(ui_readiness({})['desktop_plugins'],'action-required')
+        confirmed=ui_readiness({},True)
+        self.assertEqual(confirmed['desktop_plugins'],'user-confirmed')
+        self.assertEqual(ui_readiness(confirmed)['desktop_plugins'],'user-confirmed')
+        self.assertEqual(confirmed['browser_plugins'],'check-per-browser')
+
+    def test_desktop_listener_is_private_and_keeps_gateway_settings(self):
+        cfg=desktop_config({'webapp':{'host':'0.0.0.0','public_url':'https://example.invalid'},
+                            'gateway':{'max_concurrent_sessions':2}})
+        self.assertEqual(cfg['webapp'],{'enabled':True,'host':'127.0.0.1','port':9120,'public_url':''})
+        self.assertEqual(cfg['gateway']['max_concurrent_sessions'],2)
+        self.assertTrue(cfg['gateway']['multiplex_profiles'])
+
+    def test_native_binary_is_not_treated_as_a_shell_shim(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'cli';path.write_bytes(b'\x00\xff\xfe\x80')
+            repair_paperclip_shim(path,path,True)
+            self.assertEqual(path.read_bytes(),b'\x00\xff\xfe\x80')
+
+    def test_paperclip_stale_node_pin_repaired_without_replacing_payload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            h=Path(tmp);shim=h/'paperclip';node=h/'node'
+            shim.write_text('#!/bin/sh\nexec /opt/homebrew/Cellar/node/0/bin/node company-cli "$@"\n');shim.chmod(0o700)
+            node.write_text('#!/bin/sh\nprintf "%s\\n" "$*"\n');node.chmod(0o700)
+            self.assertNotEqual(subprocess.run([str(shim),'--version'],capture_output=True).returncode,0)
+            repair_paperclip_shim(shim,node,False)
+            self.assertNotEqual(subprocess.run([str(shim),'--version'],capture_output=True).returncode,0)
+            repair_paperclip_shim(shim,node,True)
+            result=subprocess.run([str(shim),'--version'],capture_output=True,text=True)
+            self.assertEqual(result.returncode,0)
+            self.assertEqual(result.stdout.strip(),'company-cli --version')
+            self.assertIn('Cellar/node/0',next(h.glob('paperclip.backup.*')).read_text())
+
+    def test_paperclip_uses_company_context_and_refuses_route_overrides(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p=Path(tmp)/'context.json';p.write_text(json.dumps(paperclip_context(
+                {'company_id':'12345678-1234-1234-1234-123456789abc'},'http://127.0.0.1:13100')))
+            cfg=dict(CFG,paperclip='/private/cli',paperclip_context=str(p),
+                     paperclip_api_base='http://127.0.0.1:13100')
+            argv=ai.paperclip_args(cfg,['agent','list','--json'])
+            self.assertEqual(argv[-6:],['--context',str(p),'--profile','company',
+                                       '--api-base','http://127.0.0.1:13100'])
+            self.assertIn('--company-id',argv)
+            self.assertEqual(argv[argv.index('--company-id')+1],'12345678-1234-1234-1234-123456789abc')
+            self.assertNotIn('--company-id',ai.paperclip_args(cfg,['issue','get','ZEN-1']))
+            for extra in [['--profile','personal'],['--api-base=https://other.invalid'],
+                          ['-C','other'],['-Cother'],['-c','personal.json'],['-cpersonal.json'],['-d/tmp/other']]:
+                with self.assertRaises(ValueError):ai.paperclip_args(cfg,['agent','list',*extra])
+            p.unlink()
+            with self.assertRaises(ValueError):ai.paperclip_args(cfg,['agent','list'])
+
+    def test_paperclip_context_keeps_company_identity_without_credentials(self):
+        d=paperclip_context({'company_id':'12345678-1234-1234-1234-123456789abc'},'http://127.0.0.1:3100')
+        self.assertEqual(d['profiles']['company']['companyId'],'12345678-1234-1234-1234-123456789abc')
+        self.assertEqual(set(d['profiles']['company']),{'apiBase','companyId','persona'})
+        self.assertEqual(d['currentProfile'],'company')
+        with self.assertRaises(ValueError):paperclip_context({'company_id':'not-a-company'},'http://127.0.0.1:3100')
+
     def test_device_refresh_skips_personal_alias_installer(self):
         repo=Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as tmp:

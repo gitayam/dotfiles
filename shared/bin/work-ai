@@ -13,6 +13,10 @@ import urllib.error
 import urllib.request
 
 
+class LauncherError(ValueError):
+    """A fixed, credential-free diagnostic safe to show to the operator."""
+
+
 def config():
     return json.loads((Path(__file__).resolve().parent.parent / 'config.json').read_text())
 
@@ -104,6 +108,31 @@ def request(url, payload=None, key='selfhosted', timeout=180):
         return json.load(response)
 
 
+def paperclip_args(cfg, args):
+    """Use the private company context rather than the operator's unrelated default."""
+    if not args or args[0] in {'--help','-h','--version','-V'}:
+        return [cfg['paperclip'], *args]
+    if args[0] not in {'company','agent','issue','project','goal'}:
+        raise LauncherError('Use the company issue, agent, project, goal or company commands.')
+    overrides={'--context','--profile','--api-base','--company-id','--config','--data-dir'}
+    if any(arg.split('=',1)[0] in overrides or
+           any(arg.startswith(short) for short in ('-C','-c','-d')) for arg in args):
+        raise LauncherError('Company routing is pinned by this launcher.')
+    context=Path(cfg['paperclip_context'])
+    if not context.is_file():
+        raise LauncherError('Company Paperclip context is missing; configure company metadata and rerun setup.')
+    profile=json.loads(context.read_text())['profiles']['company']
+    command=tuple(args[:2])
+    # These native commands require -C during argument parsing even when their
+    # context profile already contains companyId (Paperclip 2026.1106.0).
+    needs_company={('agent','list'),('agent','create'),('agent','hire'),
+                   ('project','list'),('project','create'),('issue','list'),
+                   ('issue','create'),('goal','list'),('goal','create')}
+    routing=['--company-id',profile['companyId']] if command in needs_company else []
+    return [cfg['paperclip'], *args,*routing,'--context',str(context),'--profile','company',
+            '--api-base',cfg['paperclip_api_base']]
+
+
 def main():
     cfg = config()
     name = Path(sys.argv[0]).name
@@ -135,6 +164,9 @@ def main():
         key = Path(cfg['decide_key_file']).read_text().strip()
         print(json.dumps(request(cfg['decide_url']+'/v1/decide', payload, key), indent=2))
         return 0
+    if name == 'zf-paperclip':
+        argv=paperclip_args(cfg,args)
+        os.execve(cfg['paperclip'],argv,env)
     if name == 'zf-zq':
         key = args.pop(0) if args else 'local'
         if key not in cfg['routes']:
@@ -177,6 +209,9 @@ def main():
 if __name__ == '__main__':
     try:
         sys.exit(main())
+    except LauncherError as exc:
+        print('work-ai: '+str(exc),file=sys.stderr)
+        sys.exit(2)
     except (OSError, ValueError, KeyError, urllib.error.HTTPError) as exc:
         # Do not echo request bodies, headers, credential contents or environment.
         print('work-ai: '+type(exc).__name__+': check the workspace configuration and service logs.', file=sys.stderr)

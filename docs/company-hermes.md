@@ -44,12 +44,77 @@ Refresh directly with `--from-config ~/zenithflow/.workstation/config.json --app
 | `zf-claude` | Real Claude Code using the company Enterprise login |
 | `zf-zq local\|1\|2 "prompt"` | Direct model request |
 | `zf-decide` | AnyJev decision JSON on stdin; reads its credential file |
+| `zf-paperclip` | Company-scoped Paperclip issue, agent and project commands |
 | `zf-status` | Check model inventory at the configured endpoints |
 | `zf-orca dispatch --agent claude ...` | Read-only Orca lane; `ZF_MODEL` selects local/1/2 |
+
+Hermes Kanban, Paperclip issues and Orca lanes are separate records. Hermes calls
+Paperclip/Orca through the terminal, while the actual worker is Claude Code.
+The company wrapper supports direct editing and read-only Orca dispatch; no
+Paperclip-to-Orca handoff, Orca edit adapter or community shipping service is
+configured. Board/lane completion does not authorize publication.
+
+Provision `.workstation/paperclip.json` with the actual `company_id` and approved
+agent metadata before refreshing setup. `zf-paperclip` uses a private context,
+with explicit company arguments where the native CLI requires them. A personal
+Mac uses a separate SSH forward on loopback port 13100 to the work Mac's 3100;
+its ordinary Paperclip client/context remains separate. No API credential is
+stored in the generated context. Missing metadata fails rather than selecting
+another company. Company refreshes also repair a managed Paperclip CLI shim's
+stale Homebrew Node pin to the stable `opt/node` path, retaining its pinned CLI
+payload and a backup.
+
+```sh
+zf-paperclip agent list --json
+zf-paperclip project list --json
+zf-paperclip issue get ISSUE_ID --json
+zf-orca inspect LANE_ID
+```
 
 Every model tier and subagent in a self-hosted Claude Code launch uses that
 endpoint's served model. z2 has a 49,152-token window: useful for bounded tasks,
 below Hermes's 64K main-agent floor. Do not inflate its advertised context.
+
+## Make the Desktop usable
+
+On the company-only work Mac, provision specialist profiles and project boards:
+
+```sh
+python3 scripts/setup_work_desktop.py --from-config ~/zenithflow/.workstation/config.json --apply
+hermes webapp --build-only
+hermes gateway install --no-start-now --if-missing
+hermes gateway restart --detach
+```
+
+Use the same PyYAML-capable Python as the main setup. This adds `zf-planner`,
+`zf-developer` and `zf-reviewer`, pins their main/auxiliary/delegated inference to
+approved routes, and gives each its own memory and company skill. The host
+gateway serves the profiles. It preserves the default board and existing work.
+Company project boards get a repository default workdir; select a project/worktree
+for source edits. Use the work Mac's Desktop/relay from a personal machine rather
+than creating these device-wide roles in a personal default Hermes installation.
+
+**Required UI step:** in Hermes Desktop, open **Capabilities → Plugins** and
+enable **Desktop: Kanban** and **Desktop: Bots**. Hermes 0.23.2 ships Kanban's
+Desktop pane off by default. Backend `kanban` tools and a running dispatcher do
+not enable that pane. This script cannot change renderer-local preferences: it
+prints the required switches and writes `.workstation/DESKTOP-SETUP.md` plus
+`desktop-readiness.json`, initially `action-required`. After the user enables
+them, rerun with `--confirm-desktop-plugins` to record `user-confirmed`; that is
+not an automated UI observation or proof of task acceptance. New browser
+profiles/origins need their own plugin switches, separate from Electron Desktop.
+
+In Desktop, select the local work-Mac connection, open Bots for the three roles,
+then Kanban for the intended board. `hermes profile list`, `hermes kanban boards
+list` and `hermes kanban --board <slug> stats` verify backend state. Test a fresh
+Triage card and independently check its artifact before declaring readiness.
+
+The optional browser workspace listens only on `127.0.0.1:9120`; `hermes webapp`
+opens a private one-use sign-in. Do not publish this listener on the LAN. Enabling
+it requires a gateway restart. A live-work refusal means preserve the active
+turn/process and wait; do not force a restart. The installed login service and
+the currently running gateway are separate states: verify both after a safe
+restart. Native Desktop can use the existing gateway while that restart waits.
 Hermes background/auxiliary tasks are explicitly pinned to the selected local
 route, with empty fallback chains. Media generators that choose unrelated cloud
 providers are excluded from this profile's toolsets. Memory/skill write approvals
