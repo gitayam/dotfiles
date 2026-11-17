@@ -44,14 +44,16 @@ def write(path, content, apply, mode=0o600):
     tmp.replace(path)
 
 
-def link(path,target,apply):
+def link(path,target,apply,backup_dir=None):
     if path.is_symlink() and path.resolve()==target:
         return
     print(('LINK ' if apply else 'WOULD LINK ')+str(path))
     if not apply:return
     path.parent.mkdir(parents=True,exist_ok=True)
     if path.exists() or path.is_symlink():
-        path.rename(path.with_name(path.name+'.backup.'+datetime.datetime.now().strftime('%Y%m%d%H%M%S%f')))
+        backup_dir=backup_dir or path.parent
+        backup_dir.mkdir(parents=True,exist_ok=True)
+        path.rename(backup_dir/(path.name+'.backup.'+datetime.datetime.now().strftime('%Y%m%d%H%M%S%f')))
     path.symlink_to(target)
 
 
@@ -303,7 +305,7 @@ interventions; analysis alone never assigns, closes or implements issues.
         alias=home/'.codex/skills/issue-strategy'
         old_target=w/'.claude/skills/issue-strategy'
         if (not alias.exists() and not alias.is_symlink()) or (alias.is_symlink() and alias.resolve() in {old_target,codex_skill}):
-            link(alias,codex_skill,a.apply)
+            link(alias,codex_skill,a.apply,state/'backups')
         else:
             print('INFO existing Codex issue-strategy installation retained; company copy is under .workstation/skills/codex.')
     print('Configuration prepared. Services and authentication require independent live verification.')

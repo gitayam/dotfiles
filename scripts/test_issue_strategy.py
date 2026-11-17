@@ -10,7 +10,7 @@ import unittest
 import urllib.error
 from unittest.mock import patch
 
-from setup_work_hermes import install_issue_strategy
+from setup_work_hermes import install_issue_strategy, link
 
 ROOT=Path(__file__).parents[1]
 SPEC=importlib.util.spec_from_file_location('collector',ROOT/'shared/skills/issue-strategy/scripts/collect_github.py')
@@ -18,6 +18,19 @@ api=importlib.util.module_from_spec(SPEC);SPEC.loader.exec_module(api)
 
 
 class IssueEvidence(unittest.TestCase):
+    def test_managed_link_backup_stays_outside_skill_discovery(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp).resolve();old=root/'old';old.mkdir();new=root/'new';new.mkdir()
+            alias=root/'skills/issue-strategy';alias.parent.mkdir();alias.symlink_to(old)
+            backups=root/'state/backups'
+            link(alias,new,False,backups)
+            self.assertEqual(alias.resolve(),old)
+            link(alias,new,True,backups)
+            self.assertEqual(alias.resolve(),new)
+            self.assertEqual(list(alias.parent.iterdir()),[alias])
+            saved=list(backups.iterdir());self.assertEqual(len(saved),1)
+            self.assertEqual(saved[0].resolve(),old)
+
     def test_native_entrypoints_keep_identical_workflow_and_helpers(self):
         with tempfile.TemporaryDirectory() as temp:
             installs={}

@@ -27,8 +27,7 @@ Claude Code uses native skill discovery and `$ARGUMENTS`; no duplicate legacy
 `.claude/commands` file is needed. Hermes loads the shared workflow with
 `skill_view`; Codex follows the linked file without Claude-specific substitution.
 
-Refresh the
-existing private configuration; no gateway restart is required:
+Refresh the existing private configuration; no gateway restart is required:
 
 ```sh
 uv run --with pyyaml python scripts/setup_work_hermes.py \
@@ -49,9 +48,14 @@ we must learn before committing. Return a decision brief; keep it read-only.
 For a bounded terminal session, start in the intended workspace:
 
 ```sh
-hermes-zenithflow chat --skills issue-strategy \
+hermes-zenithflow chat --skills issue-strategy --oneshot --max-turns 8 \
   -q "Review the supplied issue snapshot at CTO level and recommend decisions."
 ```
+
+On the gateway-backed CLI, a wall-clock budget comes from the selected profile's
+`agent.run_budget_seconds` configuration; this runtime rejects `--run-budget` on
+that path. A rejected launch has not run the analysis. Preserve active sessions
+and do not change routing or approval policy to bypass the rejection.
 
 Check the effective profile with `hermes skills list`. Installed discovery does
 not prove loading: invoke `/issue-strategy` in a fresh Claude Code session and
