@@ -1,4 +1,4 @@
-# Issue strategy for Hermes
+# Issue strategy across agents
 
 `shared/skills/issue-strategy` teaches CTO-level issue and backlog analysis:
 understand the underlying problem, assess evidence and consequences, compare
@@ -8,9 +8,26 @@ An analysis request does not implicitly authorize issue mutations or code work.
 
 ## Use it
 
-The company installer copies the skill and its resources into the selected
-Hermes home and the company workspace's `.claude/skills`. The Desktop provisioner
-also installs it into the planner, developer and reviewer profiles. Refresh the
+The company installer selects a native entrypoint while keeping `WORKFLOW.md`,
+references and the collector identical across agents. Refreshing updates the
+whole bundle; do not copy an entrypoint without its resources.
+
+| Agent | Installation |
+| --- | --- |
+| Hermes | Selected Hermes home, `skills/management/issue-strategy`; Desktop setup also refreshes planner, developer and reviewer profiles |
+| Claude Code | Company workspace `.claude/skills/issue-strategy` and the selected Claude config's `skills/issue-strategy` |
+| Codex on a personal workstation | Company `.workstation/skills/codex/issue-strategy`, linked from the user's Codex skills when that link is managed or absent |
+
+On a company-only device, Claude Code also gets user-level discovery through
+`~/.claude/skills`, including sessions started outside the company root. On a
+personal workstation, the user-level copy goes into the isolated company
+Enterprise config instead. Existing unrelated Codex installations are retained;
+the device scope does not install a Codex runtime or authorize a new provider.
+Claude Code uses native skill discovery and `$ARGUMENTS`; no duplicate legacy
+`.claude/commands` file is needed. Hermes loads the shared workflow with
+`skill_view`; Codex follows the linked file without Claude-specific substitution.
+
+Refresh the
 existing private configuration; no gateway restart is required:
 
 ```sh
@@ -21,7 +38,7 @@ python3 scripts/setup_work_desktop.py \
   --from-config ~/zenithflow/.workstation/config.json --apply
 ```
 
-In Hermes Desktop or chat:
+In Hermes Desktop/chat or Claude Code (use the company Enterprise launcher):
 
 ```text
 /issue-strategy Review OWNER/REPO issue 42. Explain the problem, evidence,
@@ -37,7 +54,9 @@ hermes-zenithflow chat --skills issue-strategy \
 ```
 
 Check the effective profile with `hermes skills list`. Installed discovery does
-not prove useful behavior: test a representative issue and inspect whether the
+not prove loading: invoke `/issue-strategy` in a fresh Claude Code session and
+verify the shared workflow is read, and exercise Hermes's `skill_view` in the
+intended profile. Then test a representative issue and inspect whether the
 report distinguishes evidence from inference, compares alternatives and supplies
 measurable next steps. Keep private issue data and reports outside repositories
 intended for publication. Follow the company's inference/provider rules.
