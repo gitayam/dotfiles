@@ -31,6 +31,9 @@ case ":$PATH:" in
   *) PATH="$_extra:$PATH:$(dirname "$SELF")" ;;
 esac
 CONF="${ZMODELS_CONF:-$(dirname "$SELF")/../llm/models.conf}"
+# A work-only machine's registry takes precedence even over a stale shell export.
+DEVICE_CONF="$HOME/.config/ai-policy/device-models.conf"
+if [ -f "$DEVICE_CONF" ]; then CONF="$DEVICE_CONF"; fi
 [ -r "$CONF" ] || { echo "claude-z: model registry not found: $CONF" >&2; exit 1; }
 
 # Print "key use ssh remote port model opts" for a key or alias; fail if unknown

@@ -128,6 +128,11 @@ Both setup scripts install sops and age (Linux: pinned sops release, checked aga
 
 ## Claude Code backends
 
+For company workspaces or work-only Macs, read [docs/company-hermes.md](docs/company-hermes.md).
+Their private workstation config selects approved local/organization models and
+Enterprise Claude; do not run the personal provider catalog installer there.
+`setup_work_hermes.py` and `work-ai` maintain that separate setup.
+
 Claude Code is the only coding harness. `shared/zsh/claude-aliases.zsh` defines the launchers:
 
 | Command | Backend |

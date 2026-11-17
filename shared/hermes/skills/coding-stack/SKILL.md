@@ -15,6 +15,11 @@ prerequisites:
 
 # Coding stack on this Mac
 
+On a work-only company device, read its private workstation inventory and the
+company-coding-stack skill first. The personal provider table below is not a
+company allowlist. Use the company launchers and profile instead; the dotfiles
+company-Hermes guide describes that configuration.
+
 Use this skill when the user asks you to build, fix, review or investigate code, check on the model servers, or hand work to Paperclip or Orca. You coordinate; Claude Code does the coding. Every command below uses a full path, because the Hermes app starts without the user's shell PATH. Copy the paths as written; don't define shell variables for them (each command runs in a fresh shell).
 
 ## Pick the backend
