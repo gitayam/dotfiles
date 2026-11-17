@@ -10,10 +10,12 @@ import datetime
 import json
 from pathlib import Path
 import shutil
+import re
+import stat
 
 REPO = Path(__file__).resolve().parents[1]
 NAMES = ['zf-claude','zf-z1','zf-z2','zf-local','zf-zq','zf-orca','zf-status','zf-decide',
-         'hermes-zenithflow']
+         'zf-paperclip','hermes-zenithflow']
 SLOTS = ['vision','compression','approval','review','mcp','title_generation',
          'memory_query_rewrite','tts_audio_tags','voice_chat','triage_specifier',
          'kanban_decomposer','profile_describer','goal_judge','group_router','curator',
@@ -85,6 +87,24 @@ def hermes_config(existing, routes, workspace, default='local'):
     return cfg
 
 
+def paperclip_context(metadata, api_base):
+    """Paperclip 2026.1106 context v2; no API key is stored in the workspace context."""
+    from uuid import UUID
+    company=str(UUID(metadata['company_id']))
+    return {'version':2,'currentProfile':'company','profiles':{
+        'default':{},'company':{'apiBase':api_base,'companyId':company,'persona':'board'}}}
+
+
+def repair_paperclip_shim(path, stable_node, apply):
+    """Keep an existing managed CLI payload; repair only its Homebrew Node pin."""
+    if path.is_symlink() or not path.is_file() or not stable_node.is_file():return
+    raw=path.read_bytes()
+    if not raw.startswith((b'#!/bin/sh',b'#!/bin/bash')):return
+    text=raw.decode()
+    fixed=re.sub(r'/opt/homebrew/Cellar/node/[^/\s\"\x27]+/bin/node',str(stable_node),text)
+    if fixed!=text:write(path,fixed,apply,stat.S_IMODE(path.stat().st_mode))
+
+
 def main():
     import yaml
     p=argparse.ArgumentParser(description=__doc__)
@@ -97,6 +117,7 @@ def main():
     p.add_argument('--z2-port',type=int,default=8002)
     p.add_argument('--local-port',type=int,default=8080)
     p.add_argument('--decide-port',type=int,default=8137)
+    p.add_argument('--paperclip-port',type=int,help='3100 on work Mac; 13100 for personal-Mac relay')
     p.add_argument('--default-model',choices=['local','1'],default='local')
     p.add_argument('--local-context',type=int,default=131072)
     p.add_argument('--apply',action='store_true')
@@ -111,6 +132,7 @@ def main():
             setattr(a,attr,urlsplit(saved['routes'][key]['url']).port)
         a.local_context=saved['routes']['local']['context']
         a.decide_port=urlsplit(saved['decide_url']).port
+        a.paperclip_port=urlsplit(saved['paperclip_api_base']).port if saved.get('paperclip_api_base') else a.paperclip_port
     if not a.hermes_home or not a.enterprise_org:
         p.error('--hermes-home and --enterprise-org are required unless --from-config is used')
     w=a.workspace.expanduser().resolve();state=w/'.workstation'
@@ -124,14 +146,25 @@ def main():
           ('1','z1 GLM','glm-5.3-flash',262144,a.z1_port),
           ('2','z2 gpt-oss','openai/gpt-oss-120b',49152,a.z2_port)]}
     claude_dir=home/'.claude' if a.scope=='device' else state/'claude-enterprise'
+    paperclip_port=a.paperclip_port or (3100 if a.scope=='device' else 13100)
+    paperclip_base=f'http://127.0.0.1:{paperclip_port}'
     cfg={'workspace':str(w),'scope':a.scope,'hermes_home':str(hh),'routes':routes,
          'default_model':a.default_model,
          'enterprise_org':a.enterprise_org,'claude_config_dir':str(claude_dir),
          'hermes':str(home/'.local/bin/hermes'),'claude':shutil.which('claude') or '/opt/homebrew/bin/claude',
          'orca':shutil.which('orca') or '/opt/homebrew/bin/orca',
+         'paperclip':shutil.which('paperclipai') or str(home/'.local/bin/paperclipai'),
+         'paperclip_api_base':paperclip_base,'paperclip_context':str(state/'paperclip-context.json'),
          'decide_url':f'http://127.0.0.1:{a.decide_port}',
          'decide_key_file':str(state/'secrets/decide-api-key')}
     write(state/'config.json',json.dumps(cfg,indent=2)+'\n',a.apply)
+    repair_paperclip_shim(Path(cfg['paperclip']),Path('/opt/homebrew/opt/node/bin/node'),a.apply)
+    metadata=state/'paperclip.json'
+    if metadata.exists():
+        context=paperclip_context(json.loads(metadata.read_text()),paperclip_base)
+        write(state/'paperclip-context.json',json.dumps(context,indent=2)+'\n',a.apply)
+    else:
+        print('INFO company Paperclip metadata not provisioned; zf-paperclip will refuse API commands.')
     if a.scope=='device':
         registry=[]
         for line in (REPO/'shared/llm/models.conf').read_text().splitlines():
@@ -198,8 +231,31 @@ Hermes agent (64K floor); it is usable for bounded direct/Claude Code tasks.
 Start company work in `{w}`, personal work in `~/Git`. Do not copy personal
 credentials, histories or memories into company repositories. Keep workspace
 documentation and workstation state outside the sibling repositories.
-Paperclip must use the real Claude Code legacy runner and these approved routes;
-heartbeats off, no self-assignment to Hermes, no automatic merges/deployments.
+For Desktop setup read `{state}/DESKTOP-SETUP.md` when present. Company-only
+device roles are zf-planner, zf-developer and zf-reviewer; the work Mac's host
+gateway serves them. Native Desktop requires Capabilities → Plugins → Desktop:
+Kanban and Desktop: Bots enabled. Backend kanban tools do not enable the pane;
+browser preferences are separate. A user-confirmed setup flag is not automated
+UI verification. Preserve live work if the gateway refuses a listener restart.
+Paperclip is a separate company issue/agent/project board, not a mirror of Hermes
+Kanban. Use `{state}/bin/zf-paperclip agent list --json`,
+`{state}/bin/zf-paperclip project list --json`, or
+`{state}/bin/zf-paperclip issue get <identifier> --json`.
+The private context pins the company and server; do not use an unscoped default
+client or copy another machine's agent IDs. Read WORKSTATION.md for current IDs.
+For requested tracked work, create ONE issue with an explicit approved Claude
+agent and project, then inspect that same issue and its runs. A comment can wake
+the assignee: do not also invoke a heartbeat or create a duplicate. Reconcile
+unknown writes first. On auth/permission errors stop and report; never mint or
+forge a token. Heartbeats stay off. Never assign Hermes to call itself.
+Use `{state}/bin/zf-orca dispatch --agent claude --cwd <scratch> "<question>"`
+for bounded read-only lanes; `inspect <lane>` retrieves the result. This company
+wrapper does not provide an Orca edit adapter or a Paperclip-to-Orca handoff.
+Orca reports semanticOutcome unknown: independently check the answer/artifacts.
+Git commits, review, CI and deployment remain separate authorized steps; neither
+board nor lane completion grants permission to publish. Paperclip must use the
+real Claude Code legacy runner with approved model/tier environment. There is no
+community broker/ship service connected to this workstation.
 AnyJev is advisory; keep uncertain work visible for review.
 '''
     write(hh/'skills/autonomous-ai-agents/company-coding-stack/SKILL.md',skill,a.apply)
