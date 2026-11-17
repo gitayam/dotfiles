@@ -410,6 +410,13 @@ ap_decisions() {
   return $rc
 }
 check "ai-policy: Alibaba models and services denied only in IrregularChat/ZenithFlow repos" ap_decisions
+ap_reflection() {
+  "$AP" classify --model beam-free | grep -q '"vendor:reflection"' || return 1
+  "$AP" classify --model opencode-go/beam-free | grep -q '"vendor:reflection"' || return 1
+  "$AP" classify --model Beam-1.0-501B-A23B --base-url https://api.reflection.ai/openai/v1 | grep -q '"service:reflection-api"' || return 1
+  "$AP" check --cwd "$APW/ic" --model beam-free >/dev/null 2>&1
+}
+check "ai-policy: Beam resolves to vendor reflection (direct and via OpenCode) and is allowed" ap_reflection
 ap_hook() {
   printf '{"cwd":"%s"}' "$APW/ic" | env -u ANTHROPIC_MODEL ANTHROPIC_BASE_URL=https://dashscope-intl.aliyuncs.com/apps/anthropic "$AP" claude-hook 2>/dev/null
   [[ $? -eq 2 ]] || return 1

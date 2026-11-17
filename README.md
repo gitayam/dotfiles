@@ -8,6 +8,8 @@ See [setup and verification](docs/claude-opencode.md) for Console login and mode
 [Lumo setup, tool-calling tests, and limits](docs/claude-lumo.md).
 For native OpenCode rules, read-only agents, repaired shared skills and bounded tasks,
 see [the scoped local setup](docs/opencode-local.md).
+Where each model provider's credential lives (Codex, Lumo, Beam, DeepSeek, OpenCode, local
+models) and how a remote Hermes server gets its own access: [model providers](docs/model-providers.md).
 
 ## 📁 Directory Structure
 

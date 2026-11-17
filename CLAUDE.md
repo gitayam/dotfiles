@@ -203,6 +203,7 @@ Conventions it relies on (keep them when adding code):
 | `ansible/ANSIBLE_REVIEW_AND_PLAN.md` | Architecture notes |
 | `ansible/SERVICE_AUDIT.md`, `SERVICE_STATUS_AUDIT.md` | Service-by-service state |
 | `ansible/DOCKER_COMPOSE_FIX.md` | Compose-specific incident history |
+| `docs/model-providers.md` | Every model route (Codex, Lumo, Beam, DeepSeek, OpenCode, local, Mistral): where the credential lives, giving a server its own access |
 | `docs/` | Older guides — sift for relevance, some are stale |
 
 ## Cross-References
