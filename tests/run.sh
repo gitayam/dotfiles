@@ -626,6 +626,10 @@ if command -v ssh-agent >/dev/null; then
   expect "ssh-doctor: private key readable by others" 'private key .*id_test is 644' ssh_doctor_bad
   expect "ssh-doctor: agent without keys" 'agent is running but has no keys' ssh_doctor_bad
   expect "ssh-doctor: IdentitiesOnly with a missing key" 'Host box: IdentitiesOnly yes' ssh_doctor_bad
+  if [[ "$(uname -s)" == Darwin ]]; then
+    expect "ssh-doctor: macOS agent advice keeps the passphrase in the Keychain" 'ssh-add --apple-use-keychain' ssh_doctor_bad
+    expect "ssh-doctor: macOS config that won't re-add keys after a reboot" "keys don't come back after a reboot" ssh_doctor_bad
+  fi
 fi
 
 echo "== harden.sh logic"

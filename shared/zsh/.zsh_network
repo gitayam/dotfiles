@@ -1054,9 +1054,20 @@ ssh-doctor() {
     ssh-add -l >/dev/null 2>&1
     case $? in
       0) _ssh_doctor_say ok "agent has $(ssh-add -l 2>/dev/null | wc -l | tr -d ' ') key(s) loaded" ;;
-      1) _ssh_doctor_say FAIL "agent is running but has no keys; add one: ssh-add ~/.ssh/id_ed25519 (or unlock KeePassXC/1Password)" ;;
+      1) if [[ "$(uname -s)" == Darwin ]]; then
+           _ssh_doctor_say FAIL "agent is running but has no keys; add one and keep its passphrase in the Keychain: ssh-add --apple-use-keychain ~/.ssh/id_ed25519"
+         else
+           _ssh_doctor_say FAIL "agent is running but has no keys; add one: ssh-add ~/.ssh/id_ed25519 (or unlock KeePassXC/1Password)"
+         fi ;;
       *) _ssh_doctor_say FAIL "can't talk to the agent at $SSH_AUTH_SOCK" ;;
     esac
+  fi
+  # macOS: after a reboot the agent starts empty; without AddKeysToAgent (plus UseKeychain)
+  # every host that needs an agent key fails until someone runs ssh-add again (2026-11-17).
+  if [[ "$(uname -s)" == Darwin ]] &&
+     [[ "$(ssh -F "$cfg" -G ssh-doctor.invalid 2>/dev/null | awk '$1 == "addkeystoagent" { print $2 }')" == no || \
+        "$(ssh -F "$cfg" -G ssh-doctor.invalid 2>/dev/null | awk '$1 == "addkeystoagent" { print $2 }')" == false ]]; then
+    _ssh_doctor_say WARN "keys don't come back after a reboot: put 'AddKeysToAgent yes' and 'UseKeychain yes' under Host * (shared/ssh/config.template)"
   fi
 
   # Every named host: its identity files must exist. With IdentitiesOnly yes a
