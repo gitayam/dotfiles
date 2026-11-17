@@ -75,6 +75,12 @@ Every model tier and subagent in a self-hosted Claude Code launch uses that
 endpoint's served model. z2 has a 49,152-token window: useful for bounded tasks,
 below Hermes's 64K main-agent floor. Do not inflate its advertised context.
 
+For CTO-level issue and backlog research, use the installed `issue-strategy`
+skill: `/issue-strategy Review OWNER/REPO and recommend decisions`. It evaluates
+problems, evidence, business/system tradeoffs, non-code alternatives and proposed
+next steps. It does not automatically create cards, mutate issues or implement
+fixes. See the [workflow, collector and installation guide](issue-strategy.md).
+
 ## Make the Desktop usable
 
 On a configured machine, review any organization bootstrap before rerunning it.

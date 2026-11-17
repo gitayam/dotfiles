@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import subprocess
 
-from setup_work_hermes import hermes_config, write
+from setup_work_hermes import hermes_config, write, install_issue_strategy
 
 ROLES = {
     'zf-planner': 'Plan company engineering work: inspect requirements and source, write bounded tasks and acceptance criteria. Do not implement source changes.',
@@ -89,6 +89,7 @@ Never publish, merge, deploy or send messages without task-specific authority.
 '''
         write(soul,text,args.apply)
         write(target/'skills/autonomous-ai-agents/company-coding-stack/SKILL.md',skill,args.apply)
+        install_issue_strategy(target/'skills/management/issue-strategy',args.apply)
     root=home/'config.yaml'
     write(root,yaml.safe_dump(desktop_config(yaml.safe_load(root.read_text()) or {}),sort_keys=False),args.apply)
     # Board creation is native and leaves prior default-board tasks untouched.
