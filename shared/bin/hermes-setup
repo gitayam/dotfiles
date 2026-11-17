@@ -159,7 +159,10 @@ fi
 # 7. The coding-stack skill (teaches Hermes claude-z, Paperclip, Orca and zq)
 skill_src="$DOTFILES/shared/hermes/skills/coding-stack"
 skill_dst="$HERMES_HOME/skills/autonomous-ai-agents/coding-stack"
-if [ -d "$skill_src" ]; then
+if [ -f "$HOME/.config/ai-policy/device-models.conf" ] &&
+   [ -f "$HERMES_HOME/skills/autonomous-ai-agents/company-coding-stack/SKILL.md" ]; then
+    pass "company coding skill retained (work-only device)"
+elif [ -d "$skill_src" ]; then
     if [ "$(readlink "$skill_dst" 2>/dev/null)" = "$skill_src" ]; then
         pass "skill coding-stack linked"
     elif $APPLY; then

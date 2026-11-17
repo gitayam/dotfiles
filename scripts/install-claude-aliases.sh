@@ -6,6 +6,20 @@ set -euo pipefail
 DOTFILES="${DOTFILES:-$HOME/Git/dotfiles}"
 [ -d "$DOTFILES" ] || { echo "dotfiles not found at $DOTFILES"; exit 1; }
 
+# A work-only device must not acquire the personal provider catalog, aliases,
+# tunnels or generic Hermes skill during a routine refresh.
+WORK_AI_CONFIG="$HOME/zenithflow/.workstation/config.json"
+if [ -f "$WORK_AI_CONFIG" ]; then
+    work_scope=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["scope"])' "$WORK_AI_CONFIG") || exit 1
+    if [ "$work_scope" = device ]; then
+        echo "Company device: refreshing only its approved work configuration."
+        if command -v uv >/dev/null 2>&1; then
+            exec uv run --with pyyaml python "$DOTFILES/scripts/setup_work_hermes.py" --from-config "$WORK_AI_CONFIG" --apply
+        fi
+        exec python3 "$DOTFILES/scripts/setup_work_hermes.py" --from-config "$WORK_AI_CONFIG" --apply
+    fi
+fi
+
 # 1. Symlink claude-switch into ~/.local/bin
 mkdir -p "$HOME/.local/bin"
 ln -sfn "$DOTFILES/shared/bin/claude-switch" "$HOME/.local/bin/claude-switch"
