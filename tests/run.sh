@@ -471,6 +471,44 @@ if [[ "$(uname -s)" == Darwin ]]; then
   check "installer: Paperclip PATH added and Node pin repointed, one reload, rerun is a no-op" paperclip_node_pin
 fi
 
+# Tunnels exec autossh; without it launchd restarts a failing job forever. uname and
+# launchctl are stubbed so the step runs (and must load nothing) on any OS.
+tunnels_need_autossh() {
+  local h; h="$(mktemp -d)"; mkdir -p "$h/stub" "$h/Library/LaunchAgents"
+  printf '#!/bin/sh\necho Darwin\n' > "$h/stub/uname"
+  printf '#!/bin/sh\necho "$*" >> "%s/launchctl.log"\n' "$h" > "$h/stub/launchctl"
+  chmod +x "$h/stub/uname" "$h/stub/launchctl"
+  local step; step="$(awk '/^# 5b\./,/^# 5c\./' "$REPO/scripts/install-claude-aliases.sh" | sed '$d')"
+  local out; out=$(HOME="$h" DOTFILES="$REPO" PATH="$h/stub:/usr/bin:/bin" bash -c "$step" 2>&1)
+  grep -q "autossh is not installed" <<<"$out" || { echo "no warning: $out"; return 1; }
+  [[ ! -e "$h/launchctl.log" && -z "$(ls "$h/Library/LaunchAgents")" ]] || { echo "loaded a tunnel anyway"; return 1; }
+  rm -rf "$h"
+}
+check "installer: no autossh, no tunnel jobs and a clear warning" tunnels_need_autossh
+
+# Private agent-config rules and skills win over vibe-coding's public ones of the same name;
+# without a checkout the run only adds a next step (cloning it would prompt for credentials).
+agent_config_links() {
+  local d; d="$(mktemp -d)"
+  mkdir -p "$d/home" "$d/agent-config/rules" "$d/agent-config/skills/ops" "$d/vibe-coding/rules"
+  echo private > "$d/agent-config/rules/shared.md"; echo s > "$d/agent-config/skills/ops/SKILL.md"
+  echo public > "$d/vibe-coding/rules/shared.md"; echo p > "$d/vibe-coding/rules/public-only.md"
+  git -C "$d/agent-config" init -q; git -C "$d/vibe-coding" init -q
+  HOME="$d/home" bash -c '
+    REPO_ROOT="$1/dotfiles"; source "$2/shared/setup/common.sh"
+    VIBE_CODING_CHOICES=(1); install_vibe_coding >/dev/null
+    [[ "$(readlink "$HOME/.claude/rules/shared.md")" == "$1/agent-config/rules/shared.md" ]] || { echo "public rule won"; exit 1; }
+    [[ "$(readlink "$HOME/.claude/skills/ops")" == "$1/agent-config/skills/ops" ]] || { echo "skill not linked"; exit 2; }
+    [[ -L "$HOME/.claude/rules/public-only.md" ]] || { echo "public-only rule missing"; exit 3; }
+    rm -rf "$1/agent-config" "$HOME/.claude"; NEXT_STEPS=()
+    VIBE_CODING_CHOICES=(1); install_vibe_coding >/dev/null
+    [[ "$(readlink "$HOME/.claude/rules/shared.md")" == "$1/vibe-coding/rules/shared.md" ]] || { echo "fallback missing"; exit 4; }
+    [[ "${NEXT_STEPS[*]}" == *agent-config* ]] || { echo "no next step"; exit 5; }
+  ' _ "$d" "$REPO" || return 1
+  rm -rf "$d"
+}
+check "setup: private agent-config links first, public fallback plus a next step without it" agent_config_links
+
 echo "== git wip"
 wip_setup() {
   local d="$WORK/wip"

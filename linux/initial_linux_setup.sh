@@ -358,9 +358,15 @@ gather_user_preferences() {
 install_terminal_apps() {
   # Debian/Ubuntu names; kubectl is not in their repos (see the summary)
   apt_install curl zsh git gh jq tree python3 ansible docker.io gnupg age diceware \
-    magic-wormhole wireguard-tools ocrmypdf pandoc tesseract-ocr clamav ghostscript imagemagick tmux mosh
+    magic-wormhole wireguard-tools ocrmypdf pandoc tesseract-ocr clamav ghostscript imagemagick tmux mosh \
+    autossh gitleaks
   install_sops
   run_vendor_installer "Tailscale" tailscale https://tailscale.com/install.sh sh
+  # uv/uvx: the aws wrapper in .zsh_aws and Python tools run through it (installs to ~/.local/bin)
+  run_vendor_installer "uv" uv https://astral.sh/uv/install.sh sh
+  if ! command -v glab &>/dev/null; then
+    note_next_step "glab (GitLab CLI) has no Debian/Ubuntu package everywhere: https://gitlab.com/gitlab-org/cli/-/releases (check the .deb against its checksums file)"
+  fi
   if ! command -v kubectl &>/dev/null; then
     note_next_step "kubectl is not in Debian/Ubuntu repos: https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/"
   fi

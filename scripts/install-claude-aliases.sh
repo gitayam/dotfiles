@@ -82,7 +82,10 @@ fi
 # 5b. macOS: one always-on tunnel per model server in shared/llm/models.conf.
 #     Ad-hoc tunnels that claude-z started earlier hold the same ports, so they
 #     are stopped first; launchd then owns the forwards.
-if [ "$(uname -s)" = "Darwin" ]; then
+if [ "$(uname -s)" = "Darwin" ] && ! command -v autossh >/dev/null 2>&1; then
+    # claude-z tunnel-run execs autossh; without it launchd would restart a failing job forever
+    echo "⚠ skipped the model-server tunnels: autossh is not installed (brew install autossh, then rerun)"
+elif [ "$(uname -s)" = "Darwin" ]; then
     hosts=$(awk '!/^[[:space:]]*(#|$)/ && $3 != "-" { print $3 }' "$DOTFILES/shared/llm/models.conf" | sort -u)
     pkill -f "autossh -M 0 -N -o ControlMaster=no" 2>/dev/null || true
     for host in $hosts; do
