@@ -55,6 +55,16 @@ def link(path,target,apply):
     path.symlink_to(target)
 
 
+def install_issue_strategy(target,apply):
+    source=REPO/'shared/skills/issue-strategy'
+    if not (source/'SKILL.md').is_file():
+        raise FileNotFoundError('Issue strategy source is missing; use the complete dotfiles checkout.')
+    for path in sorted(source.rglob('*')):
+        if path.is_file() and path.suffix in {'.md','.py'} and '__pycache__' not in path.parts:
+            relative=path.relative_to(source)
+            write(target/relative,path.read_bytes(),apply,0o700 if relative.parts[0]=='scripts' else 0o600)
+
+
 def hermes_config(existing, routes, workspace, default='local'):
     cfg = dict(existing)
     provider = lambda key: {'1':'z1','2':'z2'}.get(key,key)
@@ -274,8 +284,13 @@ board nor lane completion grants permission to publish. Paperclip must use the
 real Claude Code legacy runner with approved model/tier environment. There is no
 community broker/ship service connected to this workstation.
 AnyJev is advisory; keep uncertain work visible for review.
+For CTO-level issue/backlog analysis, load the issue-strategy skill. It produces
+evidence-backed problem/option/priority recommendations, including non-code
+interventions; analysis alone never assigns, closes or implements issues.
 '''
     write(hh/'skills/autonomous-ai-agents/company-coding-stack/SKILL.md',skill,a.apply)
+    install_issue_strategy(hh/'skills/management/issue-strategy',a.apply)
+    install_issue_strategy(w/'.claude/skills/issue-strategy',a.apply)
     print('Configuration prepared. Services and authentication require independent live verification.')
 
 
