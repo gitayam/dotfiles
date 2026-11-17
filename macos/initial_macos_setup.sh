@@ -345,7 +345,7 @@ gather_user_preferences() {
 }
 
 install_terminal_apps() {
-  terminal_apps=("coreutils" "diceware" "git" "gh" "jq" "tree" "python" "ansible" "docker" "kubectl" "gnupg" "age" "magic-wormhole" "wireguard-tools" "ocrmypdf" "pandoc" "tesseract" "clamav" "ghostscript" "imagemagick" "tmux" "mosh" "sops")
+  terminal_apps=("coreutils" "diceware" "git" "gh" "jq" "tree" "python" "ansible" "docker" "kubectl" "gnupg" "age" "magic-wormhole" "wireguard-tools" "ocrmypdf" "pandoc" "tesseract" "clamav" "ghostscript" "imagemagick" "tmux" "mosh" "sops" "autossh" "uv" "glab" "gitleaks")
   for app in "${terminal_apps[@]}"; do
     install_formula "$app"
   done
