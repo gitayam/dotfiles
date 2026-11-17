@@ -66,6 +66,9 @@ parent/sub-issues and blocking relationships. Each paginated source reports
 coverage. A partial listing or permission-denied relationship is not an empty
 backlog/graph. Parent 404s remain unverified rather than silently meaning none.
 Output directories are new and private; existing attempts are preserved.
+An incomplete open listing or unavailable selected issue returns a failure exit
+code while retaining its evidence. Relationship coverage must still be checked
+individually; a missing parent is not silently converted into verified absence.
 
 A large backlog should receive a metadata census and an explained deep sample,
 not one oversized model request. The report must say exactly which evidence was

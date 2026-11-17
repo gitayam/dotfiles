@@ -148,7 +148,10 @@ def main():
         print(json.dumps({'output':str(args.output),'mode':result['mode'],
                           'open_issues':result.get('open_issue_count'),'coverage':result['coverage'],
                           'collection_error':result.get('collection_error')}))
-        return 2 if result.get('collection_error') else 0
+        incomplete=(result.get('collection_error') or
+                    (result['mode']=='open-index' and not result['coverage'].get('open_issues',{}).get('complete')) or
+                    any(value.get('issue_available') is False for value in result['coverage'].values()))
+        return 2 if incomplete else 0
     except (ReadError,OSError,ValueError,subprocess.SubprocessError) as exc:
         print('Issue collection failed: '+(str(exc) if isinstance(exc,ReadError) else type(exc).__name__),file=sys.stderr)
         return 2

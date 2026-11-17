@@ -1,4 +1,6 @@
 import importlib.util
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -16,6 +18,21 @@ api=importlib.util.module_from_spec(SPEC);SPEC.loader.exec_module(api)
 
 
 class IssueEvidence(unittest.TestCase):
+    def test_cli_does_not_report_success_for_an_inaccessible_open_list(self):
+        class Client:
+            base='https://api.github.com/repos/example/repo'
+            def get(self,path,query=None):
+                if not path:return {'default_branch':'main'}
+                if path.startswith('/commits/'):return {'sha':'abc'}
+                raise api.ReadError('HTTP 403')
+        with tempfile.TemporaryDirectory() as temp:
+            out=Path(temp)/'snapshot'
+            argv=['collect','--repo','example/repo','--repo-dir',temp,'--output',str(out)]
+            with patch.object(api.sys,'argv',argv),patch.object(api,'credential',return_value='test'),patch.object(api,'Client',return_value=Client()),contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(api.main(),2)
+            m=json.loads((out/'manifest.json').read_text())
+            self.assertFalse(m['coverage']['open_issues']['complete'])
+
     def test_pr_only_page_does_not_end_issue_pagination(self):
         def get(path,query):
             if query['page']==1:return [{'number':n,'pull_request':{}} for n in range(100)]
