@@ -1,0 +1,299 @@
+#!/usr/bin/env python3
+"""Run Claude Code through a private LiteLLM bridge to the Lumo gateway."""
+
+import getpass
+import hmac
+import json
+import os
+from pathlib import Path
+import secrets
+import shutil
+import socket
+import stat
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.error import HTTPError, URLError
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
+
+UPSTREAM = 'https://chat.untitledstartup.xyz/api'
+KEY_FILE = Path.home() / '.config/claude-lumo/api-key'
+VENV = Path.home() / '.local/share/claude-lumo/venv'
+MAX_BODY = 32 * 1024 * 1024
+READ_ONLY_TOOLS = 'Read,Grep,Glob'
+
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def credential():
+    value = os.environ.get('CLAUDE_LUMO_API_KEY', '').strip()
+    if value:
+        return value
+    if not KEY_FILE.is_file():
+        raise RuntimeError('No key found. Run cc-lumo --setup-key.')
+    if KEY_FILE.stat().st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+        raise RuntimeError(f'Credential file must be private: chmod 600 {KEY_FILE}')
+    value = KEY_FILE.read_text().strip()
+    if not value or any(c.isspace() for c in value):
+        raise RuntimeError('The saved key is empty or malformed. Run cc-lumo --setup-key.')
+    return value
+
+
+def setup_key():
+    if not sys.stdin.isatty():
+        raise RuntimeError('Run --setup-key in an interactive terminal.')
+    value = getpass.getpass('Chat API key (hidden): ').strip()
+    if not value or any(c.isspace() for c in value):
+        raise RuntimeError('Key must be nonempty and contain no whitespace.')
+    KEY_FILE.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix='.key-', dir=KEY_FILE.parent)
+    try:
+        with os.fdopen(fd, 'w') as handle:
+            handle.write(value + '\n')
+        os.replace(name, KEY_FILE)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+    print(f'Saved private credential to {KEY_FILE}.')
+
+
+def list_models(key):
+    req = Request(UPSTREAM + '/models', headers={'Authorization': 'Bearer ' + key, 'User-Agent': 'claude-lumo/1.0'})
+    try:
+        with build_opener(NoRedirect()).open(req, timeout=45) as response:
+            obj = json.load(response)
+        if isinstance(obj, str):
+            obj = json.loads(obj)
+        return [item['id'] for item in obj.get('data', []) if isinstance(item, dict) and 'id' in item]
+    except (HTTPError, URLError, TimeoutError, ValueError, OSError) as error:
+        raise RuntimeError('Could not authenticate or list models on the chat gateway.') from error
+
+
+def make_bridge(key, bridge_token):
+    import httpx
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = 'HTTP/1.1'
+
+        def log_message(self, _format, *args):
+            pass  # No request, prompt, or credential logs.
+
+        def fail(self, code, detail):
+            body = json.dumps({'error': {'message': detail, 'type': 'bridge_error'}}).encode()
+            self.send_response(code)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            if self.path != '/v1/chat/completions':
+                return self.fail(404, 'Unsupported endpoint')
+            auth = self.headers.get('Authorization', '')
+            if not hmac.compare_digest(auth, 'Bearer ' + bridge_token):
+                return self.fail(401, 'Unauthorized')
+            response_started = False
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+                if length < 1 or length > MAX_BODY:
+                    return self.fail(413, 'Invalid request size')
+                raw = self.rfile.read(length)
+                payload = json.loads(raw)
+                if not isinstance(payload, dict):
+                    return self.fail(400, 'Invalid request')
+                messages = payload.get('messages') if isinstance(payload.get('messages'), list) else []
+                tools = payload.get('tools') if isinstance(payload.get('tools'), list) else []
+                message_bytes = len(json.dumps(messages, ensure_ascii=False).encode())
+                tool_bytes = len(json.dumps(tools, ensure_ascii=False).encode())
+                if os.environ.get('CLAUDE_LUMO_DIAGNOSTICS') == '1':
+                    print(
+                        f'cc-lumo: request bytes={length}, message bytes={message_bytes}, '
+                        f'tool bytes={tool_bytes}, tool count={len(tools)}',
+                        file=sys.stderr, flush=True,
+                    )
+                headers = {'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'}
+                with httpx.Client(timeout=180, follow_redirects=False, trust_env=False) as client:
+                    with client.stream('POST', UPSTREAM + '/chat/completions', headers=headers, content=raw) as response:
+                        if response.status_code != 200:
+                            print(
+                                f'cc-lumo: upstream HTTP {response.status_code} '
+                                f'(request bytes={length}, message bytes={message_bytes}, '
+                                f'tool bytes={tool_bytes}, tool count={len(tools)})',
+                                file=sys.stderr, flush=True,
+                            )
+                            # This upstream defect is deterministic for large bodies;
+                            # sending the same prompt ten times cannot repair it.
+                            if response.status_code == 500:
+                                error_body = response.read()[:65536]
+                                if all(part in error_body for part in (b'BufferedRandom', b'getvalue', b'AttributeError')):
+                                    return self.fail(400, 'Upstream request too large: reduce context or enabled tools, then retry.')
+                            return self.fail(response.status_code, f'Upstream request failed (HTTP {response.status_code})')
+                        if payload.get('stream'):
+                            if 'text/event-stream' not in response.headers.get('content-type', ''):
+                                return self.fail(502, 'Upstream did not return an event stream')
+                            self.send_response(200)
+                            self.send_header('Content-Type', 'text/event-stream')
+                            self.send_header('Connection', 'close')
+                            self.end_headers()
+                            response_started = True
+                            self.close_connection = True
+                            for chunk in response.iter_raw():
+                                self.wfile.write(chunk)
+                                self.wfile.flush()
+                        else:
+                            value = json.loads(response.read())
+                            if isinstance(value, str):
+                                value = json.loads(value)
+                            if not isinstance(value, dict):
+                                return self.fail(502, 'Invalid upstream response')
+                            body = json.dumps(value).encode()
+                            self.send_response(200)
+                            self.send_header('Content-Type', 'application/json')
+                            self.send_header('Content-Length', str(len(body)))
+                            self.end_headers()
+                            response_started = True
+                            self.wfile.write(body)
+            except (ValueError, OSError, httpx.HTTPError):
+                if response_started:
+                    self.close_connection = True
+                elif not self.wfile.closed:
+                    try:
+                        self.fail(502, 'Gateway communication failed')
+                    except OSError:
+                        pass
+
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    server.daemon_threads = True
+    return server
+
+
+def free_port():
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1', 0))
+        return sock.getsockname()[1]
+
+
+def claude_args(args):
+    """Pass Claude's tool selection through, with an optional read-only profile."""
+    if args[:1] == ['--read-only']:
+        rest = args[1:]
+        if any(arg == '--tools' or arg.startswith('--tools=') for arg in rest):
+            raise RuntimeError('Do not combine --read-only with --tools.')
+        print(f'cc-lumo: read-only tools {READ_ONLY_TOOLS}.', file=sys.stderr, flush=True)
+        return ['--tools', READ_ONLY_TOOLS, *rest]
+    return args
+
+
+def run_claude(key, model, args):
+    token = secrets.token_urlsafe(32)
+    bridge_token = secrets.token_urlsafe(32)
+    bridge = make_bridge(key, bridge_token)
+    thread = threading.Thread(target=bridge.serve_forever, daemon=True)
+    thread.start()
+    port = free_port()
+    gateway_env = dict(os.environ)
+    for name in list(gateway_env):
+        if name.startswith('ANTHROPIC_') or name.startswith('LITELLM_') or name in (
+            'CLAUDE_LUMO_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN',
+            'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX',
+            'CLAUDE_CODE_USE_FOUNDRY', 'CLAUDE_CODE_USE_MANTLE',
+            'CLAUDE_CODE_SUBAGENT_MODEL_FORCE',
+        ):
+            gateway_env.pop(name, None)
+    gateway_env.update(LUMO_BRIDGE_TOKEN=bridge_token, LUMO_GATEWAY_TOKEN=token,
+                       LITELLM_LOCAL_MODEL_COST_MAP='True', PYTHON_DOTENV_DISABLED='true')
+    config = {
+        'model_list': [{'model_name': model, 'litellm_params': {
+            'model': 'custom_openai/' + model, 'api_base': f'http://127.0.0.1:{bridge.server_port}/v1',
+            'api_key': 'os.environ/LUMO_BRIDGE_TOKEN'}}],
+        'litellm_settings': {'drop_params': True, 'num_retries': 0},
+        'general_settings': {'master_key': 'os.environ/LUMO_GATEWAY_TOKEN'},
+    }
+    with tempfile.TemporaryDirectory(prefix='claude-lumo-') as directory:
+        config_path = Path(directory) / 'proxy.json'
+        config_path.write_text(json.dumps(config))
+        config_path.chmod(0o600)
+        proc = subprocess.Popen([str(VENV / 'bin/litellm'), '--config', str(config_path),
+                                 '--host', '127.0.0.1', '--port', str(port)],
+                                env=gateway_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            for _ in range(120):
+                if proc.poll() is not None:
+                    raise RuntimeError('The local LiteLLM proxy exited during startup.')
+                try:
+                    req = Request(f'http://127.0.0.1:{port}/v1/models',
+                                  headers={'Authorization': 'Bearer ' + token})
+                    with urlopen(req, timeout=1) as r:
+                        if r.status == 200:
+                            break
+                except (URLError, OSError, TimeoutError):
+                    time.sleep(0.25)
+            else:
+                raise RuntimeError('The local LiteLLM proxy did not start in time.')
+            binary = shutil.which('claude')
+            if not binary:
+                raise RuntimeError('Claude Code is not installed or is not on PATH.')
+            env = dict(gateway_env)
+            env.pop('LUMO_BRIDGE_TOKEN', None)
+            env.pop('LUMO_GATEWAY_TOKEN', None)
+            route = {'ANTHROPIC_BASE_URL': f'http://127.0.0.1:{port}', 'ANTHROPIC_MODEL': model,
+                     'ANTHROPIC_DEFAULT_OPUS_MODEL': model, 'ANTHROPIC_DEFAULT_SONNET_MODEL': model,
+                     'ANTHROPIC_DEFAULT_HAIKU_MODEL': model, 'CLAUDE_CODE_SUBAGENT_MODEL': model,
+                     'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS': '1'}
+            env.update(route, ANTHROPIC_AUTH_TOKEN=token)
+            return subprocess.call([binary, '--settings', json.dumps({'env': route}), '--model', model, *claude_args(args)], env=env)
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            bridge.shutdown()
+            bridge.server_close()
+            thread.join(timeout=5)
+
+
+def main():
+    args = sys.argv[1:]
+    if args == ['--setup-key']:
+        setup_key()
+        return 0
+    if args in (['--help'], ['--launcher-help']):
+        print('Usage: cc-lumo [Claude arguments]\n       cc-lumo --read-only [Claude arguments]\n       cc-lumo --check\n       cc-lumo --setup-key\n'
+              'Defaults to lumo-lite. Set CLAUDE_LUMO_MODEL=lumo-max to select Max when available.')
+        return 0
+    model = os.environ.get('CLAUDE_LUMO_MODEL', 'lumo-lite').strip()
+    if model not in ('lumo-max', 'lumo-lite'):
+        raise RuntimeError('CLAUDE_LUMO_MODEL must be lumo-max or lumo-lite.')
+    if args != ['--check']:
+        if not (VENV / 'bin/litellm').is_file():
+            raise RuntimeError('LiteLLM is missing. See docs/claude-lumo.md for setup.')
+        # The venv supplies httpx to the bridge. Re-exec before network checks,
+        # so a normal launch lists the models only once.
+        python = VENV / 'bin/python'
+        if Path(sys.prefix).resolve() != VENV.resolve():
+            os.execv(str(python), [str(python), str(Path(__file__).resolve()), *args])
+    key = credential()
+    models = list_models(key)
+    print('Chat models available:', ', '.join(models) or '(none)', file=sys.stderr, flush=True)
+    if model not in models:
+        raise RuntimeError(f'{model} is not available to this key. No automatic fallback was made.')
+    if args == ['--check']:
+        print('Model is listed; this check does not run inference or qualify tool use.')
+        return 0
+    return run_claude(key, model, args)
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main())
+    except (RuntimeError, KeyboardInterrupt) as error:
+        print(f'cc-lumo: {error or "interrupted"}', file=sys.stderr)
+        sys.exit(1)

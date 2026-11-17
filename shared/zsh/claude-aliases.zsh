@@ -64,3 +64,5 @@ claude-cloud() {
   for v in "${_CC_SELFHOSTED_VARS[@]}"; do unset "$v"; done
   echo "This shell now uses Anthropic cloud."
 }
+
+alias claude-lumo='cc-lumo'

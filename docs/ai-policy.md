@@ -38,11 +38,12 @@ Projects are matched by git remote (`host/group/repo`, normalized from HTTPS, SS
 and scp-style URLs), or by `paths`. A model the catalog doesn't know has no vendor
 term, so deny lists stop known families; add new families to `vendors` as they appear.
 
-## Current rules (2026-11-12)
+## Current rules (2026-11-14)
 
 | Projects | Denied | Why |
 |---|---|---|
 | `irregularchat` (GitLab `irregulars/*`, GitHub `irregularchat/*`), `zenithflow` (GitLab and GitHub `zenithflowinc/*`) | `vendor:alibaba`, `service:alibaba-cloud` | Alibaba models and Alibaba Cloud are prohibited there |
+| `zenithflow` | `vendor:lumo` (model ids `lumo*`), `service:lumo-gateway` (the gateway host, provider id `lumo`) | Lumo is for ordinary `~/Git` repositories; ZenithFlow uses its own local models |
 
 Useful checks:
 

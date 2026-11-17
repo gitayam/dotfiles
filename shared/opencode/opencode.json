@@ -232,5 +232,37 @@
         }
       ]
     }
+  },
+  "providers": {
+    "lumo": {
+      "name": "Lumo",
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "https://chat.untitledstartup.xyz/api",
+        "apiKey": "{file:~/.config/claude-lumo/api-key}"
+      },
+      "models": {
+        "lumo-max": {
+          "name": "Lumo Max",
+          "capabilities": {
+            "tools": true
+          },
+          "limit": {
+            "context": 128000,
+            "output": 16000
+          }
+        },
+        "lumo-lite": {
+          "name": "Lumo Lite",
+          "capabilities": {
+            "tools": true
+          },
+          "limit": {
+            "context": 128000,
+            "output": 16000
+          }
+        }
+      }
+    }
   }
 }

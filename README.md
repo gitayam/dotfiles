@@ -4,6 +4,8 @@ This repository contains my personal dotfiles for `zsh`, `git`, and other tools,
 
 `cc-opencode` runs Claude Code against an existing OpenCode Go/Go Plus subscription.
 See [setup and verification](docs/claude-opencode.md) for Console login and model selection.
+`cc-lumo` and `claude-lumo` run Claude Code through the chat gateway; see the
+[Lumo setup, tool-calling tests, and limits](docs/claude-lumo.md).
 For native OpenCode rules, read-only agents, repaired shared skills and bounded tasks,
 see [the scoped local setup](docs/opencode-local.md).
 
