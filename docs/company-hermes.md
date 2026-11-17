@@ -77,6 +77,21 @@ below Hermes's 64K main-agent floor. Do not inflate its advertised context.
 
 ## Make the Desktop usable
 
+On a configured machine, review any organization bootstrap before rerunning it.
+An alias-only `~/.gitconfig` template can erase scoped identity, signing and
+credential includes; back up and preserve/merge those settings. A model menu is
+not approval to use every model. Preserve an already-working Claude install and
+its company login: package channel and Enterprise authentication are separate.
+Tags that install npm packages also need Node/npm prerequisites.
+
+Check `zsh -lic 'command -v hermes'` as well as an absolute launcher. The device
+installer puts `~/.local/bin` first at the end of `.zshrc`, after Homebrew/shell
+initialization, with backup and an idempotent managed block. An earlier PATH
+entry can be shadowed later. A symlinked `.zshrc` is preserved and reported for
+an explicit source-file fix. Workspace-only setup does not change personal
+shell precedence. A model/version string alone does not distinguish two Hermes
+installs; inspect `hermes --version`'s install directory and runtime too.
+
 On the company-only work Mac, provision specialist profiles and project boards:
 
 ```sh

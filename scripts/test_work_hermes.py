@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from setup_work_hermes import hermes_config, SLOTS, write, paperclip_context, repair_paperclip_shim
+from setup_work_hermes import hermes_config, SLOTS, write, paperclip_context, repair_paperclip_shim, company_shell_text
 from setup_work_desktop import desktop_config, ui_readiness
 
 loader=importlib.machinery.SourceFileLoader('work_ai',str(Path(__file__).parents[1]/'shared/bin/work-ai'))
@@ -22,6 +22,24 @@ CFG=dict(routes=ROUTES,scope='workspace',workspace='/tmp/company',enterprise_org
 
 
 class WorkRoutes(unittest.TestCase):
+    def test_company_shell_selects_managed_cli_after_brew_and_preserves_user_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home=Path(tmp);managed=home/'.local/bin';managed.mkdir(parents=True)
+            brew=home/'brew';brew.mkdir()
+            for folder,result in [(managed,'managed'),(brew,'brew')]:
+                exe=folder/'hermes';exe.write_text('#!/bin/sh\necho '+result+'\n');exe.chmod(0o700)
+            original=f'export PATH="{brew}:$PATH"\n# user setting\n'
+            configured=company_shell_text(original)
+            shell=home/'shell.zsh';shell.write_text(configured)
+            run=subprocess.run(['zsh','-f','-c','source "$1"; hermes','_',str(shell)],
+                env=dict(os.environ,HOME=str(home)),capture_output=True,text=True)
+            self.assertEqual(run.stdout.strip(),'managed')
+            self.assertIn('# user setting',configured)
+            self.assertEqual(company_shell_text(configured),configured)
+            changed=company_shell_text(configured+'# later user setting\n')
+            self.assertIn('# later user setting',changed)
+            self.assertEqual(changed.count('# >>> company managed launchers >>>'),1)
+
     def test_backend_setup_does_not_imply_desktop_plugins_are_enabled(self):
         self.assertEqual(ui_readiness({})['desktop_plugins'],'action-required')
         confirmed=ui_readiness({},True)
