@@ -10,7 +10,7 @@ import unittest
 import urllib.error
 from unittest.mock import patch
 
-from setup_work_hermes import install_issue_strategy
+from setup_work_hermes import install_issue_strategy, link
 
 ROOT=Path(__file__).parents[1]
 SPEC=importlib.util.spec_from_file_location('collector',ROOT/'shared/skills/issue-strategy/scripts/collect_github.py')
@@ -18,6 +18,37 @@ api=importlib.util.module_from_spec(SPEC);SPEC.loader.exec_module(api)
 
 
 class IssueEvidence(unittest.TestCase):
+    def test_managed_link_backup_stays_outside_skill_discovery(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp).resolve();old=root/'old';old.mkdir();new=root/'new';new.mkdir()
+            alias=root/'skills/issue-strategy';alias.parent.mkdir();alias.symlink_to(old)
+            backups=root/'state/backups'
+            link(alias,new,False,backups)
+            self.assertEqual(alias.resolve(),old)
+            link(alias,new,True,backups)
+            self.assertEqual(alias.resolve(),new)
+            self.assertEqual(list(alias.parent.iterdir()),[alias])
+            saved=list(backups.iterdir());self.assertEqual(len(saved),1)
+            self.assertEqual(saved[0].resolve(),old)
+
+    def test_native_entrypoints_keep_identical_workflow_and_helpers(self):
+        with tempfile.TemporaryDirectory() as temp:
+            installs={}
+            for platform in ['generic','claude-code','hermes','codex']:
+                out=Path(temp)/platform
+                install_issue_strategy(out,True,platform);installs[platform]=out
+                self.assertTrue((out/'WORKFLOW.md').is_file())
+                self.assertFalse((out/'adapters').exists())
+                before={str(p.relative_to(out)):p.read_bytes() for p in out.rglob('*') if p.is_file()}
+                install_issue_strategy(out,True,platform)
+                self.assertEqual(before,{str(p.relative_to(out)):p.read_bytes() for p in out.rglob('*') if p.is_file()})
+            for name in ['WORKFLOW.md','references/decision-brief.md','scripts/collect_github.py']:
+                self.assertEqual(len({(p/name).read_bytes() for p in installs.values()}),1)
+            self.assertEqual(len({(p/'SKILL.md').read_bytes() for p in installs.values()}),4)
+            self.assertIn('$ARGUMENTS',(installs['claude-code']/'SKILL.md').read_text())
+            self.assertNotIn('$ARGUMENTS',(installs['hermes']/'SKILL.md').read_text())
+            self.assertIn('file_path="WORKFLOW.md"',(installs['hermes']/'SKILL.md').read_text())
+
     def test_cli_does_not_report_success_for_an_inaccessible_open_list(self):
         class Client:
             base='https://api.github.com/repos/example/repo'

@@ -44,25 +44,32 @@ def write(path, content, apply, mode=0o600):
     tmp.replace(path)
 
 
-def link(path,target,apply):
+def link(path,target,apply,backup_dir=None):
     if path.is_symlink() and path.resolve()==target:
         return
     print(('LINK ' if apply else 'WOULD LINK ')+str(path))
     if not apply:return
     path.parent.mkdir(parents=True,exist_ok=True)
     if path.exists() or path.is_symlink():
-        path.rename(path.with_name(path.name+'.backup.'+datetime.datetime.now().strftime('%Y%m%d%H%M%S%f')))
+        backup_dir=backup_dir or path.parent
+        backup_dir.mkdir(parents=True,exist_ok=True)
+        path.rename(backup_dir/(path.name+'.backup.'+datetime.datetime.now().strftime('%Y%m%d%H%M%S%f')))
     path.symlink_to(target)
 
 
-def install_issue_strategy(target,apply):
+def install_issue_strategy(target,apply,platform='generic'):
     source=REPO/'shared/skills/issue-strategy'
+    if platform not in {'generic','claude-code','hermes','codex'}:
+        raise ValueError('Unknown issue strategy adapter.')
     if not (source/'SKILL.md').is_file():
         raise FileNotFoundError('Issue strategy source is missing; use the complete dotfiles checkout.')
+    entry=source/'SKILL.md' if platform=='generic' else source/'adapters'/(platform+'.md')
     for path in sorted(source.rglob('*')):
         if path.is_file() and path.suffix in {'.md','.py'} and '__pycache__' not in path.parts:
             relative=path.relative_to(source)
-            write(target/relative,path.read_bytes(),apply,0o700 if relative.parts[0]=='scripts' else 0o600)
+            if relative.parts[0]=='adapters':continue
+            content=entry.read_bytes() if relative==Path('SKILL.md') else path.read_bytes()
+            write(target/relative,content,apply,0o700 if relative.parts[0]=='scripts' else 0o600)
 
 
 def hermes_config(existing, routes, workspace, default='local'):
@@ -289,8 +296,18 @@ evidence-backed problem/option/priority recommendations, including non-code
 interventions; analysis alone never assigns, closes or implements issues.
 '''
     write(hh/'skills/autonomous-ai-agents/company-coding-stack/SKILL.md',skill,a.apply)
-    install_issue_strategy(hh/'skills/management/issue-strategy',a.apply)
-    install_issue_strategy(w/'.claude/skills/issue-strategy',a.apply)
+    install_issue_strategy(hh/'skills/management/issue-strategy',a.apply,'hermes')
+    install_issue_strategy(w/'.claude/skills/issue-strategy',a.apply,'claude-code')
+    install_issue_strategy(claude_dir/'skills/issue-strategy',a.apply,'claude-code')
+    if a.scope=='workspace':
+        codex_skill=state/'skills/codex/issue-strategy'
+        install_issue_strategy(codex_skill,a.apply,'codex')
+        alias=home/'.codex/skills/issue-strategy'
+        old_target=w/'.claude/skills/issue-strategy'
+        if (not alias.exists() and not alias.is_symlink()) or (alias.is_symlink() and alias.resolve() in {old_target,codex_skill}):
+            link(alias,codex_skill,a.apply,state/'backups')
+        else:
+            print('INFO existing Codex issue-strategy installation retained; company copy is under .workstation/skills/codex.')
     print('Configuration prepared. Services and authentication require independent live verification.')
 
 
