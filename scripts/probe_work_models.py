@@ -3,6 +3,8 @@
 
 Uses only loopback endpoints from the private workstation config. Outputs contain
 synthetic answers and numeric telemetry, never credentials or reasoning bodies.
+Dedicated reasoning fields are omitted; a malformed server may place reasoning
+inside its answer content, which is retained only in the private receipt.
 These small checks qualify this fixture set, not general model capability.
 """
 import argparse
@@ -20,15 +22,15 @@ import urllib.request
 
 CASES = {
     'triage': {
-        'prompt': 'Facts: E1: checkout returns HTTP 503 since release R7. E2: customer count and owner are unknown. Return only JSON with keys priority, owner, customer_count, evidence. priority must be incident; preserve unknowns as null; evidence must list E1 and E2.',
+        'prompt': 'Facts: E1: checkout returns HTTP 503 since release R7. E2: customer count and owner are unknown. Return a raw JSON object without Markdown fences, with exactly keys priority, owner, customer_count, evidence. priority must be incident; preserve unknowns as null. evidence must be exactly the ID array ["E1", "E2"], with no citation text.',
         'answer': {'priority':'incident','owner':None,'customer_count':None,'evidence':['E1','E2']},
     },
     'decision': {
-        'prompt': 'Evidence: E1: disabling the new feature flag restored checkout in staging. E2: production impact is not measured. E3: no migration is required. Choose the next recommendation from validate_flag_rollback, rewrite_service, declare_resolved. Return only JSON with keys recommendation, production_resolved, evidence. Use false for production_resolved unless the evidence proves production recovery; cite E1 and E2.',
+        'prompt': 'Evidence: E1: disabling the new feature flag restored checkout in staging. E2: production impact is not measured. E3: no migration is required. Choose the next recommendation from validate_flag_rollback, rewrite_service, declare_resolved. Return a raw JSON object without Markdown fences, with exactly keys recommendation, production_resolved, evidence. Use false for production_resolved unless the evidence proves production recovery. evidence must be exactly the ID array ["E1", "E2"], with no citation text.',
         'answer': {'recommendation':'validate_flag_rollback','production_resolved':False,'evidence':['E1','E2']},
     },
     'review': {
-        'prompt': 'Review this Python function against its contract: sum integers 1 through n inclusive for nonnegative n. Line 1: def total(n): Line 2: return sum(range(1, n)). Return only JSON with keys defect_line, counterexample_n, actual, expected. Use the smallest nonnegative failing n.',
+        'prompt': 'Review this Python function against its contract: sum integers 1 through n inclusive for nonnegative n. Line 1: def total(n): Line 2: return sum(range(1, n)). Return a raw JSON object without Markdown fences, with exactly keys defect_line, counterexample_n, actual, expected. Use the smallest nonnegative failing n.',
         'answer': {'defect_line':2,'counterexample_n':1,'actual':0,'expected':1},
     },
     'tool_arguments': {
