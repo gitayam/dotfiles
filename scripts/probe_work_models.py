@@ -2,7 +2,7 @@
 """Opt-in synthetic qualification of approved workstation routes; no tools execute.
 
 Uses only loopback endpoints from the private workstation config. Outputs contain
-synthetic answers and numeric telemetry, never credentials or reasoning bodies.
+synthetic answers and numeric telemetry, never credentials.
 Dedicated reasoning fields are omitted; a malformed server may place reasoning
 inside its answer content, which is retained only in the private receipt.
 These small checks qualify this fixture set, not general model capability.
