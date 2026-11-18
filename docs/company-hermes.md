@@ -179,6 +179,12 @@ artifacts and contracts before releasing it. Write the worker contract before
 authorized execution; approvals being off alone does not justify an indefinite
 hold, and a written contract is not an execution sandbox.
 
+Unattended specialist profiles omit `code_execution`: native single-query policy
+requires separate approval for arbitrary Python cells, so advertising the tool
+caused a denied call and wasted generation. Ordinary file/terminal tools remain
+subject to their existing guards. The installer does not set
+`approvals.single_query_mode: approve`; interactive host sessions retain the tool.
+
 The Claude hook checks both the exact endpoint and model tiers. It applies to
 the whole work-only device, and only company paths/remotes on the personal Mac.
 It is a workflow guard, not an operating-system egress firewall. The owner can
