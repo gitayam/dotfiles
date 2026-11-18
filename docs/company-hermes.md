@@ -136,11 +136,48 @@ it requires a gateway restart. A live-work refusal means preserve the active
 turn/process and wait; do not force a restart. The installed login service and
 the currently running gateway are separate states: verify both after a safe
 restart. Native Desktop can use the existing gateway while that restart waits.
-Hermes background/auxiliary tasks are explicitly pinned to the selected local
-route, with empty fallback chains. Media generators that choose unrelated cloud
+Hermes uses an approved fallback chain between local Gemma and organization z1.
+The selected primary is omitted from its own chain; routes below the 64K main
+context floor are excluded. z2 remains available for bounded CLI work. Text
+auxiliary and explicitly pinned delegated calls have their own approved chains;
+vision stays on the verified local multimodal route. Media tools using other cloud
 providers are excluded from this profile's toolsets. Memory/skill write approvals
 stay on; board intake and dispatch are enabled with a ten-second tick and bounded
 worker concurrency.
+
+### Remote fallback setup and task ownership
+
+`hermes fallback add` is interactive. The installed CLI accepts structured JSON
+or YAML through `config set`, so a company-only device can be configured over SSH:
+
+```sh
+hermes config set fallback_providers '[{"provider":"z1","model":"glm-5.3-flash"}]'
+hermes fallback check --live --json
+```
+
+On a personal workstation, select the company profile explicitly. Named providers
+resolve their endpoint and credentials from that profile; do not put tokens in
+command arguments. The managed installer refreshes primary, text auxiliary and
+delegation chains together and removes the legacy fallback key. It sets one
+Hermes-level API retry and one recovery cycle, with a 120-second provider request
+timeout. SDK retries still apply; these are not a hard whole-task deadline.
+Verify an isolated synthetic primary failure, not only readiness or a model list.
+New sessions/workers use the new configuration; preserve existing live runs rather
+than forcing a gateway restart to change their route.
+
+Native fallback handles provider failures, not Kanban `blocked` states, weak
+recommendations or acceptance failures. The installed `smart_model_routing` key
+has no runtime routing implementation; enabling it is not evidence of switching.
+Use bounded, verified escalation to z1 or real Enterprise Claude Code for work
+that needs it. AnyJev advice does not replace that verification.
+
+Default board ownership is `zf-developer`, with `zf-planner` coordinating
+decomposition. Select actual profile names from the roster. A ready card assigned
+to a nonexistent `developer` or `frontend-developer` profile cannot dispatch.
+An operator hold requires an ownership handoff: reconcile live runs, worktrees,
+artifacts and contracts before releasing it. Write the worker contract before
+authorized execution; approvals being off alone does not justify an indefinite
+hold, and a written contract is not an execution sandbox.
 
 The Claude hook checks both the exact endpoint and model tiers. It applies to
 the whole work-only device, and only company paths/remotes on the personal Mac.
