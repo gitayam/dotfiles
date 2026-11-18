@@ -57,6 +57,23 @@ node and approved access policy; keep its state independent and do not quietly
 enroll it in another tailnet after the operator rejected device sharing.
 Source: [tsnet server API](https://tailscale.com/docs/reference/tsnet-server-api).
 
+## Check the actual network program
+
+An application firewall such as LuLu can require a new binary's own allow/block
+decision. A successful Python or curl TCP probe does not prove that cloudflared
+can use the same destination. Compare the exact program, destination, active
+firewall profile and rule, and distinguish a pending prompt from a proven deny.
+Resolve that decision through the normal app controls; preserve other rules.
+Source: [LuLu alerts and rule scope](https://objective-see.org/products/lulu.html).
+
+Transport pilots should expose only a short-lived synthetic nonce. Require an
+independent nonce response and a rejected unrelated path before acceptance.
+Do not infer readiness by extracting any HTTPS URL from a log: an API hostname
+inside an error message can look like a tunnel URL. Registered connectors and
+zero process exit codes are also insufficient evidence of the service path.
+Stop bounded pilots, revoke their scoped credentials and remove only their own
+DNS/tunnel resources. Installation alone should not enable a persistent service.
+
 ## Bastion design to review
 
 ```mermaid
