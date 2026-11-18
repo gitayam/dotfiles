@@ -145,7 +145,8 @@ model; its name does not imply Enterprise Claude inference. Paperclip/Orca's
 current adapters use that CLI, while native Hermes children do not require it.
 
 Delegation defaults to Server1's qualified full-context route with local fallback.
-Set private `delegation_model: local` to keep children local. Server2's served
+Set private `delegation_model: local` to select local as primary with approved
+server1 fallback. Server2's served
 49,152-token route remains outside native Hermes main/child routing. Child
 policy defaults are 3 concurrent, 6 total for a one-shot, one spawn level, 12
 iterations and 300 seconds. Explicit native delegation limits survive refresh;
