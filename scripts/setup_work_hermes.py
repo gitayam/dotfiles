@@ -335,6 +335,14 @@ board nor lane completion grants permission to publish. Paperclip must use the
 real Claude Code CLI engine (adapterConfig.engine: cli) with approved model/tier
 environment; do not rely on an unset engine's current default. There is no
 community broker/ship service connected to this workstation.
+An accepted read-only issue does not qualify Paperclip editing. Require a native
+edit's actual file/tests; exit zero with denied tools is not acceptance. Use
+only authorized owned-path Edit/Read selectors (absolute // paths), not
+Write(path). Respect native execution-reconciliation guards and revoke temporary
+grants; never reset state or duplicate an issue to evade them.
+Named boards keep current tasks under ~/.hermes/kanban/boards/<board>/kanban.db;
+the root kanban.db may be legacy. Inspect the intended board before counting
+workers, and keep input/dependency/ownership holds separate from model failover.
 AnyJev is advisory; keep uncertain work visible for review.
 Hermes automatically falls back between eligible local Gemma and z1 routes on
 provider failures; its delegated and text auxiliary calls have their own approved
@@ -366,6 +374,15 @@ before installing another client or changing membership/routes. Native macOS
 Remote Login over an approved transport preserves the existing SSH identity.
 Bonjour names help only on the same LAN. A restricted outbound SSH bastion can
 keep tailnets separate; it needs a verified endpoint and end-to-end host keys.
+An SSH-only Cloudflare Access route can also preserve tailnets: exact operator
+Service Auth policy, origin audience validation, native SSH pin, loopback SSH
+only and a supervised connector. Keep operator and connector credentials in
+separate private files, with expiry/revocation details in workstation inventory.
+The connector needs outbound TCP 7844 and GUI login. Retain a LAN alias and
+preserve active relay sessions. Verify a saved LuLu Always rule on the actual
+binary with a fresh process; another program's TCP success is insufficient.
+Qualify SSH nonce, denied Access/native-auth controls and connector restart
+recovery. A same-LAN public-edge round trip is not different-network acceptance.
 '''
     write(hh/'skills/autonomous-ai-agents/company-coding-stack/SKILL.md',skill,a.apply)
     install_issue_strategy(hh/'skills/management/issue-strategy',a.apply,'hermes')

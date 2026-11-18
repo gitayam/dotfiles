@@ -242,10 +242,19 @@ wrong severity in a live outage example. Descriptions from `No user impact` to
 `Complete production outage for all users` chose the correct last level. The
 numeric result is a zero-based expected level index, not the original 1–5 label.
 Inspect Paperclip's existing company and agent IDs before editing them; use its
-legacy runner with **command `claude`**, approved model-tier environment variables,
-and heartbeats off. A custom launcher command skips the adapter's hello probe;
+explicit CLI engine (`adapterConfig.engine: cli`) with **command `claude`**,
+approved model-tier environment variables and heartbeats off. The installed
+adapter can default an unset engine to ACP. A custom launcher skips its hello probe;
 use the route environment instead. Keep provider and model paired on Hermes
 adapters when changing the default provider.
+
+Read-only Paperclip acceptance does not qualify editing. A later editing canary
+exited successfully with denied tools and no required artifact. Treat editing
+as unaccepted until a bounded native task produces its checked file and tests.
+Use authorized owned-path `Edit`/`Read` selectors with absolute `//` paths;
+`Write(path)` does not match Claude file permissions. Respect execution
+reconciliation and real denies; remove temporary grants instead of resetting
+state or creating duplicate work. See [Claude permissions](https://code.claude.com/docs/en/permissions).
 
 For headless Claude CLI tests, put `--` before a positional prompt when the last
 option is variadic (`--tools`, `--allowedTools`, `--disallowedTools`). Otherwise
