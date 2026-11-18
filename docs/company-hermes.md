@@ -171,7 +171,7 @@ has no runtime routing implementation; enabling it is not evidence of switching.
 Use bounded, verified escalation to z1 or real Enterprise Claude Code for work
 that needs it. AnyJev advice does not replace that verification.
 
-Default board ownership is `zf-developer`, with `zf-planner` coordinating
+On the company-only device, default board ownership is `zf-developer`, with `zf-planner` coordinating
 decomposition. Select actual profile names from the roster. A ready card assigned
 to a nonexistent `developer` or `frontend-developer` profile cannot dispatch.
 An operator hold requires an ownership handoff: reconcile live runs, worktrees,
