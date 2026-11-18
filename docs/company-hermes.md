@@ -248,13 +248,23 @@ adapter can default an unset engine to ACP. A custom launcher skips its hello pr
 use the route environment instead. Keep provider and model paired on Hermes
 adapters when changing the default provider.
 
-Read-only Paperclip acceptance does not qualify editing. A later editing canary
-exited successfully with denied tools and no required artifact. Treat editing
-as unaccepted until a bounded native task produces its checked file and tests.
+Read-only Paperclip acceptance does not qualify editing. An earlier editing
+canary returned exit 0 with denied tools and no artifact; its cancelled history
+remains intact. A new, distinct synthetic fixture later passed Enterprise Claude
+editing with an exact-file task-scoped `Read`/`Edit` grant: four independent
+assertions passed, frozen tests were unchanged, the operator closed the issue,
+and the temporary override was removed. This qualifies that scoped path, not
+arbitrary company-repository writes. No blanket permission mode was enabled.
+
 Use authorized owned-path `Edit`/`Read` selectors with absolute `//` paths;
-`Write(path)` does not match Claude file permissions. Respect execution
-reconciliation and real denies; remove temporary grants instead of resetting
-state or creating duplicate work. See [Claude permissions](https://code.claude.com/docs/en/permissions).
+`Write(path)` does not match Claude file permissions. Paperclip supports
+`assigneeAdapterOverrides.adapterConfig.extraArgs` for a per-task CLI grant.
+Keep its required issue-disposition step executable: forbidding all API access
+while expecting the worker to record a disposition caused automatic repair
+turns in the fixture. If the operator owns final acceptance, reconcile every
+run and queued continuation before closing the issue and removing its grant.
+Respect execution reconciliation and real denies; do not reset or duplicate
+blocked work. See [Claude permissions](https://code.claude.com/docs/en/permissions).
 
 For headless Claude CLI tests, put `--` before a positional prompt when the last
 option is variadic (`--tools`, `--allowedTools`, `--disallowedTools`). Otherwise

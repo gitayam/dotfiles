@@ -165,3 +165,12 @@ built-in agent. The force flag keeps self-hosted child selection on the chosen
 approved model. Enterprise launches retain their account's own model selection;
 inherited personal route/force variables are scrubbed.
 Source: [Claude Code subagent model precedence](https://code.claude.com/docs/en/sub-agents#run-every-subagent-on-one-model).
+
+Paperclip agents launch `claude` directly and keep their own adapter environment;
+refreshing `work-ai` does not update that stored environment. Set the same
+self-hosted child model and force flag on those approved local/server agents.
+Keep their explicit CLI engine, model, heartbeat and permission settings. With
+Paperclip 2026.1106.0, native agent PATCH/test routes restore typed redacted env
+bindings from the saved agent; preserve those bindings rather than replacing
+credentials with display placeholders. All three installed company adapters
+passed fresh native hello probes after the separate environment refresh.

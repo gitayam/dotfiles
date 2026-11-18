@@ -339,6 +339,15 @@ agent and project, then inspect that same issue and its runs. A comment can wake
 the assignee: do not also invoke a heartbeat or create a duplicate. Reconcile
 unknown writes first. On auth/permission errors stop and report; never mint or
 forge a token. Heartbeats stay off. Never assign Hermes to call itself.
+Paperclip invokes claude directly with its own stored environment. Pin the
+self-hosted child model and CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 there separately
+from work-ai; keep the engine, permissions and heartbeat policy. Preserve native
+typed environment/secret bindings instead of storing redaction placeholders.
+A task-scoped assigneeAdapterOverrides.adapterConfig.extraArgs grant can permit
+Read/Edit for an exact owned file. It does not grant arbitrary repository writes.
+Keep the native issue-disposition step executable. If the operator owns final
+acceptance, reconcile all runs and queued continuations before closing the issue
+and removing the temporary grant. Process success alone does not accept an edit.
 Use `{state}/bin/zf-orca dispatch --agent claude --cwd <scratch> "<question>"`
 for bounded read-only lanes; `inspect <lane>` retrieves the result. This company
 wrapper does not provide an Orca edit adapter or a Paperclip-to-Orca handoff.
