@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import subprocess
 
-from setup_work_hermes import hermes_config, write, install_issue_strategy
+from setup_work_hermes import hermes_config, write, install_issue_strategy, model_policy
 
 ROLES = {
     'zf-planner': 'Plan company engineering work: inspect requirements and source, write bounded tasks and acceptance criteria. Do not implement source changes.',
@@ -36,8 +36,8 @@ def desktop_config(existing):
     return cfg
 
 
-def worker_config(existing,routes,workspace,default):
-    cfg=hermes_config(existing,routes,workspace,default,company_roles=True)
+def worker_config(existing,routes,workspace,default,auxiliary_models=None):
+    cfg=hermes_config(existing,routes,workspace,default,company_roles=True,auxiliary_models=auxiliary_models)
     cfg['gateway']={**cfg.get('gateway',{}),'standalone':False}
     cfg.pop('webapp',None)
     cfg['agent'].setdefault('run_budget_seconds',900)
@@ -67,6 +67,7 @@ def main():
     cfg=json.loads(args.from_config.expanduser().read_text())
     if cfg['scope']!='device':
         parser.error('Desktop roles belong on the company-only work Mac; use its SSH relay from personal devices.')
+    role_models,auxiliary_models=model_policy(cfg)
     home=Path(cfg['hermes_home']);workspace=Path(cfg['workspace']);state=workspace/'.workstation'
     env=dict(os.environ,HERMES_HOME=str(home),PATH=str(Path(cfg['hermes']).parent)+':/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin')
     for key in ['HERMES_PROFILE','HERMES_PROFILE_NAME']:
@@ -85,7 +86,8 @@ def main():
             command(cfg['hermes'],['profile','create',name,'--no-credentials','--no-alias','--description',role],args.apply,env)
         config=target/'config.yaml'
         existing=yaml.safe_load(config.read_text()) if config.exists() else {}
-        configured=worker_config(existing or {},cfg['routes'],workspace,cfg['default_model'])
+        configured=worker_config(existing or {},cfg['routes'],workspace,
+            role_models.get(name,cfg['default_model']),auxiliary_models)
         write(config,yaml.safe_dump(configured,sort_keys=False),args.apply)
         soul=target/'SOUL.md';text=soul.read_text() if soul.exists() else ''
         marker='<!-- work-desktop-role -->'

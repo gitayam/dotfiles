@@ -20,6 +20,22 @@ SLOTS = ['vision','compression','approval','review','mcp','title_generation',
          'memory_query_rewrite','tts_audio_tags','voice_chat','triage_specifier',
          'kanban_decomposer','profile_describer','goal_judge','group_router','curator',
          'monitor','background_review','moa_reference','moa_aggregator']
+COMPANY_ROLES = {'zf-planner','zf-developer','zf-reviewer'}
+
+
+def model_policy(cfg):
+    """Validate explicit private assignments before any configuration is written."""
+    roles=cfg.get('role_models',{})
+    auxiliary=cfg.get('auxiliary_models',{})
+    for values,known in [(roles,COMPANY_ROLES),(auxiliary,set(SLOTS))]:
+        if not isinstance(values,dict) or set(values)-known:
+            raise ValueError('Unknown company model policy assignment.')
+        for key in values.values():
+            if not isinstance(key,str) or key not in {'local','1'} or cfg['routes'][key]['context']<65536:
+                raise ValueError('Company Hermes assignments require an approved full-context route.')
+    if auxiliary.get('vision','local')!='local':
+        raise ValueError('Vision stays local until another served route is qualified.')
+    return roles,auxiliary
 
 
 def write(path, content, apply, mode=0o600):
@@ -72,8 +88,9 @@ def install_issue_strategy(target,apply,platform='generic'):
             write(target/relative,content,apply,0o700 if relative.parts[0]=='scripts' else 0o600)
 
 
-def hermes_config(existing, routes, workspace, default='local', company_roles=False):
+def hermes_config(existing, routes, workspace, default='local', company_roles=False, auxiliary_models=None):
     cfg = dict(existing)
+    _,auxiliary_models=model_policy({'routes':routes,'auxiliary_models':{} if auxiliary_models is None else auxiliary_models})
     provider = lambda key: {'1':'z1','2':'z2'}.get(key,key)
     if default not in {'local','1'} or routes[default]['context']<65536:
         raise ValueError('Hermes main routing requires an approved route with at least 64K context.')
@@ -92,10 +109,12 @@ def hermes_config(existing, routes, workspace, default='local', company_roles=Fa
     aux = dict(cfg.get('auxiliary',{}))
     for slot in SLOTS:
         entry = dict(aux.get(slot,{}) if isinstance(aux.get(slot,{}),dict) else {})
-        selected='local' if slot=='vision' else default
+        selected=auxiliary_models.get(slot,'local' if slot=='vision' else default)
+        slot_fallback=[{'provider':provider(key),'model':routes[key]['model']}
+                       for key in ['local','1'] if key!=selected and routes[key]['context']>=65536]
         entry.update({'provider':provider(selected),'model':routes[selected]['model'],
             'base_url':routes[selected]['url'],'api_key':'selfhosted',
-            'api_mode':'chat_completions','fallback_chain':[] if slot=='vision' else [dict(e) for e in fallback]})
+            'api_mode':'chat_completions','fallback_chain':[] if slot=='vision' else slot_fallback})
         aux[slot] = entry
     cfg['auxiliary'] = aux
     for k in ['memory','skills']:
@@ -159,6 +178,7 @@ def main():
     p.add_argument('--local-context',type=int,default=131072)
     p.add_argument('--apply',action='store_true')
     a=p.parse_args()
+    saved={}
     if a.from_config:
         saved=json.loads(a.from_config.expanduser().read_text())
         a.workspace=Path(saved['workspace']);a.hermes_home=Path(saved['hermes_home'])
@@ -194,6 +214,9 @@ def main():
          'paperclip_api_base':paperclip_base,'paperclip_context':str(state/'paperclip-context.json'),
          'decide_url':f'http://127.0.0.1:{a.decide_port}',
          'decide_key_file':str(state/'secrets/decide-api-key')}
+    for name in ['role_models','auxiliary_models']:
+        if name in saved:cfg[name]=saved[name]
+    _,auxiliary_models=model_policy(cfg)
     write(state/'config.json',json.dumps(cfg,indent=2)+'\n',a.apply)
     repair_paperclip_shim(Path(cfg['paperclip']),Path('/opt/homebrew/opt/node/bin/node'),a.apply)
     metadata=state/'paperclip.json'
@@ -232,7 +255,7 @@ def main():
             link(dst,target,a.apply)
     hp=hh/'config.yaml'; existing=yaml.safe_load(hp.read_text()) if hp.exists() else {}
     write(hp,yaml.safe_dump(hermes_config(existing or {},routes,w,a.default_model,
-        company_roles=a.scope=='device'),sort_keys=False),a.apply)
+        company_roles=a.scope=='device',auxiliary_models=auxiliary_models),sort_keys=False),a.apply)
     # Scope the hook on the personal Mac; the work Mac permits approved routes in every directory.
     hook={'type':'command','command':str(state/'bin/work-ai')+' hook'}
     for cd in {home/'.claude',claude_dir}:
@@ -320,6 +343,14 @@ retry. Model fallback never unblocks a card or transfers ownership.
 For CTO-level issue/backlog analysis, load the issue-strategy skill. It produces
 evidence-backed problem/option/priority recommendations, including non-code
 interventions; analysis alone never assigns, closes or implements issues.
+Private config role_models and auxiliary_models preserve explicit route
+assignments across installer refreshes. Use dotfiles docs/company-model-policy.md
+and scripts/probe_work_models.py to qualify a candidate policy with synthetic
+evidence, then independently check bounded native tasks. Do not confuse direct
+API probes with native adapter acceptance or HTTP 200 with applied reasoning
+controls. Effort differs by model/template. Real zf-claude accepts --effort for a
+session; inherited CLAUDE_CODE_* effort variables are scrubbed by the wrapper.
+Keep AnyJev advice separate from deterministic context/modality/policy gates.
 '''
     write(hh/'skills/autonomous-ai-agents/company-coding-stack/SKILL.md',skill,a.apply)
     install_issue_strategy(hh/'skills/management/issue-strategy',a.apply,'hermes')

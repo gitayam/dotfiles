@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from setup_work_hermes import hermes_config, SLOTS, write, paperclip_context, repair_paperclip_shim, company_shell_text
+from setup_work_hermes import hermes_config, SLOTS, write, paperclip_context, repair_paperclip_shim, company_shell_text, model_policy
 from setup_work_desktop import desktop_config, ui_readiness, worker_config
 
 loader=importlib.machinery.SourceFileLoader('work_ai',str(Path(__file__).parents[1]/'shared/bin/work-ai'))
@@ -22,6 +22,30 @@ CFG=dict(routes=ROUTES,scope='workspace',workspace='/tmp/company',enterprise_org
 
 
 class WorkRoutes(unittest.TestCase):
+    def test_task_assignments_keep_independent_fallbacks_and_worker_budgets(self):
+        policy={'role_models':{'zf-planner':'1'},
+                'auxiliary_models':{'title_generation':'local','review':'1'},'routes':ROUTES}
+        roles,aux=model_policy(policy)
+        cfg=worker_config({'agent':{'max_turns':24}},ROUTES,Path('/tmp/company'),roles['zf-planner'],aux)
+        self.assertEqual(cfg['model']['provider'],'z1')
+        self.assertEqual(cfg['agent']['max_turns'],24)
+        self.assertEqual(cfg['auxiliary']['title_generation']['provider'],'local')
+        self.assertEqual(cfg['auxiliary']['title_generation']['fallback_chain'],[{'provider':'z1','model':ROUTES['1']['model']}])
+        self.assertEqual(cfg['auxiliary']['review']['provider'],'z1')
+        self.assertEqual(cfg['auxiliary']['review']['fallback_chain'],[{'provider':'local','model':ROUTES['local']['model']}])
+        self.assertEqual(cfg['auxiliary']['vision']['fallback_chain'],[])
+        self.assertEqual(cfg['delegation']['provider'],'z1')
+
+    def test_task_policy_rejects_short_context_unverified_vision_and_typos(self):
+        for policy in [{'role_models':{'zf-planner':'2'}},
+                       {'role_models':{'zf-plannner':'1'}},
+                       {'auxiliary_models':{'vision':'1'}},
+                       {'auxiliary_models':{'review':'openrouter'}},
+                       {'auxiliary_models':{'typo':'local'}},
+                       {'auxiliary_models':[]},
+                       {'role_models':{'zf-reviewer':[]}}]:
+            with self.assertRaises(ValueError):model_policy(dict(routes=ROUTES,**policy))
+
     def test_unattended_roles_keep_approval_policy_and_usable_tools(self):
         policy={'mode':'off','single_query_mode':'ask','deny':['sentinel']}
         cfg=worker_config({'approvals':policy},ROUTES,Path('/tmp/company'),'local')

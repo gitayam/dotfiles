@@ -1,5 +1,8 @@
 # Company Hermes workspace
 
+For durable per-role/auxiliary assignments and reproducible model/effort checks,
+see [company model policy](company-model-policy.md).
+
 Company repositories live under `~/zenithflow`; personal repositories remain in
 `~/Git`. The workspace root is intentionally not a Git repository. Keep device
 inventory, private service settings, model weights, logs and memory in
