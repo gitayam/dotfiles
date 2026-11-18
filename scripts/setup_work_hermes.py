@@ -14,7 +14,7 @@ import re
 import stat
 
 REPO = Path(__file__).resolve().parents[1]
-NAMES = ['zf-claude','zf-z1','zf-z2','zf-local','zf-zq','zf-orca','zf-status','zf-decide',
+NAMES = ['zf-claude','zf-server1','zf-server2','zf-z1','zf-z2','zf-local','zf-zq','zf-orca','zf-status','zf-decide',
          'zf-paperclip','hermes-zenithflow']
 SLOTS = ['vision','compression','approval','review','mcp','title_generation',
          'memory_query_rewrite','tts_audio_tags','voice_chat','triage_specifier',
@@ -25,6 +25,11 @@ COMPANY_ROLES = {'zf-planner','zf-developer','zf-reviewer'}
 
 def model_policy(cfg):
     """Validate explicit private assignments before any configuration is written."""
+    delegated=cfg.get('delegation_model')
+    if delegated is None:
+        delegated='1' if cfg['routes']['1']['context']>=65536 else 'local'
+    if not isinstance(delegated,str) or delegated not in {'local','1'} or cfg['routes'][delegated]['context']<65536:
+        raise ValueError('Delegation requires an approved full-context route.')
     roles=cfg.get('role_models',{})
     auxiliary=cfg.get('auxiliary_models',{})
     for values,known in [(roles,COMPANY_ROLES),(auxiliary,set(SLOTS))]:
@@ -88,10 +93,10 @@ def install_issue_strategy(target,apply,platform='generic'):
             write(target/relative,content,apply,0o700 if relative.parts[0]=='scripts' else 0o600)
 
 
-def hermes_config(existing, routes, workspace, default='local', company_roles=False, auxiliary_models=None):
+def hermes_config(existing, routes, workspace, default='local', company_roles=False, auxiliary_models=None, delegation_model=None):
     cfg = dict(existing)
     _,auxiliary_models=model_policy({'routes':routes,'auxiliary_models':{} if auxiliary_models is None else auxiliary_models})
-    provider = lambda key: {'1':'z1','2':'z2'}.get(key,key)
+    provider = lambda key: {'1':'server1','2':'server2'}.get(key,key)
     if default not in {'local','1'} or routes[default]['context']<65536:
         raise ValueError('Hermes main routing requires an approved route with at least 64K context.')
     # Only these approved routes can carry a full Hermes session. z2 remains
@@ -103,6 +108,8 @@ def hermes_config(existing, routes, workspace, default='local', company_roles=Fa
         'api_mode':'chat_completions','model':r['model'],'request_timeout_seconds':120,
         'models':{r['model']:{'context_length':r['context'],'supports_vision':key=='local'}}}
         for key,r in routes.items()}
+    for old,new in [('z1','server1'),('z2','server2')]:
+        cfg['providers'][old]=dict(cfg['providers'][new],name=old)
     cfg.pop('fallback_model',None)
     cfg['fallback_providers'] = fallback
     cfg['model_aliases'] = {}
@@ -126,8 +133,17 @@ def hermes_config(existing, routes, workspace, default='local', company_roles=Fa
         cfg['kanban'].update({'default_assignee':'zf-developer','orchestrator_profile':'zf-planner'})
     cfg.setdefault('agent',{}).update({'api_max_retries':1,'auto_recovery_cycles':1,
         'tool_use_enforcement':True,'intent_ack_continuation':True})
-    cfg.setdefault('delegation',{}).update({'provider':provider(default),'model':routes[default]['model'],
-        'fallback_providers':[dict(e) for e in fallback]})
+    if delegation_model is None:
+        delegation_model='1' if routes['1']['context']>=65536 else default
+    if not isinstance(delegation_model,str) or delegation_model not in {'local','1'} or routes[delegation_model]['context']<65536:
+        raise ValueError('Delegation requires an approved full-context route.')
+    delegation=cfg.setdefault('delegation',{})
+    delegation.update({'provider':provider(delegation_model),'model':routes[delegation_model]['model'],
+        'fallback_providers':[{'provider':provider(k),'model':routes[k]['model']}
+            for k in ['local','1'] if k!=delegation_model and routes[k]['context']>=65536]})
+    for key,value in {'max_concurrent_children':3,'max_spawn_depth':1,'oneshot_max_children':6,
+                      'max_iterations':12,'child_timeout_seconds':300,'worktree_isolation':True}.items():
+        delegation.setdefault(key,value)
     # Model-backed media tools may route to cloud providers independently of auxiliary.*.
     tools=['browser','clarify','code_execution','computer_use','delegation','file',
            'kanban','memory','session_search','skills','terminal','todo','vision','web']
@@ -207,8 +223,8 @@ def main():
     routes={key:dict(name=name,model=model,context=context,url=f'http://127.0.0.1:{port}/v1')
         for key,name,model,context,port in [
           ('local','Work Mac Gemma','gemma-4-26b-a4b',a.local_context,a.local_port),
-          ('1','z1 GLM','glm-5.3-flash',262144,a.z1_port),
-          ('2','z2 gpt-oss','openai/gpt-oss-120b',49152,a.z2_port)]}
+          ('1','Server1 GLM','glm-5.3-flash',262144,a.z1_port),
+          ('2','Server2 gpt-oss','openai/gpt-oss-120b',49152,a.z2_port)]}
     claude_dir=home/'.claude' if a.scope=='device' else state/'claude-enterprise'
     paperclip_port=a.paperclip_port or (3100 if a.scope=='device' else 13100)
     paperclip_base=f'http://127.0.0.1:{paperclip_port}'
@@ -221,7 +237,7 @@ def main():
          'paperclip_api_base':paperclip_base,'paperclip_context':str(state/'paperclip-context.json'),
          'decide_url':f'http://127.0.0.1:{a.decide_port}',
          'decide_key_file':str(state/'secrets/decide-api-key')}
-    for name in ['role_models','auxiliary_models']:
+    for name in ['role_models','auxiliary_models','delegation_model']:
         if name in saved:cfg[name]=saved[name]
     _,auxiliary_models=model_policy(cfg)
     write(state/'config.json',json.dumps(cfg,indent=2)+'\n',a.apply)
@@ -263,7 +279,8 @@ def main():
             link(dst,target,a.apply)
     hp=hh/'config.yaml'; existing=yaml.safe_load(hp.read_text()) if hp.exists() else {}
     write(hp,yaml.safe_dump(hermes_config(existing or {},routes,w,a.default_model,
-        company_roles=a.scope=='device',auxiliary_models=auxiliary_models),sort_keys=False),a.apply)
+        company_roles=a.scope=='device',auxiliary_models=auxiliary_models,
+        delegation_model=cfg.get('delegation_model')),sort_keys=False),a.apply)
     # Scope the hook on the personal Mac; the work Mac permits approved routes in every directory.
     hook={'type':'command','command':str(state/'bin/work-ai')+' hook'}
     for cd in {home/'.claude',claude_dir}:
@@ -294,13 +311,13 @@ description: Run company coding work through approved local models or Enterprise
 ---
 
 Use absolute launchers under `{state}/bin` (desktop PATH is minimal):
-`zf-local` (Gemma on the work Mac), `zf-z1` (GLM), `zf-z2` (gpt-oss),
-`zf-claude` (real Enterprise Claude Code), `zf-zq local|1|2 "prompt"`,
+`zf-local` (Gemma on the work Mac), `zf-server1` (GLM), `zf-server2` (gpt-oss),
+`zf-claude` (real Enterprise Claude Code), `zf-zq local|server1|server2 "prompt"`,
 `zf-status`, `zf-decide` (JSON on stdin), `zf-orca dispatch --agent claude`.
 Use `ZF_MODEL=1|2|local` to choose the Orca model; the Claude adapter is read-only.
 For edits call a Claude Code launcher directly with a bounded file/task contract
 and check its diff and tests independently. Do not mistake a successful process
-exit for a correct result. z2 serves 49,152 tokens and is unsuitable as the main
+exit for a correct result. server2 serves 49,152 tokens and is unsuitable as the main
 Hermes agent (64K floor); it is usable for bounded direct/Claude Code tasks.
 Start company work in `{w}`, personal work in `~/Git`. Do not copy personal
 credentials, histories or memories into company repositories. Keep workspace
@@ -344,9 +361,9 @@ Named boards keep current tasks under ~/.hermes/kanban/boards/<board>/kanban.db;
 the root kanban.db may be legacy. Inspect the intended board before counting
 workers, and keep input/dependency/ownership holds separate from model failover.
 AnyJev is advisory; keep uncertain work visible for review.
-Hermes automatically falls back between eligible local Gemma and z1 routes on
+Hermes automatically falls back between eligible local Gemma and server1 routes on
 provider failures; its delegated and text auxiliary calls have their own approved
-chains. Vision stays on the verified local multimodal route. z2 is not a main
+chains. Vision stays on the verified local multimodal route. server2 is not a main
 fallback. Use the real zf-claude CLI for Enterprise work, never its subscription
 token in a generic inference client. A model-quality problem needs an independent
 check and bounded escalation, not an invented confidence threshold.
@@ -383,6 +400,25 @@ preserve active relay sessions. Verify a saved LuLu Always rule on the actual
 binary with a fresh process; another program's TCP success is insufficient.
 Qualify SSH nonce, denied Access/native-auth controls and connector restart
 recovery. A same-LAN public-edge round trip is not different-network acceptance.
+Server1/server2 are friendly server route names, not model families. Legacy z1/z2
+providers, zf-z1/zf-z2 launchers and numeric 1/2 selectors remain compatibility
+aliases. Read the served model/context; a host can run several models, including
+models excluded by company policy or non-coding embedding/ASR services.
+For independent investigation/review work, use native delegate_task with 2–3
+concrete leaf tasks when it improves the task. State owned paths, inputs,
+acceptance and stop conditions. Native Hermes agents can use tools directly;
+Claude Code CLI is an optional harness, not a mandatory step or a cloud model.
+Delegated children default to full-context Server1, with approved local fallback;
+Server2 stays for bounded Claude Code/direct work below Hermes's context floor.
+The company defaults allow 3 concurrent children, 6 total in a one-shot session,
+one spawn level, 12 child iterations and a 300-second child deadline. Explicit
+operator limits survive refresh. Keep subagent_auto_approve off. Use isolated
+Git worktrees for parallel edits and integrate returned diffs deliberately;
+worktree isolation is not a security sandbox and does not apply outside Git.
+Current queued dir-workspace cards retain one Kanban writer per profile. Do not
+raise shared-directory writer concurrency or change live task ownership merely
+to increase the agent count. Read-only side tasks can run independently; verify
+artifacts and actual native child sessions rather than reporting a planned fan-out.
 '''
     write(hh/'skills/autonomous-ai-agents/company-coding-stack/SKILL.md',skill,a.apply)
     install_issue_strategy(hh/'skills/management/issue-strategy',a.apply,'hermes')

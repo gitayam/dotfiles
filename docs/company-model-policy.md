@@ -8,7 +8,7 @@ local/organization inference or real Enterprise Claude Code.
 ## Durable assignments
 
 The private `.workstation/config.json` accepts optional `role_models` and
-`auxiliary_models` maps. Route keys are `local` and `1` (z1); omitted entries
+`auxiliary_models` maps. Route keys are `local` and `1` (server1); omitted entries
 retain the workspace default. This is a **candidate**, requiring acceptance on
 the target before adoption:
 
@@ -33,8 +33,8 @@ the target before adoption:
 
 Both installers preserve explicit assignments on refresh. Each auxiliary gets
 the other eligible approved route as fallback. Vision stays local without a
-fallback until another deployed vision route is qualified. Specialist main and
-delegation follow the role selection. Short-context z2 is rejected here; it
+fallback until another deployed vision route is qualified. Specialist main calls follow the role selection; delegation independently defaults
+to the qualified Server1 route (or the private delegation_model override). Short-context server2 is rejected here; it
 remains available for bounded direct/Claude tasks. Per-card pins and running
 session snapshots are separate: inspect them before changing configuration.
 
@@ -61,7 +61,7 @@ global maximum-effort setting.
 - GPT-OSS supports low/medium/high reasoning; its deployed server must translate
   the request into its Harmony template. Advertised context does not enlarge
   the organization's served window.
-- Inspect z1's actual server/template before assigning an effort control.
+- Inspect server1's actual server/template before assigning an effort control.
   HTTP 200 may mean an unknown option was ignored. Do not invent a Hermes YAML
   effort key or claim requested effort was effective without evidence.
 
@@ -131,3 +131,28 @@ AnyJev advises route/role selection and does not replace acceptance. Avoid an
 extra model call when hard context/modality/policy constraints already decide
 the route. Keep Paperclip heartbeats off unless a separate bounded recurring
 workflow is authorized. Never assign Hermes a Paperclip task that calls itself.
+
+## Native subagents and compatibility
+
+Server1/server2 name servers, not model families. `zf-server1`, `zf-server2`,
+`zf-zq server1|server2` and `ZF_MODEL=server1|server2` are the preferred labels;
+legacy z1/z2 provider IDs, zf-z1/zf-z2 launchers and numeric 1/2 selectors still work.
+Model menus do not authorize other models hosted on the same server.
+
+Hermes can use native tools and `delegate_task` directly. Claude Code CLI is an
+optional execution harness that can itself use agents on its approved pinned
+model; its name does not imply Enterprise Claude inference. Paperclip/Orca's
+current adapters use that CLI, while native Hermes children do not require it.
+
+Delegation defaults to Server1's qualified full-context route with local fallback.
+Set private `delegation_model: local` to keep children local. Server2's served
+49,152-token route remains outside native Hermes main/child routing. Child
+policy defaults are 3 concurrent, 6 total for a one-shot, one spawn level, 12
+iterations and 300 seconds. Explicit native delegation limits survive refresh;
+no dangerous-command auto-approval is enabled. These are per-process limits,
+not a server-wide admission controller or measured optimal throughput.
+
+The existing Kanban 2-total/1-per-profile writer limits are independent of child
+delegation and remain. Queued `dir` jobs may share a working directory: additional
+writers need isolated worktrees and explicit owned paths before increasing that
+limit. Prefer bounded independent research/review fan-out, then accept artifacts.

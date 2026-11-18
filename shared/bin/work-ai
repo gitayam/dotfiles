@@ -46,7 +46,7 @@ def check_claude(cfg, env):
         route = next((r for r in cfg['routes'].values()
                       if r['url'].removesuffix('/v1').rstrip('/') == base.removesuffix('/v1')), None)
         if not route or not models or any(m != route['model'] for m in models):
-            return 'Unapproved company model route. Use zf-z1, zf-z2 or zf-local.'
+            return 'Unapproved company model route. Use zf-server1, zf-server2 or zf-local.'
         return None
     state = Path(env.get('CLAUDE_CONFIG_DIR', str(Path.home()/'.claude'))).with_suffix('.json')
     # Claude's default state file is ~/.claude.json; a custom config dir uses .claude.json inside it.
@@ -155,9 +155,9 @@ def main():
             try:
                 data = request(route['url']+'/models', timeout=8)
                 found = any(m['id'] == route['model'] for m in data.get('data', []))
-                print(key, route['model'], 'UP' if found else 'MODEL MISSING', route['url'])
+                print({'1':'server1','2':'server2'}.get(key,key), route['model'], 'UP' if found else 'MODEL MISSING', route['url'])
             except Exception as exc:
-                print(key, 'DOWN', type(exc).__name__)
+                print({'1':'server1','2':'server2'}.get(key,key), 'DOWN', type(exc).__name__)
         return 0
     if name == 'zf-decide':
         payload = json.loads(' '.join(args) if args else sys.stdin.read())
@@ -169,8 +169,9 @@ def main():
         os.execve(cfg['paperclip'],argv,env)
     if name == 'zf-zq':
         key = args.pop(0) if args else 'local'
+        key = {'server1':'1','server2':'2','z1':'1','z2':'2'}.get(key,key)
         if key not in cfg['routes']:
-            raise ValueError('Use local, 1 or 2.')
+            raise ValueError('Use local, server1 or server2 (1/2 remain aliases).')
         prompt = ' '.join(args) if args else sys.stdin.read()
         r = cfg['routes'][key]
         result = request(r['url']+'/chat/completions', {'model':r['model'],
@@ -186,15 +187,16 @@ def main():
         if Path(cfg['claude_config_dir']) != Path.home()/'.claude':
             env['CLAUDE_CONFIG_DIR'] = cfg['claude_config_dir']
         os.execve(cfg['claude'], [cfg['claude'], *args], env)
-    key = {'zf-z1':'1', 'zf-z2':'2', 'zf-local':'local'}.get(name)
+    key = {'zf-server1':'1', 'zf-server2':'2', 'zf-z1':'1', 'zf-z2':'2', 'zf-local':'local'}.get(name)
     if name == 'zf-orca':
         key = os.environ.get('ZF_MODEL', 'local')
+        key = {'server1':'1','server2':'2','z1':'1','z2':'2'}.get(key,key)
         if key not in cfg['routes']:
-            raise ValueError('ZF_MODEL must be local, 1 or 2.')
+            raise ValueError('ZF_MODEL must be local, server1 or server2 (1/2 remain aliases).')
         if 'dispatch' in args:
             # Orca's built-in Claude adapter is read-only; other adapters have separate credentials.
             if '--agent' not in args or args[args.index('--agent')+1] != 'claude':
-                raise ValueError('Use --agent claude. Use zf-local/zf-z1/zf-z2 for file edits.')
+                raise ValueError('Use --agent claude. Use zf-local/zf-server1/zf-server2 for file edits.')
         elif args and args[0] not in {'agents','lanes','inspect','logs','status','help','--help','--version'}:
             print('work-ai: this Orca launcher supports approved Claude dispatch and read-only inspection.',file=sys.stderr)
             return 2
