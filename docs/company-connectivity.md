@@ -87,6 +87,54 @@ Source: [Cloudflare error 1010](https://developers.cloudflare.com/support/troubl
 Stop bounded pilots, revoke their scoped credentials and remove only their own
 DNS/tunnel resources. Installation alone should not enable a persistent service.
 
+## Deploy an SSH-only Cloudflare route
+
+Use a dedicated remotely managed tunnel with an exact hostname mapped to
+`ssh://127.0.0.1:22`, a final `http_status:404` rule, and no private-network
+routing. Keep the existing macOS SSH server and keys. This does not require WARP
+or a new host VPN. The connector needs outbound 7844; the operator client uses
+HTTPS 443. A network that blocks the connector's egress still needs a different
+approved transport, such as the bastion design below.
+
+```mermaid
+flowchart LR
+  O[Operator: native SSH and pinned Mac key] -->|Access client over HTTPS 443| C[Cloudflare Access]
+  W[Work Mac: supervised cloudflared] -->|outbound HTTP/2 TCP 7844| C
+  W -->|loopback only| S[Native macOS SSH:22]
+```
+
+Protect the exact hostname with an Access self-hosted application before
+publishing the SSH route. For unattended operator access, create a scoped service
+token and a reusable Service Auth policy matching only that token. Attach the
+existing policy ID to the application; do not create an inline legacy policy or
+accept every valid account token. Record the token's expiry and revocation IDs
+privately. Native SSH authentication remains required independently of Access.
+Enable the connector's origin Access validation for the application audience.
+Sources: [SSH with client-side cloudflared](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/use-cases/ssh/ssh-cloudflared-authentication/),
+[service tokens and Service Auth](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/).
+
+On the Mac, use one named GUI LaunchAgent with `RunAtLoad`, `KeepAlive` and a
+throttled restart. Pass its dedicated connector credential with `--token-file`
+from a private directory; do not install an account API credential there. Keep
+logs private. An explicit HTTP/2 protocol avoids depending on UDP availability.
+A GUI LaunchAgent starts after login; sleep and FileVault unlock are separate.
+
+On the operator, an SSH ProxyCommand can run `cloudflared access ssh`. A private
+wrapper can read its app credential and provide `TUNNEL_SERVICE_TOKEN_ID` and
+`TUNNEL_SERVICE_TOKEN_SECRET` through the environment, keeping secrets out of
+SSH config and command arguments. Pin the Mac's previously verified host key
+with a stable `HostKeyAlias` and strict checking. Retain a named LAN alias.
+Do not restart a working model relay merely to refresh this alias; existing
+sessions retain their connection and new sessions use the updated transport.
+
+Acceptance should include a fresh SSH nonce with the existing pinned host key,
+Access denial without the service credential, native SSH denial without a key,
+reconnection after terminating only the new connector, and a temporary
+loopback-only forwarded service request. Remove temporary forwards and pilot
+DNS/tunnels/credentials. Compare company Tailscale settings and services again.
+A public-edge round trip from the same LAN verifies that route; a separate
+network trial is still needed before claiming roaming coverage.
+
 ## Bastion design to review
 
 ```mermaid
