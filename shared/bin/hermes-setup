@@ -10,7 +10,8 @@
 # an unset auxiliary vision provider instead of the model), memory and skill
 # write approval, the computer_use and kanban toolsets for the CLI/desktop
 # platform, the Kanban database, the cua-driver binary and its ~/.local/bin link,
-# and the coding-stack skill link. Never applies: the macOS Accessibility and
+# the coding-stack skill link, and a fallback chain (z1, z2) for every profile
+# that has none, so an empty or failing model switches instead of ending the turn. Never applies: the macOS Accessibility and
 # Screen Recording grants (a person must approve them), providers (see
 # vibe-coding claude-selfhosted/hermes/config.example.yaml), Linux system
 # packages (sudo), or the gateway (Hermes.app starts it; `hermes gateway start`).
@@ -170,6 +171,24 @@ elif [ -d "$skill_src" ]; then
         pass "skill coding-stack linked to $skill_src"
     else
         fail "skill coding-stack not linked: ln -sfn $skill_src $skill_dst"
+    fi
+fi
+
+# 8. A fallback chain per profile: Hermes's only automatic model switching
+helper="$DOTFILES/shared/hermes/fallback_chain.py"
+if [ -f "$helper" ]; then
+    if $APPLY; then report=$(python3 -I "$helper" "$HERMES_HOME" --apply); else report=$(python3 -I "$helper" "$HERMES_HOME"); fi
+    echo "$report"
+    fails=$((fails + $(grep -c '^FAIL' <<<"$report")))
+    # Prove each chain answers: static without --apply, one tiny live request per entry with it
+    if h fallback --help | grep -q ' check '; then
+        for profile in default $(ls "$HERMES_HOME/profiles" 2>/dev/null); do
+            args=(fallback check); $APPLY && args+=(--live)
+            [ "$profile" = default ] && out=$(h "${args[@]}") || out=$(h -p "$profile" "${args[@]}")
+            if grep -qE ' (auth|config|live_[a-z_]+|model_mismatch)$' <<<"$out"; then
+                info "profile $profile: a fallback entry is not usable; run: hermes -p $profile fallback check --live"
+            fi
+        done
     fi
 fi
 

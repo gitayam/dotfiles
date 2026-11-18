@@ -798,6 +798,28 @@ gastown_fetch_checked() {
 }
 check "gastown: pinned sums complete; checksum mismatch installs nothing" gastown_fetch_checked
 
+echo "== Hermes fallback chains"
+fallback_chain() {
+  local h; h="$(mktemp -d)"; mkdir -p "$h/profiles/zf-developer" "$h/profiles/zf-reviewer"
+  local providers=$'providers:\n  local:\n    name: local\n  z1:\n    name: z1\n  z2:\n    name: z2\n'
+  printf '%smodel:\n  provider: local\n  default: gemma\nfallback_providers: []\n' "$providers" > "$h/config.yaml"
+  printf '%smodel:\n  provider: z1\n  default: glm-5.3-flash\n' "$providers" > "$h/profiles/zf-developer/config.yaml"
+  printf '%smodel:\n  provider: z1\n  default: glm-5.3-flash\nfallback_providers:\n  - provider: local\n    model: gemma\n' "$providers" > "$h/profiles/zf-reviewer/config.yaml"
+  local before; before=$(cat "$h/config.yaml")
+  local out; out=$(python3 -I "$REPO/shared/hermes/fallback_chain.py" "$h") && { echo "report passed with empty chains"; return 1; }
+  grep -q 'FAIL  profile default' <<<"$out" && grep -q 'PASS  profile zf-reviewer' <<<"$out" || { echo "$out"; return 1; }
+  grep -q 'WARN  profile zf-reviewer reviews with the same model as zf-developer' <<<"$out" || { echo "no reviewer warning: $out"; return 1; }
+  [ "$(cat "$h/config.yaml")" = "$before" ] || { echo "report changed a file"; return 1; }
+  python3 -I "$REPO/shared/hermes/fallback_chain.py" "$h" --apply >/dev/null || { echo "apply left an empty chain"; return 1; }
+  grep -q '  - provider: z1' "$h/config.yaml" && grep -q '  - provider: z2' "$h/config.yaml" || { echo "default chain not set"; return 1; }
+  ! grep -q '  - provider: z1' "$h/profiles/zf-developer/config.yaml" || { echo "developer chain includes its own primary"; return 1; }
+  grep -q '  - provider: z2' "$h/profiles/zf-developer/config.yaml" || { echo "developer chain not set"; return 1; }
+  grep -c '^  - provider:' "$h/profiles/zf-reviewer/config.yaml" | grep -qx 1 || { echo "existing chain was changed"; return 1; }
+  ls "$h"/config.yaml.backup.* >/dev/null 2>&1 || { echo "no backup"; return 1; }
+  rm -rf "$h"
+}
+check "hermes fallback chains: report only reports; apply fills empty chains without own primary; keeps existing" fallback_chain
+
 echo "== Setup dry runs"
 # Everything the setup asks comes first; after "Preferences saved" nothing may prompt
 no_prompts_after() { ! sed -n '/Preferences saved/,$p' "$1" | grep -qE '\(y/n\)|Enter your choice'; }
