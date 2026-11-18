@@ -13,9 +13,10 @@ It never joins a tailnet, changes DNS/routes or replaces a native client.
 | --- | --- |
 | Bonjour name + native SSH | Useful same-LAN fallback when DHCP changes; does not cross networks |
 | Native SSH over existing Tailscale | Stable across network changes within an authorized tailnet; cross-tailnet device sharing requires admin authorization and is a separate decision |
-| Restricted outbound reverse SSH to a bastion | Preferred candidate when tailnets must remain separate; requires an approved, always-on reachable endpoint and reconnect supervision |
+| Restricted outbound reverse SSH to a bastion | Candidate when tailnets must remain separate; requires an approved, always-on reachable endpoint and reconnect supervision |
 | Separate WireGuard tunnel | Can use narrow nonoverlapping routes, but adds endpoint, key, interface, DNS and NAT management; not automatically compatible with another VPN |
 | Cloudflare Access/cloudflared SSH | Outbound HTTPS transport can help where ordinary SSH is unavailable; WebSocket SSH has connection-lifetime limits and needs reconnection; client VPN alternatives need a separate coexistence review |
+| App-specific userspace overlay | Can avoid host routes and a second system VPN, but adds a separate node identity, access policy and service to maintain; it does not remove the need for an approved trust boundary |
 
 The standalone macOS Tailscale app supports ordinary SSH transport but is not a
 Tailscale SSH server. Keep macOS Remote Login and existing approved SSH keys.
@@ -27,6 +28,34 @@ Sources: [macOS variants](https://tailscale.com/docs/concepts/macos-variants),
 [device sharing](https://tailscale.com/docs/features/sharing),
 [WireGuard NAT keepalives](https://www.wireguard.com/quickstart/),
 [Cloudflare SSH routing](https://developers.cloudflare.com/tunnel/concepts/routing/).
+
+### Match the transport to the actual need
+
+For SSH-only administration, test an authenticated SSH channel before adding
+another routed VPN. Cloudflare's client-side `cloudflared access ssh` works
+without WARP. A connector on the laptop needs outbound TCP/UDP 7844; do not
+describe this as a port-443-only origin connection. Alternatively, an existing
+always-on server can host the connector and restricted SSH bastion, while the
+laptop uses the Access client over HTTPS for its outer connection. Neither
+design needs a default route or corporate DNS change. Access identity checks
+and native SSH authentication/host keys are separate layers.
+Sources: [client-side SSH](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/use-cases/ssh/ssh-cloudflared-authentication/),
+[connector firewall requirements](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/tunnel-with-firewall/).
+
+WireGuard is a reasonable management channel when a reachable UDP hub and
+privileged interface setup are available. Use a dedicated management segment,
+only required host routes (for example `/32` peers), and no `0.0.0.0/0`, DNS
+override, exit routing or corporate/Tailscale address ranges. Verify route
+selection before/after rather than assuming two VPNs coexist. An installed
+interface with no current handshake is not proof of a working public endpoint;
+UDP send success is not a handshake. Preserve unrelated peers and forwarding
+rules, especially an existing router or business VPN.
+
+An app-specific userspace node such as `tsnet` can expose one service without
+installing a host TUN interface. It still requires a separately authenticated
+node and approved access policy; keep its state independent and do not quietly
+enroll it in another tailnet after the operator rejected device sharing.
+Source: [tsnet server API](https://tailscale.com/docs/reference/tsnet-server-api).
 
 ## Bastion design to review
 
