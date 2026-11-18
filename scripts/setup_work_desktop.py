@@ -36,8 +36,8 @@ def desktop_config(existing):
     return cfg
 
 
-def worker_config(existing,routes,workspace,default,auxiliary_models=None):
-    cfg=hermes_config(existing,routes,workspace,default,company_roles=True,auxiliary_models=auxiliary_models)
+def worker_config(existing,routes,workspace,default,auxiliary_models=None,delegation_model=None):
+    cfg=hermes_config(existing,routes,workspace,default,company_roles=True,auxiliary_models=auxiliary_models,delegation_model=delegation_model)
     cfg['gateway']={**cfg.get('gateway',{}),'standalone':False}
     cfg.pop('webapp',None)
     cfg['agent'].setdefault('run_budget_seconds',900)
@@ -87,7 +87,7 @@ def main():
         config=target/'config.yaml'
         existing=yaml.safe_load(config.read_text()) if config.exists() else {}
         configured=worker_config(existing or {},cfg['routes'],workspace,
-            role_models.get(name,cfg['default_model']),auxiliary_models)
+            role_models.get(name,cfg['default_model']),auxiliary_models,cfg.get('delegation_model'))
         write(config,yaml.safe_dump(configured,sort_keys=False),args.apply)
         soul=target/'SOUL.md';text=soul.read_text() if soul.exists() else ''
         marker='<!-- work-desktop-role -->'

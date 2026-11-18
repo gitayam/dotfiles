@@ -38,14 +38,14 @@ same issue. Verify inference and a decision through the relay, not just its port
 On a work-only device the ordinary alias installer detects the private device
 configuration and refreshes just that setup. It does not install the personal
 provider catalog. `~/.config/ai-policy/device-models.conf` also restricts the
-ordinary `claude-z` / `zq` registry to z1/z2, including from stale shells.
+ordinary `claude-z` / `zq` registry to server1/server2, including from stale shells.
 Refresh directly with `--from-config ~/zenithflow/.workstation/config.json --apply`.
 
 | Launcher | Purpose |
 | --- | --- |
 | `hermes-zenithflow` | Company Hermes coordinator; local Gemma by default |
 | `zf-local` | Real Claude Code using the work Mac's local Gemma |
-| `zf-z1`, `zf-z2` | Real Claude Code on organization GLM / gpt-oss servers |
+| `zf-server1`, `zf-server2` | Real Claude Code on organization GLM / gpt-oss servers |
 | `zf-claude` | Real Claude Code using the company Enterprise login |
 | `zf-zq local\|1\|2 "prompt"` | Direct model request |
 | `zf-decide` | AnyJev decision JSON on stdin; reads its credential file |
@@ -77,7 +77,7 @@ zf-orca inspect LANE_ID
 ```
 
 Every model tier and subagent in a self-hosted Claude Code launch uses that
-endpoint's served model. z2 has a 49,152-token window: useful for bounded tasks,
+endpoint's served model. server2 has a 49,152-token window: useful for bounded tasks,
 below Hermes's 64K main-agent floor. Do not inflate its advertised context.
 
 For CTO-level issue and backlog research, use the installed `issue-strategy`
@@ -141,9 +141,9 @@ it requires a gateway restart. A live-work refusal means preserve the active
 turn/process and wait; do not force a restart. The installed login service and
 the currently running gateway are separate states: verify both after a safe
 restart. Native Desktop can use the existing gateway while that restart waits.
-Hermes uses an approved fallback chain between local Gemma and organization z1.
+Hermes uses an approved fallback chain between local Gemma and organization server1.
 The selected primary is omitted from its own chain; routes below the 64K main
-context floor are excluded. z2 remains available for bounded CLI work. Text
+context floor are excluded. server2 remains available for bounded CLI work. Text
 auxiliary and explicitly pinned delegated calls have their own approved chains;
 vision stays on the verified local multimodal route. Media tools using other cloud
 providers are excluded from this profile's toolsets. Memory/skill write approvals
@@ -156,7 +156,7 @@ worker concurrency.
 or YAML through `config set`, so a company-only device can be configured over SSH:
 
 ```sh
-hermes config set fallback_providers '[{"provider":"z1","model":"glm-5.3-flash"}]'
+hermes config set fallback_providers '[{"provider":"server1","model":"glm-5.3-flash"}]'
 hermes fallback check --live --json
 ```
 
@@ -173,7 +173,7 @@ than forcing a gateway restart to change their route.
 Native fallback handles provider failures, not Kanban `blocked` states, weak
 recommendations or acceptance failures. The installed `smart_model_routing` key
 has no runtime routing implementation; enabling it is not evidence of switching.
-Use bounded, verified escalation to z1 or real Enterprise Claude Code for work
+Use bounded, verified escalation to server1 or real Enterprise Claude Code for work
 that needs it. AnyJev advice does not replace that verification.
 
 On the company-only device, default board ownership is `zf-developer`, with `zf-planner` coordinating

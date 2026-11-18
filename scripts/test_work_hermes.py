@@ -2,6 +2,9 @@
 import importlib.machinery
 import importlib.util
 import os
+import sys
+import io
+from contextlib import redirect_stdout
 import json
 import subprocess
 from pathlib import Path
@@ -22,6 +25,36 @@ CFG=dict(routes=ROUTES,scope='workspace',workspace='/tmp/company',enterprise_org
 
 
 class WorkRoutes(unittest.TestCase):
+    def test_server_names_preserve_legacy_routes_and_explicit_child_limits(self):
+        cfg=hermes_config({'delegation':{'max_iterations':7,'max_concurrent_children':2}},ROUTES,Path('/tmp/company'))
+        for old,new in [('z1','server1'),('z2','server2')]:
+            self.assertEqual(cfg['providers'][old]['base_url'],cfg['providers'][new]['base_url'])
+            self.assertEqual(cfg['providers'][old]['models'],cfg['providers'][new]['models'])
+        self.assertEqual(cfg['delegation']['max_iterations'],7)
+        self.assertEqual(cfg['delegation']['max_concurrent_children'],2)
+        self.assertEqual(cfg['delegation']['oneshot_max_children'],6)
+        self.assertEqual(cfg['delegation']['max_spawn_depth'],1)
+        self.assertTrue(cfg['delegation']['worktree_isolation'])
+        self.assertNotIn('subagent_auto_approve',cfg['delegation'])
+        local=hermes_config({},ROUTES,Path('/tmp/company'),delegation_model='local')
+        self.assertEqual(local['delegation']['provider'],'local')
+        for bad in ['2','unknown',[]]:
+            with self.assertRaises(ValueError):model_policy(dict(routes=ROUTES,delegation_model=bad))
+
+    def test_new_and_legacy_cli_aliases_pin_every_claude_model_tier(self):
+        cfg=dict(CFG,claude='/approved/claude')
+        for alias,key in [('zf-server1','1'),('zf-z1','1'),('zf-server2','2'),('zf-z2','2')]:
+            with patch.object(ai,'config',return_value=cfg),patch.object(sys,'argv',[alias]),patch.object(ai.os,'execve',side_effect=RuntimeError('captured')) as run:
+                with self.assertRaisesRegex(RuntimeError,'captured'):ai.main()
+            env=run.call_args.args[2]
+            self.assertEqual(env['ANTHROPIC_BASE_URL'],ROUTES[key]['url'].removesuffix('/v1'))
+            self.assertEqual(env['CLAUDE_CODE_SUBAGENT_MODEL'],ROUTES[key]['model'])
+            self.assertIsNone(ai.check_claude(cfg,env))
+        for route,key in [('server1','1'),('server2','2'),('1','1'),('2','2')]:
+            with patch.object(ai,'config',return_value=cfg),patch.object(sys,'argv',['zf-zq',route,'synthetic']),patch.object(ai,'request',return_value={'choices':[{'message':{'content':'ok'}}]}) as req,redirect_stdout(io.StringIO()):
+                self.assertEqual(ai.main(),0)
+            self.assertEqual(req.call_args.args[1]['model'],ROUTES[key]['model'])
+
     def test_existing_tailscale_cli_is_opt_in_and_preserves_other_installations(self):
         with tempfile.TemporaryDirectory() as tmp:
             h=Path(tmp);app=h/'Tailscale';app.write_text('fixture')
@@ -44,14 +77,14 @@ class WorkRoutes(unittest.TestCase):
                 'auxiliary_models':{'title_generation':'local','review':'1'},'routes':ROUTES}
         roles,aux=model_policy(policy)
         cfg=worker_config({'agent':{'max_turns':24}},ROUTES,Path('/tmp/company'),roles['zf-planner'],aux)
-        self.assertEqual(cfg['model']['provider'],'z1')
+        self.assertEqual(cfg['model']['provider'],'server1')
         self.assertEqual(cfg['agent']['max_turns'],24)
         self.assertEqual(cfg['auxiliary']['title_generation']['provider'],'local')
-        self.assertEqual(cfg['auxiliary']['title_generation']['fallback_chain'],[{'provider':'z1','model':ROUTES['1']['model']}])
-        self.assertEqual(cfg['auxiliary']['review']['provider'],'z1')
+        self.assertEqual(cfg['auxiliary']['title_generation']['fallback_chain'],[{'provider':'server1','model':ROUTES['1']['model']}])
+        self.assertEqual(cfg['auxiliary']['review']['provider'],'server1')
         self.assertEqual(cfg['auxiliary']['review']['fallback_chain'],[{'provider':'local','model':ROUTES['local']['model']}])
         self.assertEqual(cfg['auxiliary']['vision']['fallback_chain'],[])
-        self.assertEqual(cfg['delegation']['provider'],'z1')
+        self.assertEqual(cfg['delegation']['provider'],'server1')
 
     def test_task_policy_rejects_short_context_unverified_vision_and_typos(self):
         for policy in [{'role_models':{'zf-planner':'2'}},
@@ -70,7 +103,7 @@ class WorkRoutes(unittest.TestCase):
         self.assertNotIn('code_execution',cfg['platform_toolsets']['cli'])
         self.assertTrue({'terminal','file','kanban','skills'}.issubset(cfg['platform_toolsets']['cli']))
         self.assertIn('code_execution',hermes_config({},ROUTES,Path('/tmp/company'))['platform_toolsets']['cli'])
-        self.assertEqual(cfg['fallback_providers'],[{'provider':'z1','model':'glm-5.3-flash'}])
+        self.assertEqual(cfg['fallback_providers'],[{'provider':'server1','model':'glm-5.3-flash'}])
         self.assertEqual(cfg['agent']['run_budget_seconds'],900)
         self.assertEqual(cfg['agent']['max_turns'],16)
         custom=worker_config({'agent':{'run_budget_seconds':300,'max_turns':8}},ROUTES,Path('/tmp/company'),'local')
@@ -228,11 +261,11 @@ class WorkRoutes(unittest.TestCase):
             'fallback_providers':[{'provider':'openrouter'}],
             'approvals':{'mode':'off','deny':['sentinel']}},ROUTES,Path('/tmp/company'),company_roles=True)
         self.assertEqual(cfg['model']['provider'],'local')
-        self.assertEqual(cfg['delegation']['provider'],'local')
-        expected=[{'provider':'z1','model':'glm-5.3-flash'}]
+        self.assertEqual(cfg['delegation']['provider'],'server1')
+        expected=[{'provider':'server1','model':'glm-5.3-flash'}]
         self.assertEqual(cfg['fallback_providers'],expected)
         self.assertNotIn('fallback_model',cfg)
-        self.assertEqual(cfg['delegation']['fallback_providers'],expected)
+        self.assertEqual(cfg['delegation']['fallback_providers'],[{'provider':'local','model':ROUTES['local']['model']}])
         for slot in SLOTS:
             self.assertEqual(cfg['auxiliary'][slot]['base_url'],ROUTES['local']['url'])
             self.assertEqual(cfg['auxiliary'][slot]['fallback_chain'],[] if slot=='vision' else expected)
