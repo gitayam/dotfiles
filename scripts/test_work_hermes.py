@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 from setup_work_hermes import hermes_config, SLOTS, write, paperclip_context, repair_paperclip_shim, company_shell_text
-from setup_work_desktop import desktop_config, ui_readiness
+from setup_work_desktop import desktop_config, ui_readiness, worker_config
 
 loader=importlib.machinery.SourceFileLoader('work_ai',str(Path(__file__).parents[1]/'shared/bin/work-ai'))
 spec=importlib.util.spec_from_loader(loader.name,loader)
@@ -22,6 +22,15 @@ CFG=dict(routes=ROUTES,scope='workspace',workspace='/tmp/company',enterprise_org
 
 
 class WorkRoutes(unittest.TestCase):
+    def test_unattended_roles_keep_approval_policy_and_usable_tools(self):
+        policy={'mode':'off','single_query_mode':'ask','deny':['sentinel']}
+        cfg=worker_config({'approvals':policy},ROUTES,Path('/tmp/company'),'local')
+        self.assertEqual(cfg['approvals'],policy)
+        self.assertNotIn('code_execution',cfg['platform_toolsets']['cli'])
+        self.assertTrue({'terminal','file','kanban','skills'}.issubset(cfg['platform_toolsets']['cli']))
+        self.assertIn('code_execution',hermes_config({},ROUTES,Path('/tmp/company'))['platform_toolsets']['cli'])
+        self.assertEqual(cfg['fallback_providers'],[{'provider':'z1','model':'glm-5.3-flash'}])
+
     def test_company_shell_selects_managed_cli_after_brew_and_preserves_user_text(self):
         with tempfile.TemporaryDirectory() as tmp:
             home=Path(tmp);managed=home/'.local/bin';managed.mkdir(parents=True)

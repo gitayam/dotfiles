@@ -36,6 +36,16 @@ def desktop_config(existing):
     return cfg
 
 
+def worker_config(existing,routes,workspace,default):
+    cfg=hermes_config(existing,routes,workspace,default,company_roles=True)
+    cfg['gateway']={**cfg.get('gateway',{}),'standalone':False}
+    cfg.pop('webapp',None)
+    # Native -q policy requires a separate approval for arbitrary Python cells.
+    # Do not advertise that unavailable tool to unattended workers or widen policy.
+    cfg['platform_toolsets']['cli']=[t for t in cfg['platform_toolsets']['cli'] if t!='code_execution']
+    return cfg
+
+
 def ui_readiness(previous, confirmed=False):
     """UI preferences are renderer-local; never infer them from backend toolsets."""
     return {'desktop_plugins': 'user-confirmed' if confirmed else previous.get('desktop_plugins','action-required'),
@@ -73,9 +83,7 @@ def main():
             command(cfg['hermes'],['profile','create',name,'--no-credentials','--no-alias','--description',role],args.apply,env)
         config=target/'config.yaml'
         existing=yaml.safe_load(config.read_text()) if config.exists() else {}
-        configured=hermes_config(existing or {},cfg['routes'],workspace,cfg['default_model'],company_roles=True)
-        configured['gateway']={**configured.get('gateway',{}),'standalone':False}
-        configured.pop('webapp',None)  # the host gateway owns the browser listener
+        configured=worker_config(existing or {},cfg['routes'],workspace,cfg['default_model'])
         write(config,yaml.safe_dump(configured,sort_keys=False),args.apply)
         soul=target/'SOUL.md';text=soul.read_text() if soul.exists() else ''
         marker='<!-- work-desktop-role -->'
@@ -86,6 +94,9 @@ Claude Code. AnyJev advises; Orca's company lane is read-only; Paperclip is a
 separate company issue board. Reconcile existing issue/run IDs before retrying.
 Preserve dirty work, independently verify artifacts and report actual checks.
 Never publish, merge, deploy or send messages without task-specific authority.
+Unattended roles use ordinary file/terminal tools under the current policy;
+execute_code is not exposed because single-query mode requires separate approval.
+Never wrap a denied operation in another tool to evade its guard.
 '''
         write(soul,text,args.apply)
         write(target/'skills/autonomous-ai-agents/company-coding-stack/SKILL.md',skill,args.apply)
