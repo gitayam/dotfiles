@@ -49,6 +49,7 @@ class WorkRoutes(unittest.TestCase):
             env=run.call_args.args[2]
             self.assertEqual(env['ANTHROPIC_BASE_URL'],ROUTES[key]['url'].removesuffix('/v1'))
             self.assertEqual(env['CLAUDE_CODE_SUBAGENT_MODEL'],ROUTES[key]['model'])
+            self.assertEqual(env['CLAUDE_CODE_SUBAGENT_MODEL_FORCE'],'1')
             self.assertIsNone(ai.check_claude(cfg,env))
         for route,key in [('server1','1'),('server2','2'),('1','1'),('2','2')]:
             with patch.object(ai,'config',return_value=cfg),patch.object(sys,'argv',['zf-zq',route,'synthetic']),patch.object(ai,'request',return_value={'choices':[{'message':{'content':'ok'}}]}) as req,redirect_stdout(io.StringIO()):

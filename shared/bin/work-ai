@@ -94,6 +94,7 @@ def model_env(cfg, key, env):
     for tier in ['OPUS', 'SONNET', 'HAIKU']:
         env['ANTHROPIC_DEFAULT_'+tier+'_MODEL'] = model
     env['CLAUDE_CODE_SUBAGENT_MODEL'] = model
+    env['CLAUDE_CODE_SUBAGENT_MODEL_FORCE'] = '1'
     if route['context'] < 100000:
         env['CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT'] = '1'
         env['CLAUDE_CODE_MAX_OUTPUT_TOKENS'] = str(route['context']//6)

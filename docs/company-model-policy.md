@@ -145,7 +145,8 @@ model; its name does not imply Enterprise Claude inference. Paperclip/Orca's
 current adapters use that CLI, while native Hermes children do not require it.
 
 Delegation defaults to Server1's qualified full-context route with local fallback.
-Set private `delegation_model: local` to keep children local. Server2's served
+Set private `delegation_model: local` to select local as primary with approved
+server1 fallback. Server2's served
 49,152-token route remains outside native Hermes main/child routing. Child
 policy defaults are 3 concurrent, 6 total for a one-shot, one spawn level, 12
 iterations and 300 seconds. Explicit native delegation limits survive refresh;
@@ -156,3 +157,11 @@ The existing Kanban 2-total/1-per-profile writer limits are independent of child
 delegation and remain. Queued `dir` jobs may share a working directory: additional
 writers need isolated worktrees and explicit owned paths before increasing that
 limit. Prefer bounded independent research/review fan-out, then accept artifacts.
+
+For supported Claude Code versions (2.1.257+), the self-hosted launcher sets both
+`CLAUDE_CODE_SUBAGENT_MODEL` and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`. The model
+variable alone ranks below per-agent definitions and does not change every
+built-in agent. The force flag keeps self-hosted child selection on the chosen
+approved model. Enterprise launches retain their account's own model selection;
+inherited personal route/force variables are scrubbed.
+Source: [Claude Code subagent model precedence](https://code.claude.com/docs/en/sub-agents#run-every-subagent-on-one-model).
