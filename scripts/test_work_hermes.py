@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from setup_work_hermes import hermes_config, SLOTS, write, paperclip_context, repair_paperclip_shim, company_shell_text, model_policy
+from setup_work_hermes import hermes_config, SLOTS, write, paperclip_context, repair_paperclip_shim, company_shell_text, model_policy, existing_tailscale_cli
 from setup_work_desktop import desktop_config, ui_readiness, worker_config
 
 loader=importlib.machinery.SourceFileLoader('work_ai',str(Path(__file__).parents[1]/'shared/bin/work-ai'))
@@ -22,6 +22,23 @@ CFG=dict(routes=ROUTES,scope='workspace',workspace='/tmp/company',enterprise_org
 
 
 class WorkRoutes(unittest.TestCase):
+    def test_existing_tailscale_cli_is_opt_in_and_preserves_other_installations(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            h=Path(tmp);app=h/'Tailscale';app.write_text('fixture')
+            path=h/'.local/bin/tailscale'
+            existing_tailscale_cli(h,False,app)
+            self.assertFalse(path.exists())
+            existing_tailscale_cli(h,True,app)
+            self.assertEqual(path.resolve(),app.resolve())
+            existing_tailscale_cli(h,True,app)
+            self.assertFalse(list(path.parent.glob('*.backup.*')))
+            path.unlink();path.write_text('unmanaged CLI')
+            existing_tailscale_cli(h,True,app)
+            self.assertEqual(path.read_text(),'unmanaged CLI')
+            path.unlink();path.symlink_to(h/'missing-executable')
+            existing_tailscale_cli(h,True,app)
+            self.assertEqual(path.readlink(),h/'missing-executable')
+
     def test_task_assignments_keep_independent_fallbacks_and_worker_budgets(self):
         policy={'role_models':{'zf-planner':'1'},
                 'auxiliary_models':{'title_generation':'local','review':'1'},'routes':ROUTES}

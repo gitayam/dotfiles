@@ -161,6 +161,13 @@ def repair_paperclip_shim(path, stable_node, apply):
     if fixed!=text:write(path,fixed,apply,stat.S_IMODE(path.stat().st_mode))
 
 
+def existing_tailscale_cli(home, apply, executable=Path('/Applications/Tailscale.app/Contents/MacOS/Tailscale')):
+    """Expose an existing native app's CLI without replacing another installation."""
+    path=home/'.local/bin/tailscale'
+    if executable.is_file() and not path.exists() and not path.is_symlink():
+        link(path,executable,apply)
+
+
 def main():
     import yaml
     p=argparse.ArgumentParser(description=__doc__)
@@ -226,6 +233,7 @@ def main():
     else:
         print('INFO company Paperclip metadata not provisioned; zf-paperclip will refuse API commands.')
     if a.scope=='device':
+        existing_tailscale_cli(home,a.apply)
         shell=home/'.zshrc'
         if shell.is_symlink():
             print('ACTION REQUIRED: put ~/.local/bin first after all PATH initialization in the source of .zshrc; symlink preserved.')
@@ -324,7 +332,8 @@ checks separately; do not turn a denied check into a claim that software is
 missing. Distinguish package installation channel from Enterprise account auth.
 Git commits, review, CI and deployment remain separate authorized steps; neither
 board nor lane completion grants permission to publish. Paperclip must use the
-real Claude Code legacy runner with approved model/tier environment. There is no
+real Claude Code CLI engine (adapterConfig.engine: cli) with approved model/tier
+environment; do not rely on an unset engine's current default. There is no
 community broker/ship service connected to this workstation.
 AnyJev is advisory; keep uncertain work visible for review.
 Hermes automatically falls back between eligible local Gemma and z1 routes on
@@ -351,6 +360,12 @@ API probes with native adapter acceptance or HTTP 200 with applied reasoning
 controls. Effort differs by model/template. Real zf-claude accepts --effort for a
 session; inherited CLAUDE_CODE_* effort variables are scrubbed by the wrapper.
 Keep AnyJev advice separate from deterministic context/modality/policy gates.
+For roaming SSH read WORKSTATION.md and dotfiles docs/company-connectivity.md.
+An existing Tailscale app may already belong to the company tailnet; check it
+before installing another client or changing membership/routes. Native macOS
+Remote Login over an approved transport preserves the existing SSH identity.
+Bonjour names help only on the same LAN. A restricted outbound SSH bastion can
+keep tailnets separate; it needs a verified endpoint and end-to-end host keys.
 '''
     write(hh/'skills/autonomous-ai-agents/company-coding-stack/SKILL.md',skill,a.apply)
     install_issue_strategy(hh/'skills/management/issue-strategy',a.apply,'hermes')

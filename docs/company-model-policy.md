@@ -77,7 +77,8 @@ routes from the private config. It never executes returned tool calls or code.
 Its JSON, unknown-preservation, decision, planted-defect and tool-argument
 oracles run correct/incorrect controls first. Receipts include requested/served
 model, context, fixture/harness hashes, wall time, numeric usage, outcomes and
-requested controls. Reasoning bodies are excluded. This small direct-API smoke
+requested controls. Dedicated reasoning fields are excluded; a malformed server
+can mix reasoning into answer content, so keep receipts private. This direct-API smoke
 test is not a general model ranking, native-agent qualification or calibration
 of business judgment. It does not measure first-token latency or incremental
 subscription expense.
@@ -103,6 +104,21 @@ actual model, permissions, retries, context overhead and operator corrections.
 Reconcile existing job IDs before retrying.
 
 ## Integrations
+
+Qualify prompt and scorer agreement before ranking a route. For example, a
+scorer expecting only evidence IDs must explicitly request an ID-only array;
+expanded citations are not evidence that the underlying decision was wrong.
+Retain the old cohort as underspecified and rerun under a new fixture hash.
+Thinking-off controls can change formatting or judgment, even when latency
+improves. Test each serving template and fallback destination; a local helper's
+extra body may be carried into a different provider during failover. Keep
+reasoning enabled for consequential decisions unless that task is qualified.
+
+Paperclip's installed adapter schema is authoritative for runner selection.
+Where an unset engine defaults to ACP, set `adapterConfig.engine: cli` explicitly
+for the accepted native CLI workflow. Use its supported `effort` field for
+Enterprise models and verify a new run's actual CLI/model; preserve environment,
+instructions, heartbeats and permission policy when patching configuration.
 
 | Component | Verify before changing assignments |
 | --- | --- |

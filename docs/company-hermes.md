@@ -2,6 +2,8 @@
 
 For durable per-role/auxiliary assignments and reproducible model/effort checks,
 see [company model policy](company-model-policy.md).
+For roaming SSH, separate tailnets and a restricted bastion design, see
+[company connectivity](company-connectivity.md).
 
 Company repositories live under `~/zenithflow`; personal repositories remain in
 `~/Git`. The workspace root is intentionally not a Git repository. Keep device
