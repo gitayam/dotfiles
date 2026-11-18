@@ -72,7 +72,7 @@ def install_issue_strategy(target,apply,platform='generic'):
             write(target/relative,content,apply,0o700 if relative.parts[0]=='scripts' else 0o600)
 
 
-def hermes_config(existing, routes, workspace, default='local'):
+def hermes_config(existing, routes, workspace, default='local', company_roles=False):
     cfg = dict(existing)
     provider = lambda key: {'1':'z1','2':'z2'}.get(key,key)
     if default not in {'local','1'} or routes[default]['context']<65536:
@@ -102,8 +102,9 @@ def hermes_config(existing, routes, workspace, default='local'):
         cfg.setdefault(k,{})['write_approval'] = True
     cfg.setdefault('terminal',{}).update({'backend':'local','cwd':str(workspace)})
     cfg.setdefault('kanban',{}).update({'dispatch_interval_seconds':10,
-        'auto_decompose':True,'max_in_progress':2,'max_in_progress_per_profile':1,
-        'default_assignee':'zf-developer','orchestrator_profile':'zf-planner'})
+        'auto_decompose':True,'max_in_progress':2,'max_in_progress_per_profile':1})
+    if company_roles:
+        cfg['kanban'].update({'default_assignee':'zf-developer','orchestrator_profile':'zf-planner'})
     cfg.setdefault('agent',{}).update({'api_max_retries':1,'auto_recovery_cycles':1,
         'tool_use_enforcement':True,'intent_ack_continuation':True})
     cfg.setdefault('delegation',{}).update({'provider':provider(default),'model':routes[default]['model'],
@@ -230,7 +231,8 @@ def main():
             dst=directory/name; target=state/'bin/work-ai'
             link(dst,target,a.apply)
     hp=hh/'config.yaml'; existing=yaml.safe_load(hp.read_text()) if hp.exists() else {}
-    write(hp,yaml.safe_dump(hermes_config(existing or {},routes,w,a.default_model),sort_keys=False),a.apply)
+    write(hp,yaml.safe_dump(hermes_config(existing or {},routes,w,a.default_model,
+        company_roles=a.scope=='device'),sort_keys=False),a.apply)
     # Scope the hook on the personal Mac; the work Mac permits approved routes in every directory.
     hook={'type':'command','command':str(state/'bin/work-ai')+' hook'}
     for cd in {home/'.claude',claude_dir}:

@@ -73,7 +73,7 @@ def main():
             command(cfg['hermes'],['profile','create',name,'--no-credentials','--no-alias','--description',role],args.apply,env)
         config=target/'config.yaml'
         existing=yaml.safe_load(config.read_text()) if config.exists() else {}
-        configured=hermes_config(existing or {},cfg['routes'],workspace,cfg['default_model'])
+        configured=hermes_config(existing or {},cfg['routes'],workspace,cfg['default_model'],company_roles=True)
         configured['gateway']={**configured.get('gateway',{}),'standalone':False}
         configured.pop('webapp',None)  # the host gateway owns the browser listener
         write(config,yaml.safe_dump(configured,sort_keys=False),args.apply)

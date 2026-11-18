@@ -171,7 +171,7 @@ class WorkRoutes(unittest.TestCase):
     def test_main_auxiliary_and_delegation_fallback_stays_on_approved_routes(self):
         cfg=hermes_config({'delegation':{'provider':'llamacpp','model':'qwen'},
             'fallback_providers':[{'provider':'openrouter'}],
-            'approvals':{'mode':'off','deny':['sentinel']}},ROUTES,Path('/tmp/company'))
+            'approvals':{'mode':'off','deny':['sentinel']}},ROUTES,Path('/tmp/company'),company_roles=True)
         self.assertEqual(cfg['model']['provider'],'local')
         self.assertEqual(cfg['delegation']['provider'],'local')
         expected=[{'provider':'z1','model':'glm-5.3-flash'}]
@@ -198,6 +198,11 @@ class WorkRoutes(unittest.TestCase):
         routes={key:dict(value) for key,value in ROUTES.items()};routes['1']['context']=49152
         cfg=hermes_config({},routes,Path('/tmp/company'))
         self.assertEqual(cfg['fallback_providers'],[])
+
+    def test_personal_workspace_does_not_invent_work_mac_assignees(self):
+        cfg=hermes_config({},ROUTES,Path('/tmp/company'))
+        self.assertNotIn('default_assignee',cfg['kanban'])
+        self.assertNotIn('orchestrator_profile',cfg['kanban'])
 
     def test_dry_run_and_backup_preserve_user_files(self):
         with tempfile.TemporaryDirectory() as tmp:
