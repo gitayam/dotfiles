@@ -82,6 +82,7 @@ fi
 check "launchd plists are valid XML" python3 -c "import plistlib,sys; [plistlib.load(open(f,'rb')) for f in sys.argv[1:]]" "$REPO"/shared/launchd/*.plist
 check "git-inventory compiles" python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$REPO/shared/bin/git-inventory"
 check "company Hermes routes, isolation and backup behavior" python3 -B -m unittest discover -s "$REPO/scripts" -p test_work_hermes.py
+check "company model probe oracles and endpoint boundaries" python3 -B -m unittest discover -s "$REPO/scripts" -p test_work_model_probe.py
 check "issue strategy collection coverage and portable installation" python3 -B -m unittest discover -s "$REPO/scripts" -p test_issue_strategy.py
 check "storage-cleanup compiles" python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$REPO/shared/bin/storage-cleanup"
 if command -v node >/dev/null; then
