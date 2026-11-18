@@ -820,6 +820,56 @@ fallback_chain() {
 }
 check "hermes fallback chains: report only reports; apply fills empty chains without own primary; keeps existing" fallback_chain
 
+echo "== Hermes board doctor"
+board_doctor() {
+  local d; d="$(mktemp -d)"; mkdir -p "$d/bin" "$d/home"
+  printf 'providers:\n  z1:\n    name: z1\n    model: glm-5.3-flash\n  z2:\n    name: z2\n    model: openai/gpt-oss-120b\nmodel:\n  provider: z1\n' > "$d/home/config.yaml"
+  cat > "$d/bin/hermes" <<'FAKE'
+#!/usr/bin/env python3
+import json, os, sys
+log = os.environ['FAKE_LOG']; open(log, 'a').write(' '.join(sys.argv[1:]) + '\n')
+args = [a for a in sys.argv[1:] if a not in ('kanban',)]
+if args[:2] == ['--board', 'zf']: args = args[2:]
+cmd = args[0]
+out = {
+ 'assignees': [{'name': 'default', 'on_disk': True}, {'name': 'zf-developer', 'on_disk': True},
+               {'name': 'zf-planner', 'on_disk': True}, {'name': 'developer', 'on_disk': False},
+               {'name': 'zf-reviewer', 'on_disk': True}, {'name': 'zf-reviewer-2', 'on_disk': True}],
+ 'diagnostics': [
+   {'task_id': 't_orphan', 'title': 'Build it', 'status': 'ready', 'assignee': 'developer',
+    'diagnostics': [{'kind': 'stranded_in_ready', 'title': 'Ready for 47m with no worker'}]},
+   {'task_id': 't_review', 'title': 'Review it', 'status': 'ready', 'assignee': 'reviewer',
+    'diagnostics': [{'kind': 'stranded_in_ready', 'title': 'Ready for 40m with no worker'}]},
+   {'task_id': 't_asked', 'title': 'Which page?', 'status': 'blocked', 'assignee': 'zf-planner',
+    'diagnostics': [{'kind': 'stuck_in_blocked', 'title': 'Blocked for 2h'}]}],
+ 'list': [{'id': 't_tokens', 'title': 'Hosted Demo</div>`}<tool_call|><|channel>thought', 'status': 'ready', 'assignee': 'zf-developer'},
+          {'id': 't_fresh', 'title': 'Fresh block', 'status': 'blocked', 'assignee': 'zf-developer'}],
+ 'show': {'events': [{'kind': 'blocked', 'created_at': 100}],
+          'comments': [{'author': 'zf-planner', 'body': 'waiting', 'created_at': 110},
+                       {'author': 'desktop', 'body': 'ok try it with z2 model', 'created_at': 120}]},
+}.get(cmd)
+print(json.dumps(out) if out is not None else 'ok')
+FAKE
+  chmod +x "$d/bin/hermes"
+  local out
+  out=$(FAKE_LOG="$d/log" HERMES_HOME="$d/home" PATH="$d/bin:$PATH" python3 -I "$REPO/shared/bin/hermes-board-doctor" --board zf) && { echo "report exited 0 with work left"; return 1; }
+  grep -q 'would fix: t_orphan: developer -> zf-developer' <<<"$out" || { echo "$out"; return 1; }
+  grep -q 'needs a person: t_review: assigned to "reviewer"' <<<"$out" || { echo "ambiguous role not left to a person: $out"; return 1; }
+  grep -q 'would fix: t_asked: unblocked (answered by desktop) on z2/openai/gpt-oss-120b as asked' <<<"$out" || { echo "$out"; return 1; }
+  grep -q 'would fix: t_tokens: title cleaned ("Hosted Demo")' <<<"$out" || { echo "$out"; return 1; }
+  grep -q 'would fix: t_fresh: unblocked (answered by desktop)' <<<"$out" || { echo "fresh blocked card not checked: $out"; return 1; }
+  ! grep -qE '^kanban --board zf (reassign|unblock|edit|comment)' "$d/log" || { echo "report mode changed the board"; return 1; }
+  : > "$d/log"
+  FAKE_LOG="$d/log" HERMES_HOME="$d/home" PATH="$d/bin:$PATH" python3 -I "$REPO/shared/bin/hermes-board-doctor" --board zf --apply >/dev/null
+  grep -q '^kanban --board zf reassign t_orphan zf-developer' "$d/log" || { echo "no reassign"; cat "$d/log"; return 1; }
+  grep -q '^kanban --board zf unblock t_asked' "$d/log" || { echo "no unblock"; return 1; }
+  grep -q '^kanban --board zf set-model t_asked openai/gpt-oss-120b --provider z2' "$d/log" || { echo "model not pinned"; cat "$d/log"; return 1; }
+  grep -q '^kanban --board zf edit t_tokens --title Hosted Demo' "$d/log" || { echo "title not cleaned"; return 1; }
+  ! grep -q 'reassign t_review' "$d/log" || { echo "guessed an ambiguous role"; return 1; }
+  rm -rf "$d"
+}
+check "hermes board doctor: report changes nothing; apply reassigns orphans, cleans titles, unblocks answers; ambiguous roles go to a person" board_doctor
+
 echo "== Setup dry runs"
 # Everything the setup asks comes first; after "Preferences saved" nothing may prompt
 no_prompts_after() { ! sed -n '/Preferences saved/,$p' "$1" | grep -qE '\(y/n\)|Enter your choice'; }
