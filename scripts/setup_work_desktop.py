@@ -40,6 +40,8 @@ def worker_config(existing,routes,workspace,default):
     cfg=hermes_config(existing,routes,workspace,default,company_roles=True)
     cfg['gateway']={**cfg.get('gateway',{}),'standalone':False}
     cfg.pop('webapp',None)
+    cfg['agent'].setdefault('run_budget_seconds',900)
+    cfg['agent'].setdefault('max_turns',16)
     # Native -q policy requires a separate approval for arbitrary Python cells.
     # Do not advertise that unavailable tool to unattended workers or widen policy.
     cfg['platform_toolsets']['cli']=[t for t in cfg['platform_toolsets']['cli'] if t!='code_execution']
