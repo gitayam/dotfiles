@@ -156,3 +156,11 @@ The existing Kanban 2-total/1-per-profile writer limits are independent of child
 delegation and remain. Queued `dir` jobs may share a working directory: additional
 writers need isolated worktrees and explicit owned paths before increasing that
 limit. Prefer bounded independent research/review fan-out, then accept artifacts.
+
+For supported Claude Code versions (2.1.257+), the self-hosted launcher sets both
+`CLAUDE_CODE_SUBAGENT_MODEL` and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`. The model
+variable alone ranks below per-agent definitions and does not change every
+built-in agent. The force flag keeps self-hosted child selection on the chosen
+approved model. Enterprise launches retain their account's own model selection;
+inherited personal route/force variables are scrubbed.
+Source: [Claude Code subagent model precedence](https://code.claude.com/docs/en/sub-agents#run-every-subagent-on-one-model).
