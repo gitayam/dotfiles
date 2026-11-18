@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+"""hermes-board-doctor: act on what `hermes kanban diagnostics` only reports.
+
+  hermes-board-doctor [--board SLUG]                     report only; changes nothing
+  hermes-board-doctor [--board SLUG] --apply             apply the safe fixes below
+  hermes-board-doctor ... --notify TARGET                also tell a person (hermes send -t TARGET)
+
+Fixes, each once per card and recorded as a card comment:
+  - a card assigned to a profile that does not exist sits in `ready` forever (stranded_in_ready,
+    skipped_nonspawnable). When its name maps to exactly one real profile by role (develop/
+    frontend/backend/engineer/coder -> the *develop* or *coder* profile; review; plan; research),
+    reassign it there. A ZenithFlow board had 24 such cards ("developer", "frontend-developer")
+    created by a planner and the default agent on 2026-11-17.
+  - chat-template tokens leaked into a title (`<|channel|>`, `<tool_call|>`) are stripped.
+  - a needs_input card a person answered (a comment by someone other than the board's own
+    profiles, or one starting "Owner:") after the block is unblocked. When the answer names a
+    configured provider or its model ("ok try it with z2 model"), the card is pinned to it first
+    (kanban set-model): the worker can't switch its own model.
+Everything else Hermes diagnoses is reported, with its suggested action. --notify sends each card
+that still needs a person once (state in $HERMES_HOME/board-doctor-notified.json).
+Exit 1 when something still needs a person.
+"""
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+AUTHOR = 'board-doctor'
+TOKENS = re.compile(r'<\|[a-z_]+\|>|<[a-z_]+\|>|<\|[a-z_]+>')
+ROLES = [(re.compile(r'review'), re.compile(r'review')),
+         (re.compile(r'plan'), re.compile(r'plan')),
+         (re.compile(r'research'), re.compile(r'research')),
+         (re.compile(r'develop|engineer|coder|frontend|backend|\bdev\b'), re.compile(r'develop|coder'))]
+
+
+def hermes(args, board=None):
+    argv = ['hermes', 'kanban'] + (['--board', board] if board else []) + args
+    result = subprocess.run(argv, capture_output=True, text=True, timeout=120, check=False)
+    if result.returncode:
+        raise RuntimeError(f'{" ".join(argv[:4])} exited {result.returncode}')
+    return result.stdout
+
+
+def as_json(text):
+    """Parse the JSON in a hermes reply, skipping any banner lines before it."""
+    start = min((i for i in (text.find('['), text.find('{')) if i >= 0), default=-1)
+    if start < 0:
+        raise ValueError('no JSON in reply')
+    return json.loads(text[start:])
+
+
+def role_target(name, profiles):
+    """The one real profile whose role matches an unknown assignee's name, else None."""
+    for wanted, owner in ROLES:
+        if wanted.search(name.lower()):
+            matches = [p for p in profiles if owner.search(p.lower())]
+            return matches[0] if len(matches) == 1 else None
+    return None
+
+
+def answered(detail, since, agents):
+    """(author, text) of the first comment from a person after `since`, else None."""
+    for comment in sorted(detail.get('comments') or [], key=lambda c: int(c.get('created_at') or 0)):
+        author, body = comment.get('author') or '', (comment.get('body') or '').lstrip()
+        if int(comment.get('created_at') or 0) > since and (author not in agents or body.startswith('Owner:')):
+            return author, body
+    return None
+
+
+def configured_models():
+    """{provider id: model} from the providers section of $HERMES_HOME/config.yaml."""
+    path = Path(os.environ.get('HERMES_HOME', Path.home() / '.hermes')) / 'config.yaml'
+    text = path.read_text() if path.is_file() else ''
+    section = re.search(r'(?ms)^providers:\n(.*?)(?=^\S)', text + '\nEND')
+    found = {}
+    for name, body in re.findall(r'(?m)^  ([A-Za-z0-9_.-]+):\n((?:    .*\n)*)', section.group(1) if section else ''):
+        model = re.search(r'(?m)^    model: (\S+)', body)
+        if model:
+            found[name] = model.group(1)
+    return found
+
+
+def requested_model(text, models):
+    """(provider, model) the answer asks for by provider id or model name, if exactly one."""
+    lower = text.lower()
+    hits = {(p, m) for p, m in models.items()
+            if re.search(rf'(?<![\w-]){re.escape(p.lower())}(?![\w-])', lower) or m.lower() in lower}
+    return hits.pop() if len(hits) == 1 else None
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
+    parser.add_argument('--board')
+    parser.add_argument('--apply', action='store_true')
+    parser.add_argument('--notify', metavar='TARGET', help='hermes send target, e.g. simplex:"Hermes Coding_1"')
+    args = parser.parse_args(argv)
+    board = args.board
+    assignees = as_json(hermes(['assignees', '--json'], board))
+    profiles = sorted(a['name'] for a in assignees if a.get('on_disk'))
+    agents = set(profiles) | {AUTHOR, 'board-healer', 'board-intake', 'auto-decomposer'}
+    report = as_json(hermes(['diagnostics', '--json'], board))
+    tasks = {item['task_id']: item for item in report if item.get('task_id')}
+    # Blocked cards appear in diagnostics only after a threshold; check every one now.
+    for row in as_json(hermes(['list', '--json'], board)):
+        if (TOKENS.search(row.get('title') or '') or row.get('status') == 'blocked') and row['id'] not in tasks:
+            tasks[row['id']] = {'task_id': row['id'], 'title': row['title'], 'status': row.get('status'),
+                                'assignee': row.get('assignee'), 'diagnostics': []}
+    people, fixed, models = [], [], configured_models()
+    for task_id, item in tasks.items():
+        title, assignee = item.get('title') or '', item.get('assignee') or ''
+        kinds = [d['kind'] for d in item.get('diagnostics') or []]
+        if TOKENS.search(title):
+            clean = re.sub(r'\s+', ' ', TOKENS.sub(' ', title.split('</')[0])).strip() or task_id
+            if args.apply:
+                hermes(['edit', task_id, '--title', clean], board)
+                hermes(['comment', '--author', AUTHOR, task_id, f'{AUTHOR}: removed chat-template tokens from the title.'], board)
+            fixed.append(f'{task_id}: title cleaned ("{clean[:60]}")')
+        if assignee and assignee not in profiles and item.get('status') in ('ready', 'todo', 'triage'):
+            target = role_target(assignee, profiles)
+            if target:
+                if args.apply:
+                    hermes(['reassign', task_id, target, '--reason', f'no profile named {assignee}'], board)
+                    hermes(['comment', '--author', AUTHOR, task_id,
+                            f'{AUTHOR}: reassigned from "{assignee}", which is not a profile here, to "{target}". '
+                            f'Profiles: {", ".join(profiles)}.'], board)
+                fixed.append(f'{task_id}: {assignee} -> {target}')
+                continue
+            people.append(f'{task_id}: assigned to "{assignee}", which is not a profile ({", ".join(profiles)})')
+            continue
+        if 'stuck_in_blocked' in kinds or item.get('status') == 'blocked':
+            detail = as_json(hermes(['show', task_id, '--json'], board))
+            blocks = [e for e in detail.get('events') or [] if e.get('kind') in ('blocked', 'gave_up')]
+            since = max((int(e.get('created_at') or 0) for e in blocks), default=0)
+            reply = answered(detail, since, agents) if since else None
+            if reply:
+                who, text = reply
+                pin = requested_model(text, models)
+                note = f' on {pin[0]}/{pin[1]} as asked' if pin else ''
+                if args.apply:
+                    if pin:
+                        hermes(['set-model', task_id, pin[1], '--provider', pin[0]], board)
+                    hermes(['comment', '--author', AUTHOR, task_id,
+                            f'{AUTHOR}: answered by {who} after the block; read the newest comments first.'
+                            + (f' Pinned to {pin[0]}/{pin[1]} as the answer asked.' if pin else '')], board)
+                    hermes(['unblock', task_id], board)
+                fixed.append(f'{task_id}: unblocked (answered by {who}){note}')
+                continue
+            reason = next((str((e.get('payload') or {}).get('reason') or (e.get('payload') or {}).get('error') or '')
+                           for e in reversed(blocks)), '')
+            if not kinds:
+                people.append(f'{task_id}: blocked: {reason[:160] or title[:80]}')
+        for diagnostic in item.get('diagnostics') or []:
+            if diagnostic['kind'] == 'stranded_in_ready' and assignee in profiles:
+                people.append(f'{task_id}: {diagnostic["title"]} (profile {assignee} exists: is a gateway dispatching?)')
+            elif diagnostic['kind'] != 'stranded_in_ready':
+                people.append(f'{task_id}: {diagnostic["kind"]}: {diagnostic["title"]}')
+    verb = 'fixed' if args.apply else 'would fix'
+    for line in fixed:
+        print(f'{verb}: {line}')
+    for line in people:
+        print(f'needs a person: {line}')
+    if args.notify and people and args.apply:
+        home = Path(os.environ.get('HERMES_HOME', Path.home() / '.hermes'))
+        state = home / 'board-doctor-notified.json'
+        seen = set(json.loads(state.read_text())) if state.is_file() else set()
+        new = [line for line in people if line not in seen]
+        if new:
+            text = 'Board needs you' + (f' ({board})' if board else '') + ':\n' + '\n'.join(f'- {line}' for line in new)
+            sent = subprocess.run(['hermes', 'send', '-q', '-t', args.notify, '-f', '-'], input=text,
+                                  capture_output=True, text=True, timeout=120, check=False)
+            if sent.returncode == 0:
+                state.write_text(json.dumps(sorted(seen | set(new))))
+    if not fixed and not people:
+        print('board healthy')
+    return 1 if people else 0
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main())
+    except (RuntimeError, ValueError, subprocess.TimeoutExpired) as error:
+        print(f'hermes-board-doctor: {error}', file=sys.stderr)
+        sys.exit(2)
