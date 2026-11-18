@@ -184,6 +184,10 @@ requires separate approval for arbitrary Python cells, so advertising the tool
 caused a denied call and wasted generation. Ordinary file/terminal tools remain
 subject to their existing guards. The installer does not set
 `approvals.single_query_mode: approve`; interactive host sessions retain the tool.
+Specialist profiles default to a 900-second conversation-turn budget and 16 tool
+iterations, retaining explicit existing values. A task's native `--max-runtime`
+is the separate whole-worker cap; set it and `--max-retries 1` for one attempt.
+Large assignments need bounded milestones or an explicit profile budget change.
 
 The Claude hook checks both the exact endpoint and model tiers. It applies to
 the whole work-only device, and only company paths/remotes on the personal Mac.
