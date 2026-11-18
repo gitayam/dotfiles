@@ -168,17 +168,41 @@ class WorkRoutes(unittest.TestCase):
         for key in ['OPENAI_API_KEY','ANTHROPIC_API_KEY','CLAUDE_CODE_USE_VERTEX','HERMES_HOME']:
             self.assertNotIn(key,env)
 
-    def test_main_auxiliary_and_delegation_have_no_cloud_fallback(self):
+    def test_main_auxiliary_and_delegation_fallback_stays_on_approved_routes(self):
         cfg=hermes_config({'delegation':{'provider':'llamacpp','model':'qwen'},
-            'fallback_providers':[{'provider':'openrouter'}]},ROUTES,Path('/tmp/company'))
+            'fallback_providers':[{'provider':'openrouter'}],
+            'approvals':{'mode':'off','deny':['sentinel']}},ROUTES,Path('/tmp/company'),company_roles=True)
         self.assertEqual(cfg['model']['provider'],'local')
         self.assertEqual(cfg['delegation']['provider'],'local')
-        self.assertEqual(cfg['fallback_providers'],[])
+        expected=[{'provider':'z1','model':'glm-5.3-flash'}]
+        self.assertEqual(cfg['fallback_providers'],expected)
+        self.assertNotIn('fallback_model',cfg)
+        self.assertEqual(cfg['delegation']['fallback_providers'],expected)
         for slot in SLOTS:
             self.assertEqual(cfg['auxiliary'][slot]['base_url'],ROUTES['local']['url'])
-            self.assertEqual(cfg['auxiliary'][slot]['fallback_chain'],[])
+            self.assertEqual(cfg['auxiliary'][slot]['fallback_chain'],[] if slot=='vision' else expected)
         self.assertEqual(cfg['providers']['z2']['models']['openai/gpt-oss-120b']['context_length'],49152)
         self.assertTrue(cfg['memory']['write_approval'])
+        self.assertEqual(cfg['approvals'],{'mode':'off','deny':['sentinel']})
+        self.assertEqual(cfg['agent']['api_max_retries'],1)
+        self.assertEqual(cfg['agent']['auto_recovery_cycles'],1)
+        self.assertEqual(cfg['kanban']['default_assignee'],'zf-developer')
+        self.assertEqual(cfg['kanban']['orchestrator_profile'],'zf-planner')
+
+    def test_fallback_uses_other_approved_route_and_rejects_short_main_context(self):
+        cfg=hermes_config({},ROUTES,Path('/tmp/company'),'1')
+        self.assertEqual(cfg['fallback_providers'],[{'provider':'local','model':'gemma-4-26b-a4b'}])
+        self.assertEqual(cfg['auxiliary']['vision']['provider'],'local')
+        self.assertEqual(cfg['auxiliary']['vision']['fallback_chain'],[])
+        with self.assertRaises(ValueError):hermes_config({},ROUTES,Path('/tmp/company'),'2')
+        routes={key:dict(value) for key,value in ROUTES.items()};routes['1']['context']=49152
+        cfg=hermes_config({},routes,Path('/tmp/company'))
+        self.assertEqual(cfg['fallback_providers'],[])
+
+    def test_personal_workspace_does_not_invent_work_mac_assignees(self):
+        cfg=hermes_config({},ROUTES,Path('/tmp/company'))
+        self.assertNotIn('default_assignee',cfg['kanban'])
+        self.assertNotIn('orchestrator_profile',cfg['kanban'])
 
     def test_dry_run_and_backup_preserve_user_files(self):
         with tempfile.TemporaryDirectory() as tmp:

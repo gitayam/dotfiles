@@ -72,23 +72,30 @@ def install_issue_strategy(target,apply,platform='generic'):
             write(target/relative,content,apply,0o700 if relative.parts[0]=='scripts' else 0o600)
 
 
-def hermes_config(existing, routes, workspace, default='local'):
+def hermes_config(existing, routes, workspace, default='local', company_roles=False):
     cfg = dict(existing)
     provider = lambda key: {'1':'z1','2':'z2'}.get(key,key)
+    if default not in {'local','1'} or routes[default]['context']<65536:
+        raise ValueError('Hermes main routing requires an approved route with at least 64K context.')
+    # Only these approved routes can carry a full Hermes session. z2 remains
+    # available to bounded CLI tasks, but its 49,152-token window is too small.
+    fallback=[{'provider':provider(key),'model':routes[key]['model']}
+              for key in ['local','1'] if key!=default and routes[key]['context']>=65536]
     cfg['model'] = {'provider':provider(default),'default':routes[default]['model']}
     cfg['providers'] = {provider(key): {'name':provider(key),'base_url':r['url'],'api_key':'selfhosted',
-        'api_mode':'chat_completions','model':r['model'],
-        'models':{r['model']:{'context_length':r['context'],'supports_vision':key!='2'}}}
+        'api_mode':'chat_completions','model':r['model'],'request_timeout_seconds':120,
+        'models':{r['model']:{'context_length':r['context'],'supports_vision':key=='local'}}}
         for key,r in routes.items()}
-    cfg['fallback_model'] = []
-    cfg['fallback_providers'] = []
+    cfg.pop('fallback_model',None)
+    cfg['fallback_providers'] = fallback
     cfg['model_aliases'] = {}
     aux = dict(cfg.get('auxiliary',{}))
     for slot in SLOTS:
         entry = dict(aux.get(slot,{}) if isinstance(aux.get(slot,{}),dict) else {})
-        entry.update({'provider':provider(default),'model':routes[default]['model'],
-            'base_url':routes[default]['url'],'api_key':'selfhosted',
-            'api_mode':'chat_completions','fallback_chain':[]})
+        selected='local' if slot=='vision' else default
+        entry.update({'provider':provider(selected),'model':routes[selected]['model'],
+            'base_url':routes[selected]['url'],'api_key':'selfhosted',
+            'api_mode':'chat_completions','fallback_chain':[] if slot=='vision' else [dict(e) for e in fallback]})
         aux[slot] = entry
     cfg['auxiliary'] = aux
     for k in ['memory','skills']:
@@ -96,7 +103,12 @@ def hermes_config(existing, routes, workspace, default='local'):
     cfg.setdefault('terminal',{}).update({'backend':'local','cwd':str(workspace)})
     cfg.setdefault('kanban',{}).update({'dispatch_interval_seconds':10,
         'auto_decompose':True,'max_in_progress':2,'max_in_progress_per_profile':1})
-    cfg.setdefault('delegation',{}).update({'provider':provider(default),'model':routes[default]['model']})
+    if company_roles:
+        cfg['kanban'].update({'default_assignee':'zf-developer','orchestrator_profile':'zf-planner'})
+    cfg.setdefault('agent',{}).update({'api_max_retries':1,'auto_recovery_cycles':1,
+        'tool_use_enforcement':True,'intent_ack_continuation':True})
+    cfg.setdefault('delegation',{}).update({'provider':provider(default),'model':routes[default]['model'],
+        'fallback_providers':[dict(e) for e in fallback]})
     # Model-backed media tools may route to cloud providers independently of auxiliary.*.
     tools=['browser','clarify','code_execution','computer_use','delegation','file',
            'kanban','memory','session_search','skills','terminal','todo','vision','web']
@@ -219,7 +231,8 @@ def main():
             dst=directory/name; target=state/'bin/work-ai'
             link(dst,target,a.apply)
     hp=hh/'config.yaml'; existing=yaml.safe_load(hp.read_text()) if hp.exists() else {}
-    write(hp,yaml.safe_dump(hermes_config(existing or {},routes,w,a.default_model),sort_keys=False),a.apply)
+    write(hp,yaml.safe_dump(hermes_config(existing or {},routes,w,a.default_model,
+        company_roles=a.scope=='device'),sort_keys=False),a.apply)
     # Scope the hook on the personal Mac; the work Mac permits approved routes in every directory.
     hook={'type':'command','command':str(state/'bin/work-ai')+' hook'}
     for cd in {home/'.claude',claude_dir}:
@@ -291,6 +304,19 @@ board nor lane completion grants permission to publish. Paperclip must use the
 real Claude Code legacy runner with approved model/tier environment. There is no
 community broker/ship service connected to this workstation.
 AnyJev is advisory; keep uncertain work visible for review.
+Hermes automatically falls back between eligible local Gemma and z1 routes on
+provider failures; its delegated and text auxiliary calls have their own approved
+chains. Vision stays on the verified local multimodal route. z2 is not a main
+fallback. Use the real zf-claude CLI for Enterprise work, never its subscription
+token in a generic inference client. A model-quality problem needs an independent
+check and bounded escalation, not an invented confidence threshold.
+Use actual profile names from the roster: zf-planner, zf-developer, zf-reviewer.
+Before authorized worker execution, write its scope, isolated worktree, owned
+paths, prohibited actions, acceptance commands and stop condition. Approvals
+being off is not by itself a reason to hold authorized work indefinitely. A
+written contract is not an OS sandbox. Respect explicit operator ownership and
+real permission denials; reconcile the same run and artifacts before release or
+retry. Model fallback never unblocks a card or transfers ownership.
 For CTO-level issue/backlog analysis, load the issue-strategy skill. It produces
 evidence-backed problem/option/priority recommendations, including non-code
 interventions; analysis alone never assigns, closes or implements issues.
