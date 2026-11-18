@@ -64,6 +64,10 @@ decision. A successful Python or curl TCP probe does not prove that cloudflared
 can use the same destination. Compare the exact program, destination, active
 firewall profile and rule, and distinguish a pending prompt from a proven deny.
 Resolve that decision through the normal app controls; preserve other rules.
+Check the rule duration too: a process-lifetime allowance does not authorize a
+replacement connector after restart. A persistent unattended setup needs its
+intended rule verified with a new process; do not count a temporary allowance
+or the general firewall preferences as that check.
 Source: [LuLu alerts and rule scope](https://objective-see.org/products/lulu.html).
 
 Transport pilots should expose only a short-lived synthetic nonce. Require an
@@ -71,6 +75,15 @@ independent nonce response and a rejected unrelated path before acceptance.
 Do not infer readiness by extracting any HTTPS URL from a log: an API hostname
 inside an error message can look like a tunnel URL. Registered connectors and
 zero process exit codes are also insufficient evidence of the service path.
+Inspect HTTP error details before diagnosing the origin. For example, an edge
+`403` / Cloudflare `1010` can reject a client header before the request reaches
+the tunnel; `1033` reports a disconnected tunnel. Identify automation with its
+own honest application User-Agent, retain authentication and edge policy, and
+record edge versus connector versus origin failures separately. Do not disable
+account-wide protections to make an acceptance probe pass.
+Source: [Cloudflare error 1010](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-1xxx-errors/error-1010/),
+[Cloudflare error 1033](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-1xxx-errors/error-1033/).
+
 Stop bounded pilots, revoke their scoped credentials and remove only their own
 DNS/tunnel resources. Installation alone should not enable a persistent service.
 
