@@ -58,12 +58,14 @@ class WorkRoutes(unittest.TestCase):
 
     def test_existing_tailscale_cli_is_opt_in_and_preserves_other_installations(self):
         with tempfile.TemporaryDirectory() as tmp:
-            h=Path(tmp);app=h/'Tailscale';app.write_text('fixture')
+            h=Path(tmp);app=h/'Tailscale App/Contents/MacOS/Tailscale';app.parent.mkdir(parents=True)
+            app.write_text('#!/bin/sh\nprintf "%s\\n" "$0" "$@"\n');app.chmod(0o755)
             path=h/'.local/bin/tailscale'
             existing_tailscale_cli(h,False,app)
             self.assertFalse(path.exists())
             existing_tailscale_cli(h,True,app)
-            self.assertEqual(path.resolve(),app.resolve())
+            self.assertFalse(path.is_symlink())
+            self.assertEqual(subprocess.check_output([str(path),'status','--json'],text=True).splitlines(),[str(app),'status','--json'])
             existing_tailscale_cli(h,True,app)
             self.assertFalse(list(path.parent.glob('*.backup.*')))
             path.unlink();path.write_text('unmanaged CLI')
@@ -72,6 +74,15 @@ class WorkRoutes(unittest.TestCase):
             path.unlink();path.symlink_to(h/'missing-executable')
             existing_tailscale_cli(h,True,app)
             self.assertEqual(path.readlink(),h/'missing-executable')
+
+    def test_native_tailscale_symlink_is_repaired_with_backup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            h=Path(tmp);app=h/'Tailscale';app.write_text('native application stays unchanged')
+            path=h/'.local/bin/tailscale';path.parent.mkdir(parents=True);path.symlink_to(app)
+            existing_tailscale_cli(h,False,app);self.assertTrue(path.is_symlink())
+            existing_tailscale_cli(h,True,app)
+            self.assertFalse(path.is_symlink());self.assertEqual(app.read_text(),'native application stays unchanged')
+            backups=list(path.parent.glob('tailscale.backup.*'));self.assertEqual(len(backups),1);self.assertTrue(backups[0].is_symlink())
 
     def test_task_assignments_keep_independent_fallbacks_and_worker_budgets(self):
         policy={'role_models':{'zf-planner':'1'},

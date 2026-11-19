@@ -49,6 +49,35 @@ then rolled back: it deferred the wake but did not qualify unattended recovery.
 The selected graph uses stock native scheduler source and does not weaken that
 guard. Recheck installed scheduler fingerprints and behavior after an upgrade.
 
+## Current release and upgrade review
+
+November 18 audit: Hermes CLI 0.23.2 and Orca 0.2.25 matched stable releases on
+both Macs. Paperclip 2026.1117.0 is newer than the accepted 2026.1106.0 runtime.
+Its [release notes](https://github.com/paperclipai/paperclip/releases/tag/v2026.1117.0)
+change child workspace and rollback contracts. Keep the qualified runtime until
+a separate canary and backup/restore test accept the replacement. The isolated
+new-version diagnostics passed actual Hermes hello probes but stayed in managed
+verification with work queued, so the upgrade was not accepted. Workspace
+transfer and production migration remain unqualified; the cause is not yet
+isolated between launcher compatibility and the newer lifecycle.
+
+```sh
+python3 scripts/audit_work_paperclip.py --check-releases
+```
+
+Run the read-only audit on the enrolled work Mac. It checks source, receipt and
+profile fingerprints, native agent bindings, timers and run limits; the optional
+release lookup reads official GitHub metadata. Matching files do not replace
+real model/artifact/cancellation acceptance. An idle company queue is not
+permission to restart a service used by another company or gateway session.
+
+The personal Mac's company workspace is a client of the work Mac. Refresh its
+isolated profile with `setup_work_hermes.py --from-config ...`; preserve personal
+defaults and credentials. A November 18 refresh restored the friendly server
+aliases and bounded child routing, then passed a real local-model parent with
+two overlapping server1 children through the relay. The work Mac remains the
+company execution owner; do not create another executing board mirror here.
+
 ## Install and intake
 
 ```sh

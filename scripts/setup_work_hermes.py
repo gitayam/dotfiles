@@ -10,6 +10,7 @@ import datetime
 import json
 from pathlib import Path
 import shutil
+import shlex
 import re
 import stat
 
@@ -178,10 +179,17 @@ def repair_paperclip_shim(path, stable_node, apply):
 
 
 def existing_tailscale_cli(home, apply, executable=Path('/Applications/Tailscale.app/Contents/MacOS/Tailscale')):
-    """Expose an existing native app's CLI without replacing another installation."""
+    """Keep the native bundle's argv[0]; a direct symlink can crash its CLI."""
     path=home/'.local/bin/tailscale'
-    if executable.is_file() and not path.exists() and not path.is_symlink():
-        link(path,executable,apply)
+    marker='# Managed by dotfiles: native Tailscale CLI'
+    if not executable.is_file():return
+    if path.is_symlink():
+        if path.resolve()!=executable.resolve():return
+    elif path.exists():
+        try:managed=marker in path.read_text()
+        except (UnicodeError,OSError):managed=False
+        if not managed:return
+    write(path,'#!/bin/sh\n'+marker+'\nexec '+shlex.quote(str(executable))+' "$@"\n',apply,0o755)
 
 
 def company_skill(w,state):
