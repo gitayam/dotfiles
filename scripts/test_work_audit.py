@@ -15,8 +15,10 @@ class Audit(unittest.TestCase):
         contract['native_stage_file']=str(self.root/files['native_stage_sha256'])
         (self.root/'server/package.json').write_text(json.dumps({'version':'2026.1106.0'}))
         cfg=self.root/'hermes/profiles/zf-planner/config.yaml';cfg.parent.mkdir(parents=True);cfg.write_text('synthetic config')
-        q=self.root/'qualification.json';q.write_text(json.dumps({'accepted':True,'contract':contract}))
+        q=self.root/'qualification.json'
         self.reg={'scope':'device','qualified':True,'contract':contract,'qualification':{'file':str(q),'sha256':digest(q)},'hermes_home':str(self.root/'hermes'),'company_id':'company','profiles':{'zf-planner':{'agent_id':'agent','provider':'server1','model':'synthetic','max_turns':24,'context':262144,'config_sha256':digest(cfg)}}}
+        q.write_text(json.dumps({'accepted':True,'contract':contract,'profiles':self.reg['profiles']}))
+        self.reg['qualification']['sha256']=digest(q)
         (self.root/'paperclip-hermes.json').write_text(json.dumps(self.reg))
         self.agent={'companyId':'company','status':'idle','adapterType':'hermes_local','adapterConfig':{'hermesCommand':str(self.root/'bin/hermes-paperclip'),'env':{'SYNTHETIC_KEY':'must-not-appear'}},'runtimeConfig':{'heartbeat':{'enabled':False,'maxConcurrentRuns':1}}};self.live=[]
     def api(self,path):return self.live if path.endswith('/live-runs') else self.agent
@@ -33,5 +35,8 @@ class Audit(unittest.TestCase):
     def test_error_state_does_not_hide_behind_matching_fingerprints(self):
         self.agent['status']='error';r=collect(self.root,self.api)
         self.assertFalse(r['all_pass']);self.assertFalse(r['checks']['zf-planner_available'])
+    def test_missing_registered_role_cannot_report_a_healthy_empty_team(self):
+        self.reg['profiles']={};(self.root/'paperclip-hermes.json').write_text(json.dumps(self.reg))
+        r=collect(self.root,self.api);self.assertFalse(r['all_pass']);self.assertFalse(r['checks']['qualification_profiles'])
 
 if __name__=='__main__':unittest.main()

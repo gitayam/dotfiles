@@ -36,6 +36,9 @@ def collect(state,api=None):
     q=reg.get('qualification') or {};checks['qualification_receipt']=bool(q.get('sha256')) and digest(q.get('file','/unconfigured-qualification'))==q['sha256']
     if checks['qualification_receipt']:
         accepted=json.loads(Path(q['file']).read_text());checks['qualification_contract']=accepted.get('accepted') is True and accepted.get('contract')==contract
+        pins=accepted.get('profiles') or {}
+        checks['qualification_profiles']=bool(pins) and set(pins)==set(reg['profiles']) and all(
+            all(reg['profiles'][role].get(k)==v for k,v in fields.items()) for role,fields in pins.items())
     agents=[]
     for role,p in reg['profiles'].items():
         checks[role+'_config']=digest(Path(reg['hermes_home'])/'profiles'/role/'config.yaml')==p['config_sha256']
