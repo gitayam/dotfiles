@@ -8,6 +8,12 @@ Read `~/zenithflow/WORKSTATION.md` and
 current coverage. Work under `~/zenithflow`; private IDs and credentials stay
 in `.workstation`, outside repositories. Use approved company/local inference.
 
+For maintenance, run dotfiles `scripts/audit_work_paperclip.py --check-releases`
+on the enrolled work Mac. It is read-only. A newer stable release still needs
+workspace, callback and data-migration acceptance; preserve the qualified
+runtime until then. A passing hello with agents still verifying and tasks queued
+is not acceptance. Its company queue check is not a machine-wide restart gate.
+
 Choose the lightest useful workflow:
 
 - Direct Hermes tools for a small bounded task; native children for independent

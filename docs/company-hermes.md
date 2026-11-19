@@ -57,7 +57,7 @@ Hermes Kanban, Paperclip issues and Orca lanes are separate records. Hermes call
 Paperclip/Orca through the terminal. Paperclip can orchestrate the actual Hermes
 profiles through its native adapter; its Claude-backed agents are a separate
 harness choice. See [Hermes under Paperclip](company-paperclip.md) for the
-comparison, accepted qualification and request-graph review workflow.
+comparison, accepted qualification, release audit and request-graph review workflow.
 The company wrapper supports direct editing and read-only Orca dispatch; no
 Paperclip-to-Orca handoff, Orca edit adapter or community shipping service is
 configured. Board/lane completion does not authorize publication.

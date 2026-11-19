@@ -2,10 +2,18 @@
 
 Keep company and personal tailnets separate when that is the selected boundary.
 Check the existing Tailscale app and active tailnet before installing anything.
-An app outside shell PATH can already be connected. Device setup links an
-existing `/Applications/Tailscale.app/Contents/MacOS/Tailscale` into the managed
-CLI directory only when that path is unused; another installation is preserved.
+An app outside shell PATH can already be connected. Device setup exposes
+`/Applications/Tailscale.app/Contents/MacOS/Tailscale` through a managed wrapper,
+repairing its older direct symlink while preserving other installations.
 It never joins a tailnet, changes DNS/routes or replaces a native client.
+
+The native macOS executable can require its full bundle path as `argv[0]`.
+On November 18, the direct symlink crashed with “The current bundleIdentifier
+is unknown to the registry,” while the absolute app command succeeded. The
+managed wrapper uses `exec` with that absolute path. Both Macs passed a fresh
+status check after repair with identical device and tailnet identities. Keep
+the backed-up symlink for rollback; do not install a second VPN client to repair
+this invocation problem.
 
 ## Transport choices
 
