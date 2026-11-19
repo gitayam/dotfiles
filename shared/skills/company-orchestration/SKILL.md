@@ -14,6 +14,23 @@ workspace, callback and data-migration acceptance; preserve the qualified
 runtime until then. A passing hello with agents still verifying and tasks queued
 is not acceptance. Its company queue check is not a machine-wide restart gate.
 
+For ongoing service/board checks, use `scripts/audit_work_paperclip.py --health --board zenithflow`.
+The enrolled work Mac can install `scripts/setup_work_monitor.py --apply` after
+reviewing its dry run. This read-only LaunchAgent checks every five minutes and
+writes `.workstation/monitor/paperclip-latest.json`; check its timestamp and
+`fresh_until` before trusting it. It never calls models, dispatches or recovers
+tasks, changes inference routes or restarts the gateway/Paperclip. Instance-wide
+recovery counters can describe historical or other-company issues; inspect exact
+task/run evidence rather than automatically retrying them. Enrollment/service
+failures produce a failed receipt instead of leaving an old success as current.
+The monitor retains only board counts, not task bodies. A card's creation age
+does not establish how long it has been ready. Before a review, locate its exact
+evidence and existing acceptance file; stop with the missing input/owner decision
+if those are absent. Preserve an operator's no-retry hold and check downstream
+dependencies before completing a diagnostic card: completion can release a
+writer that overwrites accepted evidence. More turns or a different model do
+not resolve missing owner decisions.
+
 Choose the lightest useful workflow:
 
 - Direct Hermes tools for a small bounded task; native children for independent
