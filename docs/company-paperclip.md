@@ -71,6 +71,43 @@ release lookup reads official GitHub metadata. Matching files do not replace
 real model/artifact/cancellation acceptance. An idle company queue is not
 permission to restart a service used by another company or gateway session.
 
+For ongoing read-only checks on the enrolled macOS work device:
+
+```sh
+python3 scripts/audit_work_paperclip.py --health --board zenithflow
+python3 scripts/setup_work_monitor.py             # inspect the dry run
+python3 scripts/setup_work_monitor.py --apply
+```
+
+The `io.zenithflow.agent-audit` LaunchAgent runs every five minutes after login.
+It writes a private, atomic snapshot to
+`~/zenithflow/.workstation/monitor/paperclip-latest.json`, including an explicit
+failed snapshot if enrollment or the service becomes unavailable. Check
+`observed_at` and `fresh_until`: a sleeping or logged-out computer cannot report
+new results. Monitoring does not call models, poll releases, dispatch work,
+resume tasks or restart services. Only this new monitor is loaded; the existing
+gateway and Paperclip processes remain untouched.
+
+`--health` also compares the running server version with its enrolled source,
+checks startup readiness and database backup health. Instance-wide native
+recovery counters can include historical or other-company issues; they are
+advisory, not proof that an active company worker is stuck. Read the issue,
+run and dependency records before considering recovery. Likewise, a successful
+audit does not accept artifacts or prove that blocked Kanban cards can proceed.
+Use native `hermes kanban --board BOARD stats` for the intended board, followed
+by `show TASK --json` and `runs TASK --json` when investigating an individual card.
+
+To stop only this monitor, use
+`launchctl bootout gui/$(id -u)/io.zenithflow.agent-audit`. Keep its latest
+snapshot as historical evidence; it will become stale at `fresh_until`.
+
+The monitor also uses native Hermes JSON output to summarize the existing
+`zenithflow` board. Only status counts and the oldest ready card's creation age
+are retained, with no task bodies, titles or credentials. Creation age is not
+time in Ready. Missing boards fail the check rather than being created. Held
+cards and dependency-waiting todo cards do not become failures or automatic
+retries merely because no worker is running.
+
 The personal Mac's company workspace is a client of the work Mac. Refresh its
 isolated profile with `setup_work_hermes.py --from-config ...`; preserve personal
 defaults and credentials. A November 18 refresh restored the friendly server
