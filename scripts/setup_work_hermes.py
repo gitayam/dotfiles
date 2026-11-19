@@ -184,6 +184,148 @@ def existing_tailscale_cli(home, apply, executable=Path('/Applications/Tailscale
         link(path,executable,apply)
 
 
+def company_skill(w,state):
+    return f'''---
+name: company-coding-stack
+description: Run company coding work through approved local models or Enterprise Claude Code.
+---
+
+Use absolute launchers under `{state}/bin` (desktop PATH is minimal):
+`zf-local` (Gemma on the work Mac), `zf-server1` (GLM), `zf-server2` (gpt-oss),
+`zf-claude` (real Enterprise Claude Code), `zf-zq local|server1|server2 "prompt"`,
+`zf-status`, `zf-decide` (JSON on stdin), `zf-orca dispatch --agent claude`.
+Use `ZF_MODEL=1|2|local` to choose the Orca model; the Claude adapter is read-only.
+For edits use native Hermes tools or an approved Claude Code launcher with a bounded file/task contract
+and check its diff and tests independently. Do not mistake a successful process
+exit for a correct result. server2 serves 49,152 tokens and is unsuitable as the main
+Hermes agent (64K floor); it is usable for bounded direct/Claude Code tasks.
+Start company work in `{w}`, personal work in `~/Git`. Do not copy personal
+credentials, histories or memories into company repositories. Keep workspace
+documentation and workstation state outside the sibling repositories.
+For Desktop setup read `{state}/DESKTOP-SETUP.md` when present. Company-only
+device roles are zf-planner, zf-developer and zf-reviewer; the work Mac's host
+gateway serves them. Native Desktop requires Capabilities → Plugins → Desktop:
+Kanban and Desktop: Bots enabled. Backend kanban tools do not enable the pane;
+browser preferences are separate. A user-confirmed setup flag is not automated
+UI verification. Preserve live work if the gateway refuses a listener restart.
+Paperclip is a separate company issue/agent/project board, not a mirror of Hermes
+Kanban. Use `{state}/bin/zf-paperclip agent list --json`,
+`{state}/bin/zf-paperclip project list --json`, or
+`{state}/bin/zf-paperclip issue get <identifier> --json`.
+The private context pins the company and server; do not use an unscoped default
+client or copy another machine's agent IDs. Read WORKSTATION.md for current IDs.
+For requested tracked multi-stage work, the enrolled Hermes team can run under
+Paperclip using native hermes_local, retaining its own models, tools and memory.
+Read `{state}/PAPERCLIP-HERMES.md` and the private qualification receipt first.
+Use `zf-orchestrate --request REQUEST.json` to preview a native request graph;
+`--apply --start` requires accepted qualification. One isolated worktree holds
+fixed-owner children: plan -> develop -> independent review for coding, or
+analysis -> review for a decision brief. Their parent performs final approval
+after all children succeed. Analysis implies no code or policy adoption.
+Private projects need explicit team access; no automatic access grant is made.
+Small direct work and independent side investigations can stay in Hermes.
+Do not mirror an executing Paperclip issue to Kanban or send it back to intake.
+Claude-backed agents remain available when their harness is appropriate.
+Inspect that same issue and its runs. A comment can wake
+the assignee: do not also invoke a heartbeat or create a duplicate. Reconcile
+unknown writes first. On auth/permission errors stop and report; never mint or
+forge a token. Timer heartbeats stay off. A Paperclip-owned Hermes worker uses
+its ephemeral paperclip-run callback, not intake, raw curl or token files.
+Never dispatch the same issue recursively. Native dependencies and a local
+predecessor-termination gate enforce phase order. Changes holds require bounded
+coordinator rework. Fresh sessions avoid stale callback credentials.
+Paperclip's Claude adapters invoke claude directly with their own environment. Pin the
+self-hosted child model and CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 there separately
+from work-ai; keep the engine, permissions and heartbeat policy. Preserve native
+typed environment/secret bindings instead of storing redaction placeholders.
+A task-scoped assigneeAdapterOverrides.adapterConfig.extraArgs grant can permit
+Read/Edit for an exact owned file. It does not grant arbitrary repository writes.
+Keep the native issue-disposition step executable. If the operator owns final
+acceptance, reconcile all runs and queued continuations before closing the issue
+and removing the temporary grant. Process success alone does not accept an edit.
+Use `{state}/bin/zf-orca dispatch --agent claude --cwd <scratch> "<question>"`
+for bounded read-only lanes; `inspect <lane>` retrieves the result. This company
+wrapper does not provide an Orca edit adapter or a Paperclip-to-Orca handoff.
+Orca reports semanticOutcome unknown: independently check the answer/artifacts.
+Its read-only adapter may refuse shell commands and files outside the selected
+cwd. Supply a sanitized current-state inventory in the prompt, or perform those
+checks separately; do not turn a denied check into a claim that software is
+missing. Distinguish package installation channel from Enterprise account auth.
+Git commits, review, CI and deployment remain separate authorized steps; neither
+board nor lane completion grants permission to publish. A Paperclip Claude agent must use the
+real Claude Code CLI engine (adapterConfig.engine: cli) with approved model/tier
+environment; do not rely on an unset engine's current default. There is no
+community broker/ship service connected to this workstation.
+An accepted read-only issue does not qualify Paperclip editing. Require a native
+edit's actual file/tests; exit zero with denied tools is not acceptance. Use
+only authorized owned-path Edit/Read selectors (absolute // paths), not
+Write(path). Respect native execution-reconciliation guards and revoke temporary
+grants; never reset state or duplicate an issue to evade them.
+Named boards keep current tasks under ~/.hermes/kanban/boards/<board>/kanban.db;
+the root kanban.db may be legacy. Inspect the intended board before counting
+workers, and keep input/dependency/ownership holds separate from model failover.
+AnyJev is advisory; keep uncertain work visible for review.
+Hermes automatically falls back between eligible local Gemma and server1 routes on
+provider failures; its delegated and text auxiliary calls have their own approved
+chains. Vision stays on the verified local multimodal route. server2 is not a main
+fallback. Use the real zf-claude CLI for Enterprise work, never its subscription
+token in a generic inference client. A model-quality problem needs an independent
+check and bounded escalation, not an invented confidence threshold.
+Use actual profile names from the roster: zf-planner, zf-developer, zf-reviewer.
+Before authorized worker execution, write its scope, isolated worktree, owned
+paths, prohibited actions, acceptance commands and stop condition. Approvals
+being off is not by itself a reason to hold authorized work indefinitely. A
+written contract is not an OS sandbox. Respect explicit operator ownership and
+real permission denials; reconcile the same run and artifacts before release or
+retry. Model fallback never unblocks a card or transfers ownership.
+For CTO-level issue/backlog analysis, load the issue-strategy skill. It produces
+evidence-backed problem/option/priority recommendations, including non-code
+interventions; analysis alone never assigns, closes or implements issues.
+Private config role_models and auxiliary_models preserve explicit route
+assignments across installer refreshes. Use dotfiles docs/company-model-policy.md
+and scripts/probe_work_models.py to qualify a candidate policy with synthetic
+evidence, then independently check bounded native tasks. Do not confuse direct
+API probes with native adapter acceptance or HTTP 200 with applied reasoning
+controls. Effort differs by model/template. Real zf-claude accepts --effort for a
+session; inherited CLAUDE_CODE_* effort variables are scrubbed by the wrapper.
+Keep AnyJev advice separate from deterministic context/modality/policy gates.
+For roaming SSH read WORKSTATION.md and dotfiles docs/company-connectivity.md.
+An existing Tailscale app may already belong to the company tailnet; check it
+before installing another client or changing membership/routes. Native macOS
+Remote Login over an approved transport preserves the existing SSH identity.
+Bonjour names help only on the same LAN. A restricted outbound SSH bastion can
+keep tailnets separate; it needs a verified endpoint and end-to-end host keys.
+An SSH-only Cloudflare Access route can also preserve tailnets: exact operator
+Service Auth policy, origin audience validation, native SSH pin, loopback SSH
+only and a supervised connector. Keep operator and connector credentials in
+separate private files, with expiry/revocation details in workstation inventory.
+The connector needs outbound TCP 7844 and GUI login. Retain a LAN alias and
+preserve active relay sessions. Verify a saved LuLu Always rule on the actual
+binary with a fresh process; another program's TCP success is insufficient.
+Qualify SSH nonce, denied Access/native-auth controls and connector restart
+recovery. A same-LAN public-edge round trip is not different-network acceptance.
+Server1/server2 are friendly server route names, not model families. Legacy z1/z2
+providers, zf-z1/zf-z2 launchers and numeric 1/2 selectors remain compatibility
+aliases. Read the served model/context; a host can run several models, including
+models excluded by company policy or non-coding embedding/ASR services.
+For independent investigation/review work, use native delegate_task with 2–3
+concrete leaf tasks when it improves the task. State owned paths, inputs,
+acceptance and stop conditions. Native Hermes agents can use tools directly;
+Claude Code CLI is an optional harness, not a mandatory step or a cloud model.
+Delegated children default to full-context Server1, with approved local fallback;
+Server2 stays for bounded Claude Code/direct work below Hermes's context floor.
+The company defaults allow 3 concurrent children, 6 total in a one-shot session,
+one spawn level, 12 child iterations and a 300-second child deadline. Explicit
+operator limits survive refresh. Keep subagent_auto_approve off. Use isolated
+Git worktrees for parallel edits and integrate returned diffs deliberately;
+worktree isolation is not a security sandbox and does not apply outside Git.
+Current queued dir-workspace cards retain one Kanban writer per profile. Do not
+raise shared-directory writer concurrency or change live task ownership merely
+to increase the agent count. Read-only side tasks can run independently; verify
+artifacts and actual native child sessions rather than reporting a planned fan-out.
+'''
+
+
 def main():
     import yaml
     p=argparse.ArgumentParser(description=__doc__)
@@ -305,130 +447,7 @@ Retain memory and skill write approvals. Preserve dirty work; verify artifacts
 and tests independently. Do not send communications unless specifically asked.
 '''
     write(soul,text,a.apply)
-    skill=f'''---
-name: company-coding-stack
-description: Run company coding work through approved local models or Enterprise Claude Code.
----
-
-Use absolute launchers under `{state}/bin` (desktop PATH is minimal):
-`zf-local` (Gemma on the work Mac), `zf-server1` (GLM), `zf-server2` (gpt-oss),
-`zf-claude` (real Enterprise Claude Code), `zf-zq local|server1|server2 "prompt"`,
-`zf-status`, `zf-decide` (JSON on stdin), `zf-orca dispatch --agent claude`.
-Use `ZF_MODEL=1|2|local` to choose the Orca model; the Claude adapter is read-only.
-For edits call a Claude Code launcher directly with a bounded file/task contract
-and check its diff and tests independently. Do not mistake a successful process
-exit for a correct result. server2 serves 49,152 tokens and is unsuitable as the main
-Hermes agent (64K floor); it is usable for bounded direct/Claude Code tasks.
-Start company work in `{w}`, personal work in `~/Git`. Do not copy personal
-credentials, histories or memories into company repositories. Keep workspace
-documentation and workstation state outside the sibling repositories.
-For Desktop setup read `{state}/DESKTOP-SETUP.md` when present. Company-only
-device roles are zf-planner, zf-developer and zf-reviewer; the work Mac's host
-gateway serves them. Native Desktop requires Capabilities → Plugins → Desktop:
-Kanban and Desktop: Bots enabled. Backend kanban tools do not enable the pane;
-browser preferences are separate. A user-confirmed setup flag is not automated
-UI verification. Preserve live work if the gateway refuses a listener restart.
-Paperclip is a separate company issue/agent/project board, not a mirror of Hermes
-Kanban. Use `{state}/bin/zf-paperclip agent list --json`,
-`{state}/bin/zf-paperclip project list --json`, or
-`{state}/bin/zf-paperclip issue get <identifier> --json`.
-The private context pins the company and server; do not use an unscoped default
-client or copy another machine's agent IDs. Read WORKSTATION.md for current IDs.
-For requested tracked work, create ONE issue with an explicit approved Claude
-agent and project, then inspect that same issue and its runs. A comment can wake
-the assignee: do not also invoke a heartbeat or create a duplicate. Reconcile
-unknown writes first. On auth/permission errors stop and report; never mint or
-forge a token. Heartbeats stay off. Never assign Hermes to call itself.
-Paperclip invokes claude directly with its own stored environment. Pin the
-self-hosted child model and CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 there separately
-from work-ai; keep the engine, permissions and heartbeat policy. Preserve native
-typed environment/secret bindings instead of storing redaction placeholders.
-A task-scoped assigneeAdapterOverrides.adapterConfig.extraArgs grant can permit
-Read/Edit for an exact owned file. It does not grant arbitrary repository writes.
-Keep the native issue-disposition step executable. If the operator owns final
-acceptance, reconcile all runs and queued continuations before closing the issue
-and removing the temporary grant. Process success alone does not accept an edit.
-Use `{state}/bin/zf-orca dispatch --agent claude --cwd <scratch> "<question>"`
-for bounded read-only lanes; `inspect <lane>` retrieves the result. This company
-wrapper does not provide an Orca edit adapter or a Paperclip-to-Orca handoff.
-Orca reports semanticOutcome unknown: independently check the answer/artifacts.
-Its read-only adapter may refuse shell commands and files outside the selected
-cwd. Supply a sanitized current-state inventory in the prompt, or perform those
-checks separately; do not turn a denied check into a claim that software is
-missing. Distinguish package installation channel from Enterprise account auth.
-Git commits, review, CI and deployment remain separate authorized steps; neither
-board nor lane completion grants permission to publish. Paperclip must use the
-real Claude Code CLI engine (adapterConfig.engine: cli) with approved model/tier
-environment; do not rely on an unset engine's current default. There is no
-community broker/ship service connected to this workstation.
-An accepted read-only issue does not qualify Paperclip editing. Require a native
-edit's actual file/tests; exit zero with denied tools is not acceptance. Use
-only authorized owned-path Edit/Read selectors (absolute // paths), not
-Write(path). Respect native execution-reconciliation guards and revoke temporary
-grants; never reset state or duplicate an issue to evade them.
-Named boards keep current tasks under ~/.hermes/kanban/boards/<board>/kanban.db;
-the root kanban.db may be legacy. Inspect the intended board before counting
-workers, and keep input/dependency/ownership holds separate from model failover.
-AnyJev is advisory; keep uncertain work visible for review.
-Hermes automatically falls back between eligible local Gemma and server1 routes on
-provider failures; its delegated and text auxiliary calls have their own approved
-chains. Vision stays on the verified local multimodal route. server2 is not a main
-fallback. Use the real zf-claude CLI for Enterprise work, never its subscription
-token in a generic inference client. A model-quality problem needs an independent
-check and bounded escalation, not an invented confidence threshold.
-Use actual profile names from the roster: zf-planner, zf-developer, zf-reviewer.
-Before authorized worker execution, write its scope, isolated worktree, owned
-paths, prohibited actions, acceptance commands and stop condition. Approvals
-being off is not by itself a reason to hold authorized work indefinitely. A
-written contract is not an OS sandbox. Respect explicit operator ownership and
-real permission denials; reconcile the same run and artifacts before release or
-retry. Model fallback never unblocks a card or transfers ownership.
-For CTO-level issue/backlog analysis, load the issue-strategy skill. It produces
-evidence-backed problem/option/priority recommendations, including non-code
-interventions; analysis alone never assigns, closes or implements issues.
-Private config role_models and auxiliary_models preserve explicit route
-assignments across installer refreshes. Use dotfiles docs/company-model-policy.md
-and scripts/probe_work_models.py to qualify a candidate policy with synthetic
-evidence, then independently check bounded native tasks. Do not confuse direct
-API probes with native adapter acceptance or HTTP 200 with applied reasoning
-controls. Effort differs by model/template. Real zf-claude accepts --effort for a
-session; inherited CLAUDE_CODE_* effort variables are scrubbed by the wrapper.
-Keep AnyJev advice separate from deterministic context/modality/policy gates.
-For roaming SSH read WORKSTATION.md and dotfiles docs/company-connectivity.md.
-An existing Tailscale app may already belong to the company tailnet; check it
-before installing another client or changing membership/routes. Native macOS
-Remote Login over an approved transport preserves the existing SSH identity.
-Bonjour names help only on the same LAN. A restricted outbound SSH bastion can
-keep tailnets separate; it needs a verified endpoint and end-to-end host keys.
-An SSH-only Cloudflare Access route can also preserve tailnets: exact operator
-Service Auth policy, origin audience validation, native SSH pin, loopback SSH
-only and a supervised connector. Keep operator and connector credentials in
-separate private files, with expiry/revocation details in workstation inventory.
-The connector needs outbound TCP 7844 and GUI login. Retain a LAN alias and
-preserve active relay sessions. Verify a saved LuLu Always rule on the actual
-binary with a fresh process; another program's TCP success is insufficient.
-Qualify SSH nonce, denied Access/native-auth controls and connector restart
-recovery. A same-LAN public-edge round trip is not different-network acceptance.
-Server1/server2 are friendly server route names, not model families. Legacy z1/z2
-providers, zf-z1/zf-z2 launchers and numeric 1/2 selectors remain compatibility
-aliases. Read the served model/context; a host can run several models, including
-models excluded by company policy or non-coding embedding/ASR services.
-For independent investigation/review work, use native delegate_task with 2–3
-concrete leaf tasks when it improves the task. State owned paths, inputs,
-acceptance and stop conditions. Native Hermes agents can use tools directly;
-Claude Code CLI is an optional harness, not a mandatory step or a cloud model.
-Delegated children default to full-context Server1, with approved local fallback;
-Server2 stays for bounded Claude Code/direct work below Hermes's context floor.
-The company defaults allow 3 concurrent children, 6 total in a one-shot session,
-one spawn level, 12 child iterations and a 300-second child deadline. Explicit
-operator limits survive refresh. Keep subagent_auto_approve off. Use isolated
-Git worktrees for parallel edits and integrate returned diffs deliberately;
-worktree isolation is not a security sandbox and does not apply outside Git.
-Current queued dir-workspace cards retain one Kanban writer per profile. Do not
-raise shared-directory writer concurrency or change live task ownership merely
-to increase the agent count. Read-only side tasks can run independently; verify
-artifacts and actual native child sessions rather than reporting a planned fan-out.
-'''
+    skill=company_skill(w,state)
     write(hh/'skills/autonomous-ai-agents/company-coding-stack/SKILL.md',skill,a.apply)
     install_issue_strategy(hh/'skills/management/issue-strategy',a.apply,'hermes')
     install_issue_strategy(w/'.claude/skills/issue-strategy',a.apply,'claude-code')
