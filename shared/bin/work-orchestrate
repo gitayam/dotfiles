@@ -1,0 +1,14 @@
+#!/usr/bin/env python3
+"""Preview or create a native Paperclip company request graph."""
+from pathlib import Path
+import sys
+
+launcher=Path(__file__).resolve();state=launcher.parent.parent
+sys.path.insert(0,str(state/'lib'))
+from work_paperclip_graph import main
+
+if __name__=='__main__':
+    try:main(state,launcher)
+    except Exception as e:
+        if isinstance(e,ValueError):raise SystemExit(str(e))
+        raise SystemExit('Intake outcome is unresolved; inspect its private journal, owned worktree and native receipts before retrying.')

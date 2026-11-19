@@ -54,7 +54,10 @@ Refresh directly with `--from-config ~/zenithflow/.workstation/config.json --app
 | `zf-orca dispatch --agent claude ...` | Read-only Orca lane; `ZF_MODEL` selects local/1/2 |
 
 Hermes Kanban, Paperclip issues and Orca lanes are separate records. Hermes calls
-Paperclip/Orca through the terminal, while the actual worker is Claude Code.
+Paperclip/Orca through the terminal. Paperclip can orchestrate the actual Hermes
+profiles through its native adapter; its Claude-backed agents are a separate
+harness choice. See [Hermes under Paperclip](company-paperclip.md) for the
+comparison, accepted qualification and request-graph review workflow.
 The company wrapper supports direct editing and read-only Orca dispatch; no
 Paperclip-to-Orca handoff, Orca edit adapter or community shipping service is
 configured. Board/lane completion does not authorize publication.

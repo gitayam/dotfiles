@@ -1,0 +1,570 @@
+#!/usr/bin/env python3
+"""Company Hermes/Paperclip pilot runtime. Credentials stay out of model context.
+
+Installed as hermes-paperclip and paperclip-run. Native Paperclip still owns
+leases, review stages, authentication and scheduling. No service is started here.
+"""
+import hashlib
+import fcntl
+from contextlib import closing
+import json
+import os
+from pathlib import Path
+import re
+import signal
+import socket
+import socketserver
+import sqlite3
+import tempfile
+import threading
+import time
+import subprocess
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+
+ROLES = {'zf-planner', 'zf-developer', 'zf-reviewer'}
+PROBE_QUERY = 'Respond with hello. Do not use tools.'
+FLAGS = {'-q': 1, '--query': 1, '-Q': 0, '--quiet': 0,
+         '-t': 1, '--toolsets': 1, '--max-turns': 1, '--source': 1,
+         '--resume': 1, '-r': 1, '--checkpoints': 0, '-v': 0, '--verbose': 0,
+         '--oneshot': 0}
+
+
+class RuntimeErrorSafe(ValueError):
+    pass
+
+
+def load_registry():
+    registry=json.loads((Path(__file__).resolve().parent.parent/'paperclip-hermes.json').read_text())
+    if registry.get('qualified'):
+        contract=registry.get('contract') or {}
+        if hashlib.sha256(Path(__file__).resolve().read_bytes()).hexdigest()!=contract.get('runtime_sha256'):
+            raise RuntimeErrorSafe('The accepted runtime changed; refresh and requalify the integration.')
+        native=Path(contract.get('native_stage_file','/unconfigured-stage-source'))
+        if hashlib.sha256(native.read_bytes()).hexdigest()!=contract.get('native_stage_sha256'):
+            raise RuntimeErrorSafe('The accepted native scheduler changed; refresh and requalify it.')
+    return registry
+
+
+def atomic_json(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    tmp=path.with_name(path.name+'.tmp-'+uuid.uuid4().hex)
+    fd=os.open(tmp,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+    with os.fdopen(fd,'w') as f:json.dump(value,f,indent=2)
+    tmp.replace(path)
+
+
+def role_config(registry, role):
+    if registry.get('scope')!='device' or role not in ROLES:
+        raise RuntimeErrorSafe('Select an enrolled company work-Mac profile.')
+    selected=registry['profiles'][role]
+    file=Path(registry['hermes_home'])/'profiles'/role/'config.yaml'
+    if hashlib.sha256(file.read_bytes()).hexdigest()!=selected['config_sha256']:
+        raise RuntimeErrorSafe('Profile configuration changed; refresh routing before running work.')
+    if selected['provider'] not in {'local','server1','z1'} or selected['context']<65536:
+        raise RuntimeErrorSafe('Hermes requires an approved full-context company route.')
+    return selected
+
+
+def build_command(registry, role, args):
+    selected=role_config(registry,role)
+    if not args or args[0]!='chat':raise RuntimeErrorSafe('This adapter accepts native Hermes chat calls only.')
+    filtered=[];i=1;queries=0;removed_yolo=False
+    allowed=set(selected['toolsets'])-{'code_execution','kanban'}
+    while i<len(args):
+        flag=args[i]
+        if flag=='--yolo':removed_yolo=True;i+=1;continue
+        if flag in {'-m','--model','--provider'}:
+            if i+1>=len(args):raise RuntimeErrorSafe('Missing model/provider argument.')
+            expected=selected['provider'] if flag=='--provider' else selected['model']
+            if args[i+1] not in {'auto',expected}:
+                raise RuntimeErrorSafe('The adapter cannot override its enrolled profile route.')
+            i+=2;continue
+        count=FLAGS.get(flag)
+        if count is None or i+count>=len(args):raise RuntimeErrorSafe('Unsupported or incomplete Hermes adapter flag.')
+        value=args[i+1] if count else None
+        if flag in {'-q','--query','--query-file'}:queries+=1
+        if flag in {'-t','--toolsets'} and (not value or not set(value.split(','))<=allowed):
+            raise RuntimeErrorSafe('A requested toolset is outside the enrolled role policy.')
+        if flag=='--max-turns' and (not value.isdecimal() or not 1<=int(value)<=selected['max_turns']):
+            raise RuntimeErrorSafe('The requested iteration limit exceeds the enrolled role budget.')
+        if flag=='--source' and value!='tool':raise RuntimeErrorSafe('Paperclip sessions must use the tool source.')
+        if flag in {'-r','--resume'}:
+            raise RuntimeErrorSafe('Session resume is unqualified for rotating Paperclip run credentials.')
+        filtered.extend(args[i:i+1+count]);i+=1+count
+    if queries!=1:raise RuntimeErrorSafe('Exactly one single-query input is required.')
+    if not any(x in filtered for x in ['-t','--toolsets']):filtered+=['--toolsets',','.join(sorted(allowed))]
+    if '--max-turns' not in filtered:filtered+=['--max-turns',str(selected['max_turns'])]
+    if '--oneshot' not in filtered:filtered+=['--oneshot']
+    return [registry['hermes'],'--profile',role,'chat',*filtered,
+            '--provider',selected['provider'],'--model',selected['model']],removed_yolo
+
+
+def api(context, method, path, body=None):
+    base=context['api_base'].rstrip('/')
+    parsed=urllib.parse.urlsplit(base)
+    if parsed.scheme!='http' or parsed.hostname not in {'127.0.0.1','localhost','::1'} or parsed.username or parsed.password:
+        raise RuntimeErrorSafe('Company callbacks require the configured loopback API.')
+    token=context['api_token']
+    req=urllib.request.Request(base+path,json.dumps(body).encode() if body is not None else None,
+        {'Content-Type':'application/json','Authorization':'Bearer '+token,'X-Paperclip-Run-Id':context['run_id']},method=method)
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self,*args,**kwargs):return None
+    try:
+        with urllib.request.build_opener(NoRedirect).open(req,timeout=30) as response:return json.load(response)
+    except urllib.error.HTTPError as e:
+        raise RuntimeErrorSafe('Paperclip refused the callback (HTTP '+str(e.code)+'); reconcile this run.') from None
+
+
+def workflow_kind(issue,team):
+    policy=issue.get('executionPolicy') or {}
+    shape=[]
+    for stage in policy.get('stages',[]):
+        participants=stage.get('participants',[])
+        if len(participants)!=1 or participants[0].get('type')!='agent':
+            raise RuntimeErrorSafe('The issue does not have the enrolled team review policy.')
+        shape.append((stage.get('type'),participants[0].get('agentId')))
+    review=('review',team['zf-reviewer']);approval=('approval',team['zf-planner'])
+    if policy.get('commentRequired') is not True:raise RuntimeErrorSafe('Native evidence comments are required.')
+    if shape==[review]:return 'analysis'
+    if shape==[review,approval]:return 'coding'
+    raise RuntimeErrorSafe('The issue does not have a qualified coding or analysis review policy.')
+
+
+def check_graph(context,issue,finishing=False):
+    graph=context['graph']
+    roles={'plan':'zf-planner','analysis':'zf-planner','develop':'zf-developer',
+           'review':'zf-reviewer','approve':'zf-planner'}
+    if roles.get(graph.get('phase'))!=context['profile'] or graph.get('parent_id')!=issue.get('parentId'):
+        raise RuntimeErrorSafe('The native task does not match its registered graph phase.')
+    if Path(graph['workspace']).resolve()!=Path(context['workspace']).resolve():
+        raise RuntimeErrorSafe('The graph must use its registered isolated artifact workspace.')
+    if (issue.get('executionPolicy') or {}).get('stages'):
+        raise RuntimeErrorSafe('Do not mix graph ownership with same-issue stage reassignment.')
+    dependencies=set(graph.get('depends_on',[]))
+    if finishing and graph['phase']=='approve':dependencies.update(graph.get('children',[]))
+    for dep_id in dependencies:
+        dep=api(context,'GET','/api/issues/'+dep_id)
+        if dep.get('companyId')!=context['company_id'] or dep.get('status')!='done':
+            raise RuntimeErrorSafe('A graph dependency or independent review is incomplete; no completion was recorded.')
+        if graph['phase']=='approve' and dep_id in graph.get('children',[]) and dep.get('parentId')!=issue['id']:
+            raise RuntimeErrorSafe('A registered child belongs to another parent.')
+        wait_for_graph_dependency(context,dep)
+
+
+def wait_for_graph_dependency(context,dep):
+    """Native Done precedes CLI exit. Do not start a second writer in that gap."""
+    state=Path(context['state']);deadline=time.monotonic()+20
+    path=state/'paperclip-leases'/(dep['id']+'.json')
+    while True:
+        if not path.exists():raise RuntimeErrorSafe('A dependency has no verified worker receipt; reconcile it before continuing.')
+        lease=json.loads(path.read_text())
+        if lease.get('state') in {'unknown','operator_reconciled'}:
+            raise RuntimeErrorSafe('A dependency execution is unresolved; preserve its fence.')
+        if lease.get('state')=='exited':
+            native=api(context,'GET','/api/heartbeat-runs/'+lease['run_id'])
+            if native.get('status')=='succeeded':
+                result=json.loads((state/'paperclip-runs'/lease['run_id']/'process-result.json').read_text())
+                terminal=result.get('hermes_termination') or {}
+                snapshot=native.get('contextSnapshot') or {}
+                if not (native.get('companyId')==context['company_id'] and native.get('agentId')==dep.get('assigneeAgentId')
+                    and (snapshot.get('issueId') or snapshot.get('taskId'))==dep['id'] and native.get('exitCode')==0
+                    and result.get('child_reaped') and result.get('process_group_absent') and not result.get('interrupted')
+                    and terminal.get('ended_at') and terminal.get('children_terminal') and terminal.get('cwd')==context['workspace']):
+                    raise RuntimeErrorSafe('The dependency termination receipt does not match this graph.')
+                return
+            if native.get('status') in {'failed','cancelled','timed_out'}:
+                raise RuntimeErrorSafe('Native completion does not prove this dependency succeeded.')
+        if time.monotonic()>=deadline:
+            raise RuntimeErrorSafe('The prior phase is still closing; no second Hermes writer was started.')
+        time.sleep(0.25)
+
+
+def callback_locked(context_path, context, action, message_path=None):
+    context_path=Path(context_path).resolve()
+    issue=api(context,'GET','/api/issues/'+context['issue_id'])
+    if issue.get('companyId')!=context['company_id']:
+        raise RuntimeErrorSafe('The issue is outside the enrolled company.')
+    if action=='show':return issue
+    if action=='start':
+        if issue.get('assigneeAgentId')!=context['agent_id']:raise RuntimeErrorSafe('This agent no longer owns the issue.')
+        if context.get('graph'):check_graph(context,issue)
+        if context['run_id'] in {issue.get('checkoutRunId'),issue.get('executionRunId')}:return issue
+        return api(context,'POST','/api/issues/'+context['issue_id']+'/checkout',
+                   {'agentId':context['agent_id'],'expectedStatuses':['todo','in_progress','in_review']})
+    if action not in {'finish','changes','handoff'} or not message_path:
+        raise RuntimeErrorSafe('Use show, start, or finish/changes/handoff with a comment file.')
+    message_path=Path(message_path).resolve();workspace=Path(context['workspace']).resolve()
+    if not message_path.is_relative_to(workspace) or not message_path.is_file():
+        raise RuntimeErrorSafe('Callback comments must be files inside the assigned workspace.')
+    message=message_path.read_text()
+    if not message.strip() or len(message)>16000:raise RuntimeErrorSafe('Provide a bounded nonempty handoff comment.')
+    if context['api_token'] in message:
+        raise RuntimeErrorSafe('A callback comment cannot contain its credential.')
+    graph=context.get('graph')
+    if graph:
+        check_graph(context,issue,finishing=action=='finish')
+        if action=='handoff':raise RuntimeErrorSafe('Graph tasks have fixed owners; finish this phase instead of reassigning it.')
+        if action=='changes' and graph['phase'] not in {'review','approve'}:
+            raise RuntimeErrorSafe('Only graph review or approval records change requests.')
+    patch={'status':'done' if action=='finish' else 'in_progress','comment':message}
+    if graph and action=='changes':
+        patch.update(status='blocked',unblockDescriptor={'owner':'board',
+            'action':'Independent review requested bounded rework. Inspect the evidence and assign a correction before resuming this phase.'})
+    if action=='handoff':
+        patch.update(status='todo',assigneeAgentId=context['team']['zf-developer'])
+    fingerprint=hashlib.sha256(json.dumps({'action':action,'patch':patch},sort_keys=True).encode()).hexdigest()
+    marker='<!-- work-paperclip:'+context['run_id']+':'+fingerprint+' -->'
+    patch['comment']+='\n\n'+marker
+    record=context_path.parent/('callback-'+fingerprint+'.json')
+    if record.exists():
+        previous=json.loads(record.read_text())
+        if previous.get('state')=='accepted':return previous['response']
+        comments=api(context,'GET','/api/issues/'+context['issue_id']+'/comments')
+        comments=comments.get('items',[]) if isinstance(comments,dict) else comments
+        if any(marker in c.get('body','') and c.get('authorAgentId')==context['agent_id'] for c in comments):
+            response=api(context,'GET','/api/issues/'+context['issue_id']);atomic_json(record,{**previous,'state':'accepted','response':response});return response
+        raise RuntimeErrorSafe('A previous callback outcome is unknown; no write was retried.')
+    if issue.get('assigneeAgentId')!=context['agent_id']:raise RuntimeErrorSafe('This agent no longer owns the issue.')
+    stage=(issue.get('executionState') or {}).get('currentStageType')
+    kind='graph' if graph else workflow_kind(issue,context['team'])
+    if action=='handoff' and (context['profile']!='zf-planner' or stage or kind!='coding'):
+        raise RuntimeErrorSafe('Only the initial planner may hand this issue to development.')
+    if action=='finish' and context['profile']=='zf-planner' and not stage and kind=='coding':
+        raise RuntimeErrorSafe('The initial coding planner must hand off to development before review.')
+    if action=='changes' and not graph and stage not in {'review','approval'}:
+        raise RuntimeErrorSafe('Only an active review or approval may request changes.')
+    intent={'state':'unknown','action':action,'marker':marker,
+        'issue_id':context['issue_id'],'run_id':context['run_id'],'agent_id':context['agent_id'],
+        'profile':context['profile'],'workspace':str(workspace),
+        'expected_assignee':patch.get('assigneeAgentId')}
+    atomic_json(record,intent)
+    response=api(context,'PATCH','/api/issues/'+context['issue_id'],patch)
+    atomic_json(record,{**intent,'state':'accepted','response':response})
+    return response
+
+
+class CallbackBroker(socketserver.ThreadingUnixStreamServer):
+    """Run credential and immutable scope live in the supervisor, not worker files."""
+    daemon_threads=True
+    block_on_close=False
+    def __init__(self,path,context_path,context):
+        self.context_path=context_path;self.context=context;self.callback_lock=threading.Lock()
+        super().__init__(str(path),CallbackRequest)
+        os.chmod(path,0o600)
+
+
+class CallbackRequest(socketserver.StreamRequestHandler):
+    def handle(self):
+        self.request.settimeout(15)
+        try:
+            line=self.rfile.readline(32769)
+            if len(line)>32768:raise RuntimeErrorSafe('Callback request is too large.')
+            request=json.loads(line)
+            if request.get('run_id')!=self.server.context['run_id']:
+                raise RuntimeErrorSafe('The callback belongs to another native run.')
+            with self.server.callback_lock:
+                result=callback_locked(self.server.context_path,self.server.context,
+                                       request.get('action'),request.get('message_path'))
+            response={'ok':True,'result':result}
+        except RuntimeErrorSafe as e:response={'ok':False,'error':str(e)}
+        except Exception:response={'ok':False,'error':'Callback outcome unknown; inspect the private run journal before retrying.'}
+        self.wfile.write((json.dumps(response)+'\n').encode())
+
+
+def callback(context_path, action, message_path=None):
+    if action!='show' and os.environ.get('HERMES_DELEGATED_CHILD_CONTEXT'):
+        raise RuntimeErrorSafe('Delegated children report to their parent; they do not mutate its Paperclip lease.')
+    path=Path(context_path).resolve();registry=load_registry();root=(Path(registry['state'])/'paperclip-runs').resolve()
+    if path.name!='context.json' or not path.is_relative_to(root) or len(path.relative_to(root).parts)!=2:
+        raise RuntimeErrorSafe('Use a private context created by the native run launcher.')
+    public=json.loads(path.read_text())
+    request={'run_id':path.parent.name,'action':action,'message_path':message_path}
+    try:
+        with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as client:
+            client.settimeout(40);client.connect(public['socket_path']);client.sendall((json.dumps(request)+'\n').encode())
+            with client.makefile('r') as reader:response=json.loads(reader.readline(1048577))
+    except OSError:raise RuntimeErrorSafe('The run callback has expired or is unavailable; reconcile before retrying.') from None
+    if not response.get('ok'):raise RuntimeErrorSafe(response.get('error','Callback refused.'))
+    return response['result']
+
+
+def session_termination(registry,role,context_path):
+    """Find the exact session by its unique run overlay, never by latest/time."""
+    db=Path(registry['hermes_home'])/'profiles'/role/'state.db'
+    with closing(sqlite3.connect('file:'+str(db)+'?mode=ro',uri=True,timeout=2)) as c:
+        binding_file=context_path.parent/'hermes-session.json'
+        binding=json.loads(binding_file.read_text()) if binding_file.exists() else None
+        if binding and binding.get('ambiguous'):return None
+        if binding:
+            rows=c.execute('SELECT id,ended_at,end_reason,cwd,model FROM sessions WHERE id=?',
+                           (binding['session_id'],)).fetchall()
+        else:
+            rows=c.execute('SELECT id,ended_at,end_reason,cwd,model FROM sessions WHERE instr(system_prompt,?)>0',
+                           (str(context_path),)).fetchall()
+        if len(rows)!=1:return None
+        sid,ended,reason,cwd,model=rows[0]
+        if model!=registry['profiles'][role]['model']:return None
+        children=c.execute('WITH RECURSIVE lineage(id,ended_at) AS (SELECT id,ended_at FROM sessions WHERE parent_session_id=? '
+            'UNION ALL SELECT s.id,s.ended_at FROM sessions s JOIN lineage l ON s.parent_session_id=l.id) '
+            'SELECT id,ended_at FROM lineage',(sid,)).fetchall()
+        if binding and cwd and cwd!=binding['workspace']:return None
+        return {'session_id':sid,'ended_at':ended,'end_reason':reason,'cwd':binding['workspace'] if binding else cwd,
+                'binding_source':binding.get('source') if binding else 'unique-run-system-overlay','model':model,
+                'children_terminal':all(bool(r[1]) for r in children),'children_count':len(children)}
+
+
+def relay_output(pipe,target,directory,workspace,capture_session=False):
+    for line in iter(pipe.readline,b''):
+        target.buffer.write(line);target.buffer.flush()
+        if capture_session:
+            found=re.fullmatch(rb'\s*session_id:\s*(local-[a-f0-9]{16,64})\s*',line)
+            if found:
+                path=directory/'hermes-session.json';sid=found[1].decode()
+                previous=json.loads(path.read_text()) if path.exists() else {}
+                atomic_json(path,{'session_id':sid,'workspace':workspace,'source':'native-cli-stderr',
+                    'ambiguous':bool(previous.get('ambiguous') or (previous.get('session_id') and previous['session_id']!=sid))})
+    pipe.close()
+
+
+def reconcile_transition(registry,old,context):
+    directory=Path(registry['state'])/'paperclip-runs'/old['run_id']
+    result=json.loads((directory/'process-result.json').read_text())
+    terminal=result.get('hermes_termination') or {}
+    if not (result.get('child_reaped') and result.get('process_group_absent') and
+            terminal.get('ended_at') and terminal.get('children_terminal')):
+        raise RuntimeErrorSafe('Previous process/gateway termination is unproven; preserve the execution fence.')
+    prior=api(context,'GET','/api/heartbeat-runs/'+old['run_id'])
+    snapshot=prior.get('contextSnapshot') or {}
+    if not (prior.get('status')=='cancelled' and prior.get('errorCode')=='issue_reassigned'
+            and (prior.get('resultJson') or {}).get('reassignmentStopConfirmed') is True
+            and prior.get('companyId')==registry['company_id']
+            and prior.get('agentId')==registry['profiles'][old['profile']]['agent_id']
+            and (snapshot.get('issueId') or snapshot.get('taskId'))==context['issue_id']):
+        raise RuntimeErrorSafe('The predecessor was not a confirmed native handoff cancellation.')
+    issue=api(context,'GET','/api/issues/'+context['issue_id'])
+    kind=workflow_kind(issue,context['team'])
+    comments=api(context,'GET','/api/issues/'+context['issue_id']+'/comments')
+    comments=comments.get('items',[]) if isinstance(comments,dict) else comments
+    intents=[json.loads(p.read_text()) for p in directory.glob('callback-*.json')]
+    valid=[]
+    for intent in intents:
+        if (intent.get('state') in {'unknown','accepted'} and intent.get('action') in {'handoff','finish','changes'}
+            and intent.get('issue_id')==context['issue_id'] and intent.get('run_id')==old['run_id']
+            and intent.get('agent_id')==prior['agentId'] and intent.get('profile')==old['profile']
+            and intent.get('workspace')==terminal.get('cwd')==context['workspace']
+            and issue.get('assigneeAgentId')==context['agent_id']
+            and any(intent.get('marker') and intent['marker'] in c.get('body','')
+                    and c.get('authorAgentId')==prior['agentId'] and c.get('createdByRunId')==old['run_id'] for c in comments)):
+            if intent['action']=='handoff':
+                expected=registry['profiles']['zf-developer']['agent_id']
+                if kind!='coding' or old['profile']!='zf-planner' or intent.get('expected_assignee')!=expected or context['agent_id']!=expected or issue.get('executionState'):continue
+            elif intent['action']=='finish':
+                state=issue.get('executionState') or {};participant=state.get('currentParticipant') or {}
+                expected={('coding','zf-developer'):('review','zf-reviewer'),
+                          ('coding','zf-reviewer'):('approval','zf-planner'),
+                          ('analysis','zf-planner'):('review','zf-reviewer')}.get((kind,old['profile']))
+                if expected!=(state.get('currentStageType'),context['profile']):continue
+                if state.get('status')!='pending' or participant.get('agentId')!=context['agent_id'] or participant.get('type')!='agent':continue
+                if issue.get('status') not in {'in_review','in_progress'}:continue
+            else:
+                state=issue.get('executionState') or {};return_to=state.get('returnAssignee') or {}
+                target='zf-developer' if kind=='coding' else 'zf-planner'
+                if (old['profile'] not in {'zf-reviewer','zf-planner'} or context['profile']!=target
+                    or state.get('status')!='changes_requested' or state.get('lastDecisionOutcome')!='changes_requested'
+                    or return_to.get('agentId')!=context['agent_id'] or issue.get('status')!='in_progress'):continue
+            valid.append(intent)
+    if len(valid)!=1:raise RuntimeErrorSafe('No unique committed native transition proves this successor; preserve the fence.')
+    return {'predecessor_run':old['run_id'],'native_error_code':prior['errorCode'],
+            'marker':valid[0]['marker'],'termination':terminal}
+
+
+def reserve_issue(registry,issue_id,run_id,role,context=None):
+    directory=Path(registry['state'])/'paperclip-leases';directory.mkdir(parents=True,exist_ok=True,mode=0o700)
+    path=directory/(issue_id+'.json')
+    with open(directory/(issue_id+'.lock'),'a') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        old=json.loads(path.read_text()) if path.exists() else {}
+        evidence=None
+        if old.get('state') in {'running','unknown'}:
+            if not context:raise RuntimeErrorSafe('A prior execution of this issue is unresolved; no second worker was started.')
+            evidence=reconcile_transition(registry,old,context)
+        atomic_json(path,{'state':'running','run_id':run_id,'profile':role,'pid':os.getpid(),'reconciled':evidence})
+    return path
+
+
+def stop_process_group(child):
+    """Check the group after its leader exits: tools may outlive the CLI."""
+    for signum,seconds in [(signal.SIGINT,8),(signal.SIGTERM,3),(signal.SIGKILL,2)]:
+        try:os.killpg(child.pid,signum)
+        except ProcessLookupError:break
+        deadline=time.monotonic()+seconds
+        while time.monotonic()<deadline:
+            child.poll()
+            try:os.killpg(child.pid,0)
+            except ProcessLookupError:return
+            time.sleep(0.05)
+    child.wait(timeout=2)
+
+
+def probe_command(registry,role,args):
+    # The installed adapter's real-inference readiness check has exactly this
+    # literal request. No task, tools, callback or caller-provided prompt allowed.
+    expected=['chat','-Q','-q',PROBE_QUERY,'--max-turns','1','-m','auto']
+    if args!=expected:raise RuntimeErrorSafe('A native issue-bound run or the exact tool-free readiness probe is required.')
+    selected=role_config(registry,role)
+    return [registry['hermes'],'--profile',role,'chat','-Q','-q',PROBE_QUERY,
+        '--max-turns','1','--toolsets','bot_room','--oneshot',
+        '--provider',selected['provider'],'--model',selected['model']]
+
+
+def readiness_probe(registry,role,args):
+    command=probe_command(registry,role,args)
+    env={k:v for k,v in os.environ.items() if not k.startswith(('PAPERCLIP_','ANTHROPIC_',
+        'OPENAI_','OPENROUTER_','CLAUDE_CODE_','HERMES_','MISTRAL_'))}
+    env['HERMES_HOME']=registry['hermes_home']
+    child=subprocess.Popen(command,env=env,start_new_session=True)
+    interrupted=threading.Event();previous={};deadline=time.monotonic()+40
+    def cancel(signum,frame):interrupted.set()
+    try:
+        for sig in [signal.SIGINT,signal.SIGTERM]:previous[sig]=signal.signal(sig,cancel)
+        while child.poll() is None and not interrupted.wait(0.05) and time.monotonic()<deadline:pass
+        if interrupted.is_set():return 130
+        return child.returncode if child.returncode is not None else 124
+    finally:
+        if interrupted.is_set() or child.poll() is None:stop_process_group(child)
+        for sig,handler in previous.items():signal.signal(sig,handler)
+
+
+def launch(registry, role, args):
+    command,removed=build_command(registry,role,args)
+    env=dict(os.environ)
+    for key in list(env):
+        if key.startswith(('ANTHROPIC_','OPENAI_','OPENROUTER_','MISTRAL_','CLAUDE_CODE_')):env.pop(key,None)
+    for key in ['HERMES_YOLO_MODE','HERMES_IGNORE_RULES','HERMES_IGNORE_USER_CONFIG','HERMES_ACCEPT_HOOKS','HERMES_PROFILE','HERMES_PROFILE_NAME']:
+        env.pop(key,None)
+    env['HERMES_HOME']=registry['hermes_home']
+    run_id=env.get('PAPERCLIP_RUN_ID','');issue_id=env.get('PAPERCLIP_TASK_ID','')
+    if not re.fullmatch(r'[a-zA-Z0-9_-]{1,128}',run_id) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,128}',issue_id):
+        raise RuntimeErrorSafe('A native issue-bound Paperclip run is required.')
+    graph=registry.get('graph_tasks',{}).get(issue_id)
+    if issue_id not in registry.get('pilot_issue_ids',[]) and not (registry.get('qualified') and graph):
+        raise RuntimeErrorSafe('This integration is in pilot; production work has not been qualified.')
+    selected=registry['profiles'][role]
+    if env.get('PAPERCLIP_AGENT_ID')!=selected['agent_id'] or env.get('PAPERCLIP_COMPANY_ID')!=registry['company_id']:
+        raise RuntimeErrorSafe('The native run does not match the enrolled company/profile identity.')
+    token=env.pop('PAPERCLIP_API_KEY','');os.environ.pop('PAPERCLIP_API_KEY',None)
+    if not token:raise RuntimeErrorSafe('A harness-minted run credential is required.')
+    directory=Path(registry['state'])/'paperclip-runs'/run_id
+    directory.mkdir(parents=True,mode=0o700,exist_ok=False)
+    context={'api_base':registry['api_base'],'company_id':registry['company_id'],'agent_id':selected['agent_id'],
+             'run_id':run_id,'issue_id':issue_id,'profile':role,'workspace':str(Path.cwd()),
+             'state':registry['state'],
+             'team':{k:v['agent_id'] for k,v in registry['profiles'].items()},'api_token':token}
+    if graph:context['graph']=graph
+    native=api(context,'GET','/api/heartbeat-runs/'+run_id)
+    snapshot=native.get('contextSnapshot') or {}
+    leased=(snapshot.get('paperclipWorkspace') or {}).get('cwd')
+    if (native.get('companyId')!=context['company_id'] or native.get('agentId')!=context['agent_id']
+            or (snapshot.get('issueId') or snapshot.get('taskId'))!=issue_id
+            or not leased or Path(leased).resolve()!=Path.cwd().resolve()):
+        raise RuntimeErrorSafe('Native run identity or workspace does not match; no Hermes worker was started.')
+    if graph:check_graph(context,api(context,'GET','/api/issues/'+issue_id))
+    socket_dir=tempfile.TemporaryDirectory(prefix='zfpc-',dir='/private/tmp' if Path('/private/tmp').is_dir() else None)
+    socket_path=Path(socket_dir.name)/'rpc';context_path=directory/'context.json'
+    broker=CallbackBroker(socket_path,context_path,context)
+    broker_thread=threading.Thread(target=broker.serve_forever,kwargs={'poll_interval':0.1},daemon=True);broker_thread.start()
+    atomic_json(context_path,{'socket_path':str(socket_path),'run_id':run_id,'profile':role})
+    helper=Path(__file__).resolve().parent/'paperclip-run'
+    overlay=f'''\nThis is a Paperclip-owned execution of the existing Hermes profile {role}.
+The managed gateway does not forward run API credentials to tools. Replace raw
+curl/environment guidance with this run-scoped helper (never read token files):
+{helper} --context {context_path} start
+{helper} --context {context_path} show
+Write a concise evidence comment file within your current assigned workspace;
+then use the same helper with finish COMMENT_FILE, changes COMMENT_FILE, or
+handoff COMMENT_FILE. Handoff is only for the initial planner to the developer.
+For review/approval, independently verify artifacts before finish; Paperclip
+enforces the next stage. Do not remove review policy or create a duplicate task.
+Do not dispatch this issue through Hermes Kanban or resubmit it to Paperclip.
+Do not publish, merge or deploy without task-specific authority. Stop after
+recording this run's disposition. A decision brief does not adopt owner policy.
+'''
+    if graph:
+        overlay+=f'''\nThis task is registered graph phase {graph['phase']} ({graph['kind']}).
+Paperclip owns its static assignment and dependency edges. Complete only this
+phase in the registered shared artifact worktree; other requests use separate
+worktrees. Do not reassign this issue or call handoff. Use finish COMMENT_FILE
+after actual phase acceptance. Review/approval can use changes COMMENT_FILE to
+retain a visible rework hold. The parent cannot finish until all registered
+children, including independent review, are done. Graph phase approve is final
+verification, never initial planning or a new developer handoff. Stop after the
+single phase disposition. Do not migrate other tasks or adopt recommendations.
+'''
+    env['HERMES_EPHEMERAL_SYSTEM_PROMPT']=env.get('HERMES_EPHEMERAL_SYSTEM_PROMPT','')+overlay
+    if removed:print('work-paperclip: removed the native adapter approval-bypass flag; profile policy is retained.',file=sys.stderr)
+    child=None;lease=None;previous={};readers=[];interrupted=threading.Event()
+    def forward(signum,frame):
+        interrupted.set()
+        if child and child.poll() is None:os.killpg(child.pid,signal.SIGINT)
+    try:
+        lease=reserve_issue(registry,issue_id,run_id,role,context)
+        for signum in [signal.SIGTERM,signal.SIGINT]:previous[signum]=signal.signal(signum,forward)
+        child=subprocess.Popen(command,env=env,start_new_session=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        atomic_json(directory/'launch.json',{'child_pid':child.pid,'process_group_id':child.pid,
+            'hermes_started_at':time.time(),
+            'native_run_id':run_id,'issue_id':issue_id,'profile':role,'workspace':context['workspace'],
+            'provider':selected['provider'],'model':selected['model']})
+        for pipe,target,capture in [(child.stdout,sys.stdout,False),(child.stderr,sys.stderr,True)]:
+            reader=threading.Thread(target=relay_output,args=(pipe,target,directory,context['workspace'],capture),daemon=True)
+            reader.start();readers.append(reader)
+        while child.poll() is None:
+            if interrupted.wait(0.1):
+                stop_process_group(child)
+                break
+        atomic_json(directory/'process-result.json',{'exit':child.returncode,'interrupted':interrupted.is_set(),
+                    'child_reaped':child.returncode is not None})
+        return child.returncode if not interrupted.is_set() else 130
+    finally:
+        if interrupted.is_set() and child is not None:stop_process_group(child)
+        for reader in readers:reader.join(timeout=1)
+        if child is not None:
+            try:os.killpg(child.pid,0);absent=False
+            except ProcessLookupError:absent=True
+            try:terminal=session_termination(registry,role,context_path)
+            except (sqlite3.Error,OSError):terminal=None
+            atomic_json(directory/'process-result.json',{'exit':child.returncode,'interrupted':interrupted.is_set(),
+                'termination_observed_at':time.time(),
+                'child_reaped':child.returncode is not None,'process_group_absent':absent,'hermes_termination':terminal})
+        if lease:
+            uncertain=interrupted.is_set() or (child is not None and (child.returncode!=0 or not absent
+                or not terminal or not terminal.get('ended_at') or not terminal.get('children_terminal')))
+            atomic_json(lease,{'state':'unknown' if uncertain else 'exited','run_id':run_id,
+                        'profile':role,'pid':os.getpid(),'exit':child.returncode if child else None})
+        for signum,handler in previous.items():signal.signal(signum,handler)
+        broker.shutdown();broker.server_close();broker_thread.join(timeout=1);socket_dir.cleanup()
+
+
+def main():
+    if Path(sys.argv[0]).name=='paperclip-run':
+        args=sys.argv[1:]
+        if len(args) not in {3,4} or args[0]!='--context':raise RuntimeErrorSafe('Use --context FILE ACTION [COMMENT_FILE].')
+        print(json.dumps(callback(args[1],args[2],args[3] if len(args)==4 else None)));return 0
+    registry=load_registry()
+    if sys.argv[1:]==['--version']:os.execv(registry['hermes'],[registry['hermes'],'--version'])
+    if not os.environ.get('PAPERCLIP_RUN_ID'):
+        return readiness_probe(registry,os.environ.get('ZF_HERMES_PROFILE',''),sys.argv[1:])
+    return launch(registry,os.environ.get('ZF_HERMES_PROFILE',''),sys.argv[1:])
+
+
+if __name__=='__main__':
+    try:raise SystemExit(main())
+    except RuntimeErrorSafe as e:
+        print('work-paperclip: '+str(e),file=sys.stderr)
+        raise SystemExit(2)
+    except (RuntimeErrorSafe,OSError,ValueError,KeyError):
+        print('work-paperclip: configuration or callback refused; inspect the private run receipt.',file=sys.stderr)
+        raise SystemExit(2)
