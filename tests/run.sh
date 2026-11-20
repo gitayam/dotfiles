@@ -86,6 +86,7 @@ check "company model probe oracles and endpoint boundaries" python3 -B -m unitte
 check "Paperclip Hermes callbacks, routes and termination gates" python3 -B -m unittest discover -s "$REPO/scripts" -p test_work_paperclip.py
 check "Paperclip request graph ownership and unknown-write recovery" python3 -B -m unittest discover -s "$REPO/scripts" -p test_work_graph.py
 check "Paperclip read-only audit detects drift and preserves active work" python3 -B -m unittest discover -s "$REPO/scripts" -p test_work_audit.py
+check "board report counts attempts and card audit keeps notes out of commands" python3 -B -m unittest discover -s "$REPO/scripts" -p test_work_board_tools.py
 check "issue strategy collection coverage and portable installation" python3 -B -m unittest discover -s "$REPO/scripts" -p test_issue_strategy.py
 check "storage-cleanup compiles" python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$REPO/shared/bin/storage-cleanup"
 if command -v node >/dev/null; then

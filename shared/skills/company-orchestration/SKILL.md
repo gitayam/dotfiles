@@ -43,6 +43,20 @@ Choose the lightest useful workflow:
   does not edit or provide a Paperclip handoff. Check actual results.
 - AnyJev for advisory decisions; its score grants no execution/publication power.
 
+For a direct Kanban card, write the contract first: one input file that holds
+everything the worker needs, the one file it writes, the commands it may run,
+what is prohibited and a stop condition, sized for about 7 to 11 steps. Tell it
+to write "not in the input" where the input is silent, and to complete and say
+what stopped it rather than block. Create the card with `--body-file`, the model
+and provider, `--max-runtime`, an idempotency key and, for a chain, `--parent`:
+a child stays in todo until its parents finish. Set the model at creation, never
+on a running card. One card per profile runs at a time, so spread a wave across
+the profiles. On the measured board, cards written from a contract finished far
+more often than free-form or automatically decomposed cards. Afterwards run
+dotfiles `scripts/audit_work_cards.py` on the cards and
+`scripts/report_work_board.py` on the board. A clean audit says the worker stayed
+inside its contract; it is not acceptance of what it wrote.
+
 For Paperclip intake, write JSON with exactly `request_key`, `kind` (`coding`
 or `analysis`), `title`, `description`, `project_id`, `project_workspace_id`.
 Include owned paths, the evidence needed, acceptance commands, prohibited
