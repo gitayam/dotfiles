@@ -4,7 +4,7 @@ The owner's personal workstation setup for macOS and Linux (zsh config, setup an
 hardening scripts, git and SSH tools, encrypted secrets, Claude Code launchers), plus an
 older Ansible playbook for remote host operations. Public on GitHub (CLAUDE.md, README.md).
 
-Status: active (last change 2026-11-16). About 55 commits in November 2026 after a quiet
+Status: active (last change 2026-11-19). About 117 commits in November 2026 after a quiet
 summer; the Ansible half last changed 2026-07-31.
 
 ## Where it is heading
@@ -25,6 +25,10 @@ summer; the Ansible half last changed 2026-07-31.
   OpenCode plugin), failing closed (71fa985, 85b785c, docs/ai-policy.md).
 - Tested and portable: a regression suite in bash and zsh with CI on macOS and Ubuntu, and
   `dots` to find and document every function (fc0d601, 9f57f07, tests/run.sh).
+- A company workstation agent stack kept apart from the personal one: scripts that set up
+  company Hermes profiles and a Paperclip team, a read-only monitor, and tools that report
+  a task board from its own records (a05210e, ab1049c, 3e03988, a0ab33f,
+  docs/company-hermes.md).
 
 ## Priorities
 
@@ -39,6 +43,10 @@ summer; the Ansible half last changed 2026-07-31.
    address no longer on the tailnet (CLAUDE.md warning, verified 2026-11-09).
 5. Keep `dots --lint` empty: every user-facing function gets a one-line description
    (CLAUDE.md "Finding commands").
+6. Change the company agent setup in the setup scripts with a test, never by hand on the
+   device: a refresh reverts hand edits. Keep what the scripts write into each role's
+   `config.yaml` byte for byte unless a requalification is planned
+   (docs/company-hermes.md, a0ab33f).
 
 ## Non-goals and constraints
 
@@ -61,9 +69,22 @@ summer; the Ansible half last changed 2026-07-31.
   publishers (CLAUDE.md "Local Config Sync").
 - Review-only for the Hermes ship service: bot changes open a merge request and are never
   merged automatically (ai-coding-env servers/hermes-coding/SHIP.md, e60e44a there).
+- Company device details (addresses, ids, private paths, task text) never appear here;
+  they stay in the device's private workspace (docs/company-hermes.md).
+- On a work device the main checkout is live: a monitor and a scheduled board intake run
+  from it. Work in a separate worktree; never switch its branch or leave edits in it.
 
 ## Decisions
 
+- 2026-11-19: A task board can specify a rough request into one card instead of
+  decomposing it: a private input turns decomposition off in the root configuration only,
+  and a one-minute intake job specifies Triage cards (a0ab33f, e8b5c5e).
+- 2026-11-19: Read-only tools report a board's outcomes by who wrote the card and audit a
+  worker's recorded tool calls against its contract (3e03988, fd11992).
+- 2026-11-19: A read-only audit of the company agent stack runs every five minutes
+  (ab1049c).
+- 2026-11-18: Company Hermes profiles can run as a Paperclip team through request graphs
+  (a05210e).
 - 2026-11-16: Add Lumo as a Claude Code and OpenCode backend, denied for ZenithFlow
   (85b785c).
 - 2026-11-12: Per-project AI policy; Alibaba denied for IrregularChat and ZenithFlow
@@ -79,6 +100,24 @@ summer; the Ansible half last changed 2026-07-31.
   `ansible/files/` (81d5e3a, c8bca94).
 - 2026-06-03: Add CLAUDE.md as the Ansible quick reference; remove an env backup
   (111aacd, ee44408).
+
+## For agents working here
+
+- Find out whether the thing already exists before adding it: search the repository and
+  the decisions above. Lumo, for example, is already a Claude Code and OpenCode backend
+  (`cc-lumo`, docs/claude-lumo.md).
+- An application for a new machine goes into the question-first setup scripts
+  (`macos/initial_macos_setup.sh`, `linux/initial_linux_setup.sh`), beside the nearest
+  existing example, and must behave under `DRY_RUN=1` (CLAUDE.md "Local Config Sync").
+  A download is pinned and checksum-verified, or comes from Homebrew or a verified Flathub
+  publisher. A "manual install" line with an unpinned link does not meet that.
+- Every change comes with a test in `tests/run.sh` that fails without it; run the whole
+  script before pushing (priority 1).
+- Open a pull request from a branch named `<feat|fix|docs>/<slug>-YYYYMMDD`; nothing is
+  committed to `main` directly.
+- When the request does not say which of two readings is meant, take the one the nearest
+  existing example supports, say so in the pull request, and leave the other as a question
+  there rather than stopping.
 
 ## Open questions for the owner
 
