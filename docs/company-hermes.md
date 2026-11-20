@@ -263,8 +263,8 @@ cannot check. Use two retries only for a card that is safe to run twice.
 
 A card's summary is the worker's claim. `scripts/audit_work_cards.py` lists the
 tool calls a worker made, from the profile's session store, and flags a command
-outside the patterns the contract allowed, a prohibited command and a file
-written elsewhere:
+outside the patterns the contract allowed, a prohibited command, a command run
+inside another (`$( )` or backticks) and a file written elsewhere:
 
 ```bash
 python3 scripts/audit_work_cards.py --board <board> --cards-file cards.txt \
@@ -274,9 +274,23 @@ python3 scripts/audit_work_cards.py --board <board> --cards-file cards.txt \
 
 It sets here-documents and quoted text aside before splitting a command. Without
 that, a worker that writes its notes with `cat > file <<'EOF'` has every sentence
-containing a semicolon reported as a command. A card with no recorded session is
-reported as unaudited, never as clean. A clean audit says the worker stayed inside
-its contract; it does not accept what the worker wrote.
+containing a semicolon reported as a command. A plain name set in the call
+(`F=<path>`, then `$F`) is put in place before a command is checked: one card's
+seventy reads through such a name had all been reported. A read counts as under
+the input folder only when its path stays there (`<folder>/../x` does not).
+
+A command run inside another is flagged whatever it is, because quoting hides it
+from the other checks. Two were on real cards: an `echo "... $(wc -l < file)"`,
+harmless, and a `grep -c "has a `precision`" file`, where backticks meant as
+markdown sat inside double quotes, so the shell ran the word as a command and
+the search looked for something else. Tell a worker to quote a search pattern
+that holds backticks with single quotes, and to write notes through a
+here-document whose delimiter is quoted (`<<'EOF'`): with a bare delimiter the
+shell expands the body, and markdown is full of backticks.
+
+A card with no recorded session is reported as unaudited, never as clean. A
+clean audit says the worker stayed inside its contract; it does not accept what
+the worker wrote.
 
 `scripts/report_work_blocks.py` says why each open card is open, read-only and
 with ids and counts only: it waits for a person (and whether a person has

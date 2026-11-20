@@ -61,9 +61,14 @@ to write "not in the input" where the input is silent, and to complete and say
 what stopped it rather than block. Create the card with `--body-file`, the model
 and provider, `--max-runtime`, an idempotency key and, for a chain, `--parent`:
 a child stays in todo until its parents finish. Set the model at creation, never
-on a running card. One card per profile runs at a time, so spread a wave across
-the profiles. On the measured board, cards written from a contract finished far
-more often than free-form or automatically decomposed cards. Afterwards run
+on a running card. How many cards run at once, in total and per profile, is set
+by the installer's inputs (two and one unless raised): read the configured limits
+before sizing a wave, and spread it across the profiles. Have the worker write
+its file through a here-document whose delimiter is quoted (`<<'EOF'`) and put
+single quotes round a search pattern that holds backticks: inside double quotes
+and inside a bare here-document the shell runs them as commands. On the measured
+board, cards written from a contract finished far more often than free-form or
+automatically decomposed cards. Afterwards run
 dotfiles `scripts/audit_work_cards.py` on the cards and
 `scripts/report_work_board.py` on the board. A clean audit says the worker stayed
 inside its contract; it is not acceptance of what it wrote. Run
