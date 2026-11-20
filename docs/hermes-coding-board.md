@@ -55,4 +55,14 @@ interrupts running cards: use the guarded `hermes-ops restart` and pick an idle 
 12. **Model-policy isolation needs its own sandbox.** A coder on a policy-restricted
     provider (Qwen, allowed only for some projects by [ai-policy](ai-policy.md)) cannot use
     the shared sandbox, which holds clones of projects that provider is denied for. Give it
-    its own sandbox and a project-scoped read token only.
+    its own sandbox and a project-scoped read token only. Built 2026-11-20 as `coder-alibaba`
+    (`qwen4-max`, lunarnewyear only, `hermes-coding-sandbox-lny`): it needs a GitLab **deploy
+    token**; a project access token's bot user still cloned the internal IrregularChat
+    monorepo in the isolation check (revoked). It can't read other repos, so give it
+    self-contained lunarnewyear cards.
+13. **Keep headroom under `context_file_max_chars`.** The coding SOUL reached 38,730 chars
+    against a 40,000 cap; past it Hermes cuts the end, where the owner's rules sit. A test
+    keeps 2,000 chars of margin; the cap is now 60,000.
+14. **A failed command still empties its redirect target.** A zsh loop staged nothing and
+    `cat missing > config.yaml` emptied the live coder config for a minute (restored from the
+    backup). Deploy through a script that refuses missing or empty staged files.
