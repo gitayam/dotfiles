@@ -365,14 +365,16 @@ claude_z_server_env() {
 }
 check "claude-z: every tier and subagent uses the served model; window from vLLM" claude_z_server_env
 claude_z_registry() {
-  local out rc=0
-  out=$(PATH="$CZT/bin:$PATH" bash "$REPO/shared/bin/claude-z" ensure qwen 2>/dev/null)
+  # An empty home: a work-only device's ~/.config/ai-policy/device-models.conf replaces
+  # the repository registry in claude-z, and holds only the two organization rows
+  local out rc=0 home="$CZT/home"; mkdir -p "$home"
+  out=$(HOME="$home" PATH="$CZT/bin:$PATH" bash "$REPO/shared/bin/claude-z" ensure qwen 2>/dev/null)
   [[ "$out" == "8003 huihui-ai/Huihui-Qwen3.8-27B-abliterated nothink" ]] || { echo "ensure alias: $out"; rc=1; }
-  out=$(PATH="$CZT/bin:$PATH" bash "$REPO/shared/bin/claude-z" ensure 1 2>/dev/null)
+  out=$(HOME="$home" PATH="$CZT/bin:$PATH" bash "$REPO/shared/bin/claude-z" ensure 1 2>/dev/null)
   [[ "$out" == "8001 glm-5.3-flash -" ]] || { echo "ensure 1: $out"; rc=1; }
-  out=$(PATH="$CZT/bin:$PATH" bash "$REPO/shared/bin/claude-z" 2f -p x 2>&1); [[ $? -eq 2 && "$out" == *"zq 2f"* && "$out" != *"args="* ]] || { echo "32K not refused: $out"; rc=1; }
-  out=$(PATH="$CZT/bin:$PATH" bash "$REPO/shared/bin/claude-z" embed -p x 2>&1); [[ "$out" == *"embed model"* && "$out" != *"args="* ]] || { echo "embed not refused: $out"; rc=1; }
-  PATH="$CZT/bin:$PATH" bash "$REPO/shared/bin/claude-z" nope 2>/dev/null | grep -q "args=nope" || { echo "unknown first arg not passed to claude"; rc=1; }
+  out=$(HOME="$home" PATH="$CZT/bin:$PATH" bash "$REPO/shared/bin/claude-z" 2f -p x 2>&1); [[ $? -eq 2 && "$out" == *"zq 2f"* && "$out" != *"args="* ]] || { echo "32K not refused: $out"; rc=1; }
+  out=$(HOME="$home" PATH="$CZT/bin:$PATH" bash "$REPO/shared/bin/claude-z" embed -p x 2>&1); [[ "$out" == *"embed model"* && "$out" != *"args="* ]] || { echo "embed not refused: $out"; rc=1; }
+  HOME="$home" PATH="$CZT/bin:$PATH" bash "$REPO/shared/bin/claude-z" nope 2>/dev/null | grep -q "args=nope" || { echo "unknown first arg not passed to claude"; rc=1; }
   return $rc
 }
 check "claude-z: registry keys and aliases; 32K and non-chat models refused for Claude Code" claude_z_registry
