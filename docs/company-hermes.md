@@ -299,6 +299,22 @@ be read. `--remove --apply` unloads the job and deletes only its own plist; do
 that before turning decomposition back on or changing its board, since a loaded
 job is never rewritten.
 
+Observed on one device after turning decomposition off and installing the
+intake: the refresh changed one key of the root configuration and left the three
+role configurations byte for byte as they were, so the setup audit passed all of
+its checks before and after. A one-line request typed into Triage was specified
+61 seconds later into one card with a goal, an approach, acceptance criteria and
+an out-of-scope list, started eight seconds after that, and finished in eleven
+seconds with the exact file asked for. No child card was created. Before the
+change, the same kind of request had been split into four cards within 23
+seconds; two of them ran out of steps twice and blocked the fourth.
+
+Two limits of the intake as built. The specified card keeps the assignee the
+request was given and has no review step: a request that needs one should be
+written as two cards with a parent link. And the log gains one line a minute
+while Triage is empty ("No triage tasks.") and is not rotated: about 1,400 short
+lines a day.
+
 ## Local inference and AnyJev on Apple silicon
 
 Use a Metal-enabled `llama-server` bound to loopback and an official Gemma GGUF

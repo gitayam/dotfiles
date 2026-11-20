@@ -57,6 +57,13 @@ dotfiles `scripts/audit_work_cards.py` on the cards and
 `scripts/report_work_board.py` on the board. A clean audit says the worker stayed
 inside its contract; it is not acceptance of what it wrote.
 
+Where the private configuration sets `kanban_auto_decompose` false and the board
+intake job is installed, a rough request typed into Triage is specified within
+about a minute into ONE card (goal, approach, acceptance criteria, out of scope)
+and is not split into children. Such a card keeps its assignee and has no review
+step; write a second card with a parent link when review is needed. Check the
+root Hermes configuration, not a role profile, to see which mode a board is in.
+
 For Paperclip intake, write JSON with exactly `request_key`, `kind` (`coding`
 or `analysis`), `title`, `description`, `project_id`, `project_workspace_id`.
 Include owned paths, the evidence needed, acceptance commands, prohibited
