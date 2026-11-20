@@ -203,6 +203,51 @@ class WorkRoutes(unittest.TestCase):
             self.assertFalse(path.is_symlink());self.assertEqual(app.read_text(),'native application stays unchanged')
             backups=list(path.parent.glob('tailscale.backup.*'));self.assertEqual(len(backups),1);self.assertTrue(backups[0].is_symlink())
 
+    def test_role_step_limits_change_only_the_named_role_and_survive_a_refresh(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp).resolve()
+            saved={key:planned_writes(setup,root,private_config(root,**extra))
+                   for key,extra in [('absent',{}),('raised',{'role_max_turns':{'zf-developer':40}})]}
+            self.assertNotIn('role_max_turns',json.loads(saved['absent'][PRIVATE]))
+            self.assertEqual(json.loads(saved['raised'][PRIVATE])['role_max_turns'],{'zf-developer':40})
+            # A refresh starts from the private config the previous run saved.
+            self.assertEqual(planned_writes(setup,root,json.loads(saved['raised'][PRIVATE])),saved['raised'])
+            # The first step writes no role profile, so only the private config differs there.
+            self.assertEqual({path for path in saved['raised'] if saved['raised'][path]!=saved['absent'].get(path)},{PRIVATE})
+            for path in [ROOT,'hermes/skills/autonomous-ai-agents/company-coding-stack/SKILL.md']:
+                (root/path).parent.mkdir(parents=True,exist_ok=True);(root/path).write_bytes(saved['raised'][path])
+            runs={key:planned_writes(desktop,root,json.loads(run[PRIVATE])) for key,run in saved.items()}
+            turns=lambda key,role:json.loads(runs[key][f'hermes/profiles/{role}/config.yaml'])['agent']['max_turns']
+            self.assertEqual([turns('absent',role) for role in sorted(desktop.ROLES)],[16,16,16])
+            self.assertEqual(turns('raised','zf-developer'),40)
+            for role in ['zf-planner','zf-reviewer']:
+                self.assertEqual(runs['raised'][f'hermes/profiles/{role}/config.yaml'],runs['absent'][f'hermes/profiles/{role}/config.yaml'])
+
+    def test_role_step_limits_win_over_a_profile_value_and_refuse_bad_input(self):
+        workspace=Path('/tmp/company')
+        kept=worker_config({'agent':{'max_turns':24}},ROUTES,workspace,'local')
+        self.assertEqual(kept['agent']['max_turns'],24)
+        self.assertEqual(worker_config({'agent':{'max_turns':24}},ROUTES,workspace,'local',max_turns=40)['agent']['max_turns'],40)
+        self.assertEqual(desktop.role_max_turns(dict(routes=ROUTES)),{})
+        for bad in [{'zf-developer':7},{'zf-developer':101},{'zf-developer':'40'},{'zf-developer':True},
+                    {'zf-developer':40.0},{'developer':40},[],'40',None]:
+            with self.assertRaisesRegex(ValueError,'role_max_turns must map known roles'):
+                model_policy(dict(routes=ROUTES,role_max_turns=bad))
+
+    def test_role_prompt_names_personal_repositories_and_the_direction_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp).resolve()
+            saved=planned_writes(setup,root,private_config(root))
+            for path in [ROOT,'hermes/skills/autonomous-ai-agents/company-coding-stack/SKILL.md']:
+                (root/path).parent.mkdir(parents=True,exist_ok=True);(root/path).write_bytes(saved[path])
+            runs=planned_writes(desktop,root,json.loads(saved[PRIVATE]))
+            for role in desktop.ROLES:
+                prompt=runs[f'hermes/profiles/{role}/SOUL.md'].decode()
+                self.assertIn('Personal repositories: ~/Git.',prompt)
+                self.assertIn('/.workstation/REPOSITORIES.md lists every checkout',prompt)
+                self.assertIn('DIRECTION.md, AGENTS.md and CLAUDE.md',prompt)
+                self.assertIn('settle a question from them and from the card before\nblocking',prompt)
+
     def test_task_assignments_keep_independent_fallbacks_and_worker_budgets(self):
         policy={'role_models':{'zf-planner':'1'},
                 'auxiliary_models':{'title_generation':'local','review':'1'},'routes':ROUTES}

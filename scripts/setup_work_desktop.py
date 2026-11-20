@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import subprocess
 
-from setup_work_hermes import hermes_config, write, install_issue_strategy, model_policy
+from setup_work_hermes import hermes_config, write, install_issue_strategy, model_policy, role_max_turns
 
 ROLES = {
     'zf-planner': 'Plan company engineering work: inspect requirements and source, write bounded tasks and acceptance criteria. Do not implement source changes.',
@@ -36,7 +36,7 @@ def desktop_config(existing):
     return cfg
 
 
-def worker_config(existing,routes,workspace,default,auxiliary_models=None,delegation_model=None):
+def worker_config(existing,routes,workspace,default,auxiliary_models=None,delegation_model=None,max_turns=None):
     # kanban_auto_decompose is deliberately not passed: the dispatcher reads the root config, and
     # the Paperclip qualification pins each role config's hash, so roles keep auto_decompose on.
     cfg=hermes_config(existing,routes,workspace,default,company_roles=True,auxiliary_models=auxiliary_models,delegation_model=delegation_model)
@@ -44,6 +44,8 @@ def worker_config(existing,routes,workspace,default,auxiliary_models=None,delega
     cfg.pop('webapp',None)
     cfg['agent'].setdefault('run_budget_seconds',900)
     cfg['agent'].setdefault('max_turns',16)
+    # A private role_max_turns entry wins over the profile's own value; absent, that value stays.
+    if max_turns is not None:cfg['agent']['max_turns']=max_turns
     # Native -q policy requires a separate approval for arbitrary Python cells.
     # Do not advertise that unavailable tool to unattended workers or widen policy.
     cfg['platform_toolsets']['cli']=[t for t in cfg['platform_toolsets']['cli'] if t!='code_execution']
@@ -89,13 +91,18 @@ def main():
         config=target/'config.yaml'
         existing=yaml.safe_load(config.read_text()) if config.exists() else {}
         configured=worker_config(existing or {},cfg['routes'],workspace,
-            role_models.get(name,cfg['default_model']),auxiliary_models,cfg.get('delegation_model'))
+            role_models.get(name,cfg['default_model']),auxiliary_models,cfg.get('delegation_model'),
+            max_turns=role_max_turns(cfg).get(name))
         write(config,yaml.safe_dump(configured,sort_keys=False),args.apply)
         soul=target/'SOUL.md';text=soul.read_text() if soul.exists() else ''
         marker='<!-- work-desktop-role -->'
         text=text.split(marker)[0].rstrip()+'\n\n'+marker+'\n'+role+f'''
-Company workspace: {workspace}. Read WORKSTATION.md and the company-coding-stack
-skill. Use only local Gemma, approved organization models or real Enterprise
+Company workspace: {workspace}. Personal repositories: ~/Git. Read WORKSTATION.md
+and the company-coding-stack skill. {state}/REPOSITORIES.md lists every checkout
+with its DIRECTION.md, AGENTS.md and CLAUDE.md: read those of the repository you work
+in before changing it, and settle a question from them and from the card before
+blocking; say in your summary what you assumed and from which file.
+Use only local Gemma, approved organization models or real Enterprise
 Claude Code. AnyJev advises; Orca's company lane is read-only; Paperclip is a
 separate company issue board. Reconcile existing issue/run IDs before retrying.
 Preserve dirty work, independently verify artifacts and report actual checks.

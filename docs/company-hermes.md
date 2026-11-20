@@ -194,7 +194,13 @@ subject to their existing guards. The installer does not set
 `approvals.single_query_mode: approve`; interactive host sessions retain the tool.
 Specialist profiles default to a 900-second conversation-turn budget and 16 tool
 iterations, retaining explicit existing values (a planner raised to 24 by hand
-stays at 24; a fresh install gives every role 16). A task's native `--max-runtime`
+stays at 24; a fresh install gives every role 16). The private input
+`role_max_turns` (for example `{"zf-developer": 40, "zf-reviewer": 24}`, whole
+numbers from 8 to 100) sets a role's limit whatever its profile holds, and is the
+way to raise it: on one board seven cards that edited files died at 16 steps in
+one night with their work finished or nearly so. It rewrites that role's
+`config.yaml`, which the Paperclip qualification pins, so plan the acceptance
+run with it. A task's native `--max-runtime`
 is the separate whole-worker cap; set it and `--max-retries 1` for one attempt.
 Large assignments need bounded milestones or an explicit profile budget change.
 
@@ -282,7 +288,12 @@ That input survives a refresh and changes the root configuration only, which is
 the one the dispatcher reads on every tick, so no restart is needed. The three
 role profiles deliberately keep `auto_decompose` on whatever it says: the
 Paperclip qualification pins a hash of each role's `config.yaml`, and a role
-configuration that never changes leaves that qualification untouched.
+configuration that never changes leaves that qualification untouched. Only that file is pinned for
+a role: its prompt (`SOUL.md`) and its skills are not hashed, so the role prompt
+and skill text can change on any refresh. The role prompt names the personal
+repositories and the repository map with each checkout's `DIRECTION.md`,
+`AGENTS.md` and `CLAUDE.md`, and tells the worker to settle a question from those
+and from the card before blocking.
 
 The board limits are private inputs too: `"kanban_max_in_progress"` and
 `"kanban_max_in_progress_per_profile"`, each a whole number from 1 to 32
