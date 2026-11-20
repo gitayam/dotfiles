@@ -9,9 +9,12 @@ import json
 import subprocess
 from pathlib import Path
 import tempfile
+import types
 import unittest
 from unittest.mock import patch
 
+import setup_work_hermes as setup
+import setup_work_desktop as desktop
 from setup_work_hermes import hermes_config, SLOTS, write, paperclip_context, repair_paperclip_shim, company_shell_text, model_policy, existing_tailscale_cli
 from setup_work_desktop import desktop_config, ui_readiness, worker_config
 
@@ -22,9 +25,80 @@ ROUTES={key:dict(name=key,url=f'http://127.0.0.1:{port}/v1',model=model,context=
         for key,port,model,ctx in [('local',8080,'gemma-4-26b-a4b',131072),
           ('1',8001,'glm-5.3-flash',262144),('2',8002,'openai/gpt-oss-120b',49152)]}
 CFG=dict(routes=ROUTES,scope='workspace',workspace='/tmp/company',enterprise_org='test-org')
+PRIVATE='company/.workstation/config.json'
+ROOT='hermes/config.yaml'
+DECOMPOSE=[('absent',{}),('on',{'kanban_auto_decompose':True}),('off',{'kanban_auto_decompose':False})]
+
+
+def private_config(root,**extra):
+    return dict(workspace=str(root/'company'),hermes_home=str(root/'hermes'),scope='device',
+                enterprise_org='test-org',routes=ROUTES,decide_url='http://127.0.0.1:8137',**extra)
+
+
+def planned_writes(script,root,private):
+    """Run a setup script's main() without --apply; return what it would write, by path under root."""
+    source=root/'private.json';source.write_text(json.dumps(private));planned={}
+    def record(path,content,apply,mode=0o600):
+        planned[str(Path(path).relative_to(root))]=content.encode() if isinstance(content,str) else content
+    # JSON is valid YAML: standing in for PyYAML keeps this suite on the standard library.
+    serializer=types.SimpleNamespace(safe_load=json.loads,
+        safe_dump=lambda data,sort_keys=True:json.dumps(data,sort_keys=sort_keys))
+    with patch.dict(sys.modules,{'yaml':serializer}),patch.object(Path,'home',return_value=root/'home'),\
+         patch.object(setup.shutil,'which',return_value=None),patch.object(setup,'write',record),\
+         patch.object(desktop,'write',record),patch.object(sys,'argv',['setup','--from-config',str(source)]),\
+         redirect_stdout(io.StringIO()):
+        script.main()
+    return planned
 
 
 class WorkRoutes(unittest.TestCase):
+    def test_decomposition_input_defaults_on_and_off_changes_one_value(self):
+        workspace=Path('/tmp/company');existing=lambda:{'kanban':{'max_in_progress':9},'approvals':{'mode':'off'}}
+        default=hermes_config(existing(),ROUTES,workspace,company_roles=True)
+        # Serialized, so a moved key counts as a change to the written file.
+        self.assertEqual(json.dumps(hermes_config(existing(),ROUTES,workspace,company_roles=True,auto_decompose=True)),json.dumps(default))
+        off=hermes_config(existing(),ROUTES,workspace,company_roles=True,auto_decompose=False)
+        self.assertIs(default['kanban']['auto_decompose'],True)
+        self.assertIs(off['kanban']['auto_decompose'],False)
+        off['kanban']['auto_decompose']=True
+        self.assertEqual(json.dumps(off),json.dumps(default))
+        self.assertIs(desktop_config({'kanban':{'auto_decompose':False}})['kanban']['auto_decompose'],False)
+        for bad in ['false','off',0,1,None,[]]:
+            with self.assertRaisesRegex(ValueError,'kanban_auto_decompose must be true or false'):
+                model_policy(dict(routes=ROUTES,kanban_auto_decompose=bad))
+            with self.assertRaisesRegex(ValueError,'kanban_auto_decompose must be true or false'):
+                hermes_config({},ROUTES,workspace,auto_decompose=bad)
+
+    def test_decomposition_input_survives_a_refresh_and_changes_only_the_root_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp).resolve()
+            runs={key:planned_writes(setup,root,private_config(root,**extra)) for key,extra in DECOMPOSE}
+            self.assertNotIn('kanban_auto_decompose',json.loads(runs['absent'][PRIVATE]))
+            self.assertIs(json.loads(runs['off'][PRIVATE])['kanban_auto_decompose'],False)
+            # A refresh starts from the private config the previous run saved.
+            self.assertEqual(planned_writes(setup,root,json.loads(runs['off'][PRIVATE])),runs['off'])
+            changed=lambda key:{path for path in set(runs[key])|set(runs['absent']) if runs[key].get(path)!=runs['absent'].get(path)}
+            self.assertEqual(changed('on'),{PRIVATE})
+            self.assertEqual(changed('off'),{PRIVATE,ROOT})
+            off=json.loads(runs['off'][ROOT]);self.assertIs(off['kanban']['auto_decompose'],False)
+            off['kanban']['auto_decompose']=True
+            self.assertEqual(json.dumps(off).encode(),runs['absent'][ROOT])
+            with self.assertRaisesRegex(ValueError,'kanban_auto_decompose must be true or false'):
+                planned_writes(setup,root,private_config(root,kanban_auto_decompose='false'))
+
+    def test_role_profiles_are_generated_identically_whatever_the_decomposition_input_says(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp).resolve()
+            saved={key:planned_writes(setup,root,private_config(root,**extra)) for key,extra in DECOMPOSE}
+            # The Desktop step reads the root config and the skill the first step installed.
+            for path in [ROOT,'hermes/skills/autonomous-ai-agents/company-coding-stack/SKILL.md']:
+                (root/path).parent.mkdir(parents=True,exist_ok=True);(root/path).write_bytes(saved['off'][path])
+            runs={key:planned_writes(desktop,root,json.loads(run[PRIVATE])) for key,run in saved.items()}
+            self.assertEqual(runs['off'],runs['absent']);self.assertEqual(runs['on'],runs['absent'])
+            for role in desktop.ROLES:
+                self.assertIs(json.loads(runs['off'][f'hermes/profiles/{role}/config.yaml'])['kanban']['auto_decompose'],True)
+            self.assertIs(json.loads(runs['off'][ROOT])['kanban']['auto_decompose'],False)
+
     def test_server_names_preserve_legacy_routes_and_explicit_child_limits(self):
         cfg=hermes_config({'delegation':{'max_iterations':7,'max_concurrent_children':2}},ROUTES,Path('/tmp/company'))
         for old,new in [('z1','server1'),('z2','server2')]:

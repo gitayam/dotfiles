@@ -37,6 +37,8 @@ def desktop_config(existing):
 
 
 def worker_config(existing,routes,workspace,default,auxiliary_models=None,delegation_model=None):
+    # kanban_auto_decompose is deliberately not passed: the dispatcher reads the root config, and
+    # the Paperclip qualification pins each role config's hash, so roles keep auto_decompose on.
     cfg=hermes_config(existing,routes,workspace,default,company_roles=True,auxiliary_models=auxiliary_models,delegation_model=delegation_model)
     cfg['gateway']={**cfg.get('gateway',{}),'standalone':False}
     cfg.pop('webapp',None)
