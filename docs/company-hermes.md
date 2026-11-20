@@ -284,6 +284,16 @@ role profiles deliberately keep `auto_decompose` on whatever it says: the
 Paperclip qualification pins a hash of each role's `config.yaml`, and a role
 configuration that never changes leaves that qualification untouched.
 
+The board limits are private inputs too: `"kanban_max_in_progress"` and
+`"kanban_max_in_progress_per_profile"`, each a whole number from 1 to 32
+(anything else, including `true` or `null`, is refused). Absent, the installer
+writes 2 and 1 as before, so a refresh without the inputs reproduces the older
+configuration byte for byte. Unlike `auto_decompose`, the dispatcher reads these
+two once when the gateway starts: a change needs a gateway restart, taken with
+no card running, and that restart interrupts whatever is in flight. Size them to
+what the machine and the model routes can carry at once, not to the number of
+cards waiting; a queue that waits is normal, a queue that fails is not.
+
 Intake with decomposition off: a card in Triage then stays there until
 `hermes kanban --board <board> specify <id>` or `specify --all` runs.
 `scripts/setup_work_intake.py --board <board>` (dry run; `--apply` to install)

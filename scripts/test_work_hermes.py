@@ -99,6 +99,51 @@ class WorkRoutes(unittest.TestCase):
                 self.assertIs(json.loads(runs['off'][f'hermes/profiles/{role}/config.yaml'])['kanban']['auto_decompose'],True)
             self.assertIs(json.loads(runs['off'][ROOT])['kanban']['auto_decompose'],False)
 
+    def test_limit_inputs_default_to_today_and_raise_only_the_root_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp).resolve()
+            runs={key:planned_writes(setup,root,private_config(root,**extra))
+                  for key,extra in [('absent',{}),
+                                    ('raised',{'kanban_max_in_progress':16,'kanban_max_in_progress_per_profile':8})]}
+            self.assertNotIn('kanban_max_in_progress',json.loads(runs['absent'][PRIVATE]))
+            self.assertEqual(json.loads(runs['raised'][PRIVATE])['kanban_max_in_progress'],16)
+            self.assertEqual(json.loads(runs['raised'][PRIVATE])['kanban_max_in_progress_per_profile'],8)
+            # A refresh starts from the private config the previous run saved.
+            self.assertEqual(planned_writes(setup,root,json.loads(runs['raised'][PRIVATE])),runs['raised'])
+            changed=lambda key:{path for path in set(runs[key])|set(runs['absent'])
+                                if runs[key].get(path)!=runs['absent'].get(path)}
+            self.assertEqual(changed('raised'),{PRIVATE,ROOT})
+            raised=json.loads(runs['raised'][ROOT])
+            self.assertEqual(raised['kanban']['max_in_progress'],16)
+            self.assertEqual(raised['kanban']['max_in_progress_per_profile'],8)
+            raised['kanban']['max_in_progress']=2;raised['kanban']['max_in_progress_per_profile']=1
+            self.assertEqual(json.dumps(raised).encode(),runs['absent'][ROOT])
+
+    def test_limit_inputs_refuse_anything_but_a_whole_number_from_one_to_thirty_two(self):
+        workspace=Path('/tmp/company')
+        for bad in ['16',0,-1,33,True,False,2.5,None,[],{}]:
+            for name in ['kanban_max_in_progress','kanban_max_in_progress_per_profile']:
+                message=f'{name} must be a whole number from 1 to 32'
+                with self.assertRaisesRegex(ValueError,message):
+                    model_policy(dict(routes=ROUTES,**{name:bad}))
+                with self.assertRaisesRegex(ValueError,message):
+                    hermes_config({},ROUTES,workspace,**{name:bad})
+
+    def test_role_profiles_are_generated_identically_whatever_the_limit_inputs_say(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp).resolve()
+            saved={key:planned_writes(setup,root,private_config(root,**extra))
+                   for key,extra in [('absent',{}),
+                                     ('raised',{'kanban_max_in_progress':16,'kanban_max_in_progress_per_profile':8})]}
+            for path in [ROOT,'hermes/skills/autonomous-ai-agents/company-coding-stack/SKILL.md']:
+                (root/path).parent.mkdir(parents=True,exist_ok=True);(root/path).write_bytes(saved['raised'][path])
+            runs={key:planned_writes(desktop,root,json.loads(run[PRIVATE])) for key,run in saved.items()}
+            self.assertEqual(runs['raised'],runs['absent'])
+            for role in desktop.ROLES:
+                role_cfg=json.loads(runs['raised'][f'hermes/profiles/{role}/config.yaml'])
+                self.assertEqual(role_cfg['kanban']['max_in_progress'],2)
+                self.assertEqual(role_cfg['kanban']['max_in_progress_per_profile'],1)
+
     def test_server_names_preserve_legacy_routes_and_explicit_child_limits(self):
         cfg=hermes_config({'delegation':{'max_iterations':7,'max_concurrent_children':2}},ROUTES,Path('/tmp/company'))
         for old,new in [('z1','server1'),('z2','server2')]:

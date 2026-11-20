@@ -33,6 +33,8 @@ def model_policy(cfg):
         raise ValueError('Delegation requires an approved full-context route.')
     if not isinstance(cfg.get('kanban_auto_decompose',True),bool):
         raise ValueError('kanban_auto_decompose must be true or false.')
+    for name in ['kanban_max_in_progress','kanban_max_in_progress_per_profile']:
+        kanban_limit(cfg,name)
     roles=cfg.get('role_models',{})
     auxiliary=cfg.get('auxiliary_models',{})
     for values,known in [(roles,COMPANY_ROLES),(auxiliary,set(SLOTS))]:
@@ -96,10 +98,28 @@ def install_issue_strategy(target,apply,platform='generic'):
             write(target/relative,content,apply,0o700 if relative.parts[0]=='scripts' else 0o600)
 
 
-def hermes_config(existing, routes, workspace, default='local', company_roles=False, auxiliary_models=None, delegation_model=None, auto_decompose=True):
+MAX_KANBAN_IN_PROGRESS=32
+
+
+def kanban_limit(cfg,name):
+    """A private board-limit input: absent means the installer default; otherwise
+    a whole number from 1 to MAX_KANBAN_IN_PROGRESS. A bool is not a number here."""
+    value=cfg.get(name)
+    if value is None and name not in cfg:
+        return None
+    if isinstance(value,bool) or not isinstance(value,int) or not 1<=value<=MAX_KANBAN_IN_PROGRESS:
+        raise ValueError(f'{name} must be a whole number from 1 to {MAX_KANBAN_IN_PROGRESS}.')
+    return value
+
+
+def hermes_config(existing, routes, workspace, default='local', company_roles=False, auxiliary_models=None, delegation_model=None, auto_decompose=True, kanban_max_in_progress=2, kanban_max_in_progress_per_profile=1):
     cfg = dict(existing)
     if not isinstance(auto_decompose,bool):
         raise ValueError('kanban_auto_decompose must be true or false.')
+    for name,value in [('kanban_max_in_progress',kanban_max_in_progress),
+                       ('kanban_max_in_progress_per_profile',kanban_max_in_progress_per_profile)]:
+        if kanban_limit({name:value},name) is None:
+            raise ValueError(f'{name} must be a whole number from 1 to {MAX_KANBAN_IN_PROGRESS}.')
     _,auxiliary_models=model_policy({'routes':routes,'auxiliary_models':{} if auxiliary_models is None else auxiliary_models})
     provider = lambda key: {'1':'server1','2':'server2'}.get(key,key)
     if default not in {'local','1'} or routes[default]['context']<65536:
@@ -133,7 +153,8 @@ def hermes_config(existing, routes, workspace, default='local', company_roles=Fa
         cfg.setdefault(k,{})['write_approval'] = True
     cfg.setdefault('terminal',{}).update({'backend':'local','cwd':str(workspace)})
     cfg.setdefault('kanban',{}).update({'dispatch_interval_seconds':10,
-        'auto_decompose':auto_decompose,'max_in_progress':2,'max_in_progress_per_profile':1})
+        'auto_decompose':auto_decompose,'max_in_progress':kanban_max_in_progress,
+        'max_in_progress_per_profile':kanban_max_in_progress_per_profile})
     if company_roles:
         cfg['kanban'].update({'default_assignee':'zf-developer','orchestrator_profile':'zf-planner'})
     cfg.setdefault('agent',{}).update({'api_max_retries':1,'auto_recovery_cycles':1,
@@ -391,7 +412,8 @@ def main():
          'paperclip_api_base':paperclip_base,'paperclip_context':str(state/'paperclip-context.json'),
          'decide_url':f'http://127.0.0.1:{a.decide_port}',
          'decide_key_file':str(state/'secrets/decide-api-key')}
-    for name in ['role_models','auxiliary_models','delegation_model','kanban_auto_decompose']:
+    for name in ['role_models','auxiliary_models','delegation_model','kanban_auto_decompose',
+                 'kanban_max_in_progress','kanban_max_in_progress_per_profile']:
         if name in saved:cfg[name]=saved[name]
     _,auxiliary_models=model_policy(cfg)
     write(state/'config.json',json.dumps(cfg,indent=2)+'\n',a.apply)
@@ -432,12 +454,15 @@ def main():
             dst=directory/name; target=state/'bin/work-ai'
             link(dst,target,a.apply)
     hp=hh/'config.yaml'; existing=yaml.safe_load(hp.read_text()) if hp.exists() else {}
-    # The dispatcher reads kanban.auto_decompose from this root config on every tick,
-    # so the private kanban_auto_decompose input is applied here and nowhere else.
+    # The dispatcher reads kanban.auto_decompose and the board limits from this root
+    # config; the limits it reads once at start, so a change needs a gateway restart.
+    # The private kanban_* inputs are applied here and nowhere else.
     write(hp,yaml.safe_dump(hermes_config(existing or {},routes,w,a.default_model,
         company_roles=a.scope=='device',auxiliary_models=auxiliary_models,
         delegation_model=cfg.get('delegation_model'),
-        auto_decompose=cfg.get('kanban_auto_decompose',True)),sort_keys=False),a.apply)
+        auto_decompose=cfg.get('kanban_auto_decompose',True),
+        kanban_max_in_progress=cfg.get('kanban_max_in_progress',2),
+        kanban_max_in_progress_per_profile=cfg.get('kanban_max_in_progress_per_profile',1)),sort_keys=False),a.apply)
     # Scope the hook on the personal Mac; the work Mac permits approved routes in every directory.
     hook={'type':'command','command':str(state/'bin/work-ai')+' hook'}
     for cd in {home/'.claude',claude_dir}:
