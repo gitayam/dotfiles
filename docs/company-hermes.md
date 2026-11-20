@@ -193,7 +193,8 @@ caused a denied call and wasted generation. Ordinary file/terminal tools remain
 subject to their existing guards. The installer does not set
 `approvals.single_query_mode: approve`; interactive host sessions retain the tool.
 Specialist profiles default to a 900-second conversation-turn budget and 16 tool
-iterations, retaining explicit existing values. A task's native `--max-runtime`
+iterations, retaining explicit existing values (a planner raised to 24 by hand
+stays at 24; a fresh install gives every role 16). A task's native `--max-runtime`
 is the separate whole-worker cap; set it and `--max-retries 1` for one attempt.
 Large assignments need bounded milestones or an explicit profile budget change.
 
@@ -202,6 +203,80 @@ the whole work-only device, and only company paths/remotes on the personal Mac.
 It is a workflow guard, not an operating-system egress firewall. The owner can
 still change settings or invoke other programs directly. Existing project
 Alibaba/Qwen and Lumo restrictions remain applicable.
+
+### Cards that finish: what the board's own records show
+
+`scripts/report_work_board.py` summarises a board read-only: runs by profile and
+model, by who created the card, attempts per card, steps used against each
+profile's limit, exhausted budgets, block loops and waiting time. It prints
+counts only, never a title or a body. On one company board after three days
+(334 cards, 348 runs) it showed the following. This is one board's history, not
+a model benchmark.
+
+- **Who wrote the card predicted the outcome more than the role or the model.**
+  Cards created through the CLI from a written contract completed 259 of 268
+  worker runs. Cards typed free-form into the default profile completed 9 of 27.
+  Cards the automatic decomposer created completed 7 of 14 and took 5 of the 9
+  exhausted step budgets. Look at how a card is written before changing a model
+  or a limit.
+- **Count attempts, not rows.** A `blocked` run with no worker is a hold someone
+  placed (17 of them here), not a failed run. The model a run used is in the
+  worker's session; failed runs often record no session, so their model is only
+  assumed from the card or the profile. A first count that ignored both points
+  reported one route at 45% when 5 of its 6 real runs had completed.
+- **Steps.** Completed runs used a median of 7 tool-calling turns and a 90th
+  percentile of 11 or 12, against limits of 16 (24 for a planner whose explicit
+  value was kept). Write a contract for about 7 to 11 steps. A card that needs
+  more than the limit cannot finish however often it is retried.
+- **Waiting.** With two workers in total and one per profile, a card with no
+  parent waited a median of 6 minutes and a 90th percentile of 23; a run took a
+  median of 2.5 minutes. Spread a wave across the profiles.
+- **Chains.** A card created with `--parent <id>` stays in `todo` until every
+  parent is done and then starts by itself: a four-card chain started each next
+  card within a second of its parent finishing.
+
+A card that finishes is created like this, with the model set at creation
+(`set-model` on a running card ends its worker):
+
+```bash
+hermes kanban --board <board> create "<title>" --body-file contract.md \
+  --assignee <profile> --workspace dir:<folder> --max-runtime 900 --max-retries 1 \
+  --model <model> --provider <provider> --idempotency-key <key> \
+  --created-by <who> [--parent <card id> ...]
+```
+
+Its contract names one input file that holds everything the worker needs, the
+one file it writes, the commands it may run, what is prohibited, and a stop
+condition with the first line of the summary. Tell the worker to write "not in
+the input" where the input is silent: a worker told to use only what a filter
+prints reports everything the filter dropped as absent. Fold several reads into
+one command. Tell it to complete and say what stopped it rather than block: a
+second block on the same card is treated as a loop and, with automatic
+decomposition on, hands the card to the decomposer, which writes premises it
+cannot check. Use two retries only for a card that is safe to run twice.
+
+A card's summary is the worker's claim. `scripts/audit_work_cards.py` lists the
+tool calls a worker made, from the profile's session store, and flags a command
+outside the patterns the contract allowed, a prohibited command and a file
+written elsewhere:
+
+```bash
+python3 scripts/audit_work_cards.py --board <board> --cards-file cards.txt \
+  --allow-read-under <input folder> --allow '^cat > <output folder>/[A-Z][0-9]\.md' \
+  --write-suffix .md
+```
+
+It sets here-documents and quoted text aside before splitting a command. Without
+that, a worker that writes its notes with `cat > file <<'EOF'` has every sentence
+containing a semicolon reported as a command. A card with no recorded session is
+reported as unaudited, never as clean. A clean audit says the worker stayed inside
+its contract; it does not accept what the worker wrote.
+
+What a refresh keeps: explicit turn budgets and delegation limits survive
+`setup_work_desktop.py`. The board limits, `kanban.auto_decompose`, each role's
+model and the worker toolsets are written again on every refresh, so a hand edit
+of those is reverted; change the private configuration instead. The installer
+sets `auto_decompose` on and has no input to turn it off.
 
 ## Local inference and AnyJev on Apple silicon
 
@@ -273,6 +348,7 @@ For headless Claude CLI tests, put `--` before a positional prompt when the last
 option is variadic (`--tools`, `--allowedTools`, `--disallowedTools`). Otherwise
 it may consume the prompt as tool names and fail before inference.
 
-Validation: `python3 -B -m unittest discover -s scripts -p test_work_hermes.py`.
+Validation: `tests/run.sh` runs every suite; the work suites are
+`python3 -B -m unittest discover -s scripts -p 'test_work_*.py'`.
 Also verify actual inference, tool use, independent file/test artifacts, service
 restart recovery, company Git identity and clean sibling checkouts on each Mac.
