@@ -5,6 +5,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 import plistlib
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -42,10 +43,13 @@ class Intake(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,pattern):self.main(*args)
         self.assertEqual(self.files(),before);self.assertFalse([c for c in self.calls if c[1]!='print'])
 
-    def test_plist_runs_one_specify_sweep_a_minute_with_a_log_and_no_environment(self):
+    def test_plist_runs_the_specify_sweep_and_the_guard_a_minute_with_a_log_and_no_environment(self):
         p=intake_plist(self.state,self.hermes,'work');log=str(self.state/'intake/board-intake.log')
+        guard=str(self.state/'bin/guard_raw_cards.py')
         self.assertEqual(p,{'Label':'io.zenithflow.board-intake','Comment':MARKER,
-            'ProgramArguments':[str(self.hermes),'kanban','--board','work','specify','--all','--author','intake'],
+            'ProgramArguments':['/bin/sh','-c',
+                f'{self.hermes} kanban --board work specify --all --author intake; '
+                f'{sys.executable} -I {guard} --board work --apply'],
             'RunAtLoad':True,'StartInterval':60,'ProcessType':'Background','LowPriorityIO':True,
             'StandardOutPath':log,'StandardErrorPath':log})
         self.assertEqual(plistlib.loads(plistlib.dumps(p)),p)
@@ -92,7 +96,7 @@ class Intake(unittest.TestCase):
         self.assertEqual(self.calls,[['launchctl','print']])
         self.assertEqual(report,{'applied':False,'board':'work','interval_seconds':60,
             'log':str(self.state/'intake/board-intake.log'),
-            'scope':'Specifies Triage cards into one card each. Makes one auxiliary model call per Triage card. Does not dispatch, retry, decompose or restart anything.'})
+            'scope':'Specifies Triage cards into one card each and parks raw dashboard cards before they burn their step budget. Makes one auxiliary model call per Triage card. Does not dispatch, retry, decompose or restart anything.'})
         with self.assertRaises(SystemExit),redirect_stdout(io.StringIO()),patch('sys.stderr',io.StringIO()):self.main()
 
     def test_apply_loads_once_and_never_changes_a_loaded_job(self):

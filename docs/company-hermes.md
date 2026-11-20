@@ -360,6 +360,19 @@ be read. `--remove --apply` unloads the job and deletes only its own plist; do
 that before turning decomposition back on or changing its board, since a loaded
 job is never rewritten.
 
+The same sweep also parks raw dashboard cards (`scripts/guard_raw_cards.py`,
+installed to the state folder's `bin/`). A request typed into the dashboard
+becomes a card with no work contract and dispatches the moment it exists, and a
+request that bundles research, a multi-file build and verification cannot finish
+within any step budget: it dies at the ceiling twice, trips the circuit breaker
+and waits for a human anyway. The guard catches such a card within the sweep
+interval — a dashboard card younger than ten minutes, still queued or running,
+whose body carries no work contract — reclaims and blocks it with a comment that
+names the sizing rule and the way out. A card that finishes inside the interval
+escapes; a card whose body carries the contract marker is left alone; unblocking
+runs it as-is. Size the work where it is created when you can; the guard is the
+net under the one entry point no contract writer sees.
+
 Observed on one device after turning decomposition off and installing the
 intake: the refresh changed one key of the root configuration and left the three
 role configurations byte for byte as they were, so the setup audit passed all of
