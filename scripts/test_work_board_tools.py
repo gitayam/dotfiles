@@ -231,6 +231,47 @@ class AuditCommand(unittest.TestCase):
         self.assertIsNone(pattern.search("grep -c $(id) /srv/pack/a.md"))
         self.assertIsNone(pattern.search("grep -c NEW /srv/pack/a.md > /srv/pack/b.md"))
 
+    def test_a_quoted_pattern_may_hold_escaped_quotes_and_nothing_the_shell_expands(self):
+        pattern = audit.read_pattern("/srv/pack")
+        # Seen on a real card: the pattern quotes a key and its quoted value.
+        self.assertTrue(pattern.search('grep -c "basis: \\"[[the note]]\\"" /srv/pack/a.md'))
+        self.assertTrue(pattern.search('grep -c "and \\`by\\`" /srv/pack/a.md'))
+        self.assertIsNone(pattern.search('grep -c "$(id)" /srv/pack/a.md'))
+        self.assertIsNone(pattern.search('grep -c "a `id` b" /srv/pack/a.md'))
+        self.assertIsNone(pattern.search('grep -c "$HOME" /srv/pack/a.md'))
+
+    def test_a_path_that_climbs_out_of_the_folder_is_not_under_it(self):
+        pattern = audit.read_pattern("/srv/pack")
+        self.assertIsNone(pattern.search("cat /srv/pack/../secret"))
+        self.assertIsNone(pattern.search("cat /srv/pack/a.md /srv/pack/sub/../../etc/hosts"))
+        self.assertTrue(pattern.search("cat /srv/pack/sub/../a.md"))
+
+    def test_a_command_run_inside_another_is_flagged_wherever_quoting_hides_it(self):
+        allow = [re.compile(r"^(echo|grep -c) "), re.compile(r"^cat > /srv/out/")]
+        inside = lambda command: [f for f in audit.audit_command(command, allow, PROHIBITED) if f.startswith("runs a command inside another")]
+        self.assertTrue(inside('echo "WROTE $(wc -l < /srv/out/N1.md)"'))
+        # Seen on a real card: backticks meant as markdown, inside double quotes, ran the word as a command.
+        self.assertTrue(inside('grep -c "has a `precision`" /srv/pack/a.md'))
+        self.assertTrue(inside("cat > /srv/out/N1.md <<EOF\nuse `rm` with care\nEOF"))
+        self.assertTrue(inside("cat > /srv/out/N1.md <<EOF\ndon't $(rm x) can't\nEOF"))
+        self.assertEqual(len(inside("echo `date`")), 1)
+        # Not run by the shell: single quotes, a here-document with a quoted delimiter, an escaped sign.
+        self.assertFalse(inside("grep -c 'has a `precision`' /srv/pack/a.md"))
+        self.assertFalse(inside("cat > /srv/out/N1.md <<'EOF'\nuse `rm` and $(this) freely\nEOF"))
+        self.assertFalse(inside('grep -c "and \\`by\\`" /srv/pack/a.md'))
+        self.assertFalse(inside('echo "costs \\$(5)"'))
+
+    def test_a_plain_name_set_in_the_call_is_put_in_place(self):
+        allow = [audit.read_pattern("/srv/pack")]
+        # Seen on a real card: seventy reads through one name were reported as outside the contract.
+        self.assertEqual(audit.audit_command('F=/srv/pack/a.md\ngrep -c "own id" $F\nwc -l ${F}', allow, PROHIBITED), [])
+        self.assertEqual(audit.audit_command("D=/srv/pack; O=$D/a.md; V=$D/b.md; wc -l $O $V", allow, PROHIBITED), [])
+        # The name does not launder a path outside the folder, a value the shell expands, or a command.
+        self.assertTrue(audit.audit_command("F=/srv/other/a.md; cat $F", allow, PROHIBITED))
+        self.assertTrue(audit.audit_command("F=$(id); cat /srv/pack/a.md", allow, PROHIBITED))
+        self.assertTrue([f for f in audit.audit_command("C=rm; $C /srv/pack/a.md", allow, PROHIBITED) if f.startswith("prohibited")])
+        self.assertTrue(audit.audit_command("cat $UNSET", allow, PROHIBITED))
+
 
 class AuditCards(unittest.TestCase):
     def setUp(self):

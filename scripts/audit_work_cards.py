@@ -35,7 +35,17 @@ DEFAULT_PROHIBITED = r"(rm|mv|cp|chmod|chown|sudo|git (commit|push|add|checkout|
 # A bare echo that writes nowhere: workers print separators between two commands.
 ECHO = re.compile(r"^\s*echo [^>|]*$")
 HEREDOC = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?[^\n]*\n.*?\n[ \t]*\1[ \t]*(?=\n|$)", re.S)
+# A here-document whose delimiter is quoted: the shell copies its body and expands nothing in it.
+HEREDOC_LITERAL = re.compile(r"<<-?\s*(['\"])(\w+)\1[^\n]*\n.*?\n[ \t]*\2[ \t]*(?=\n|$)", re.S)
+# `$(...)` or backticks: one command run inside another. The shell expands them everywhere
+# except inside single quotes and inside a here-document whose delimiter is quoted.
+SUBSTITUTION = re.compile(r"\$\(|`")
+# A character after a backslash is itself and starts nothing (`\$(`, an escaped backtick).
+ESCAPED = re.compile(r"\\.", re.S)
 QUOTED = re.compile(r"\"(?:[^\"\\]|\\.)*\"|'[^']*'")
+# A name set to a plain path or word (`F=/srv/pack/a.md`), and a use of one (`$F`, `${F}`).
+NAME_SET = re.compile(r"^[A-Za-z_]\w*=[\w./@+-]+$")
+NAME_USE = re.compile(r"\$\{([A-Za-z_]\w*)\}|\$([A-Za-z_]\w*)")
 SEPARATOR = re.compile(r"\s*(?:;|&&|\|\||\n)\s*")
 
 
@@ -57,24 +67,83 @@ def split_commands(command: str) -> list[str]:
     return parts
 
 
-def read_pattern(folder: str) -> re.Pattern:
-    """A read of one file under `folder`: cat, head, tail, wc, grep or sed -n, with no redirect or pipe."""
-    root = re.escape(os.path.abspath(folder).rstrip("/") + "/")
-    quoted = r"(?:'[^']*'|\"[^\"]*\")"
-    # A grep pattern is quoted, or one bare word (`grep -c NEW file`): nothing a shell would expand or redirect.
-    word = r"[A-Za-z0-9_.^-]+"
-    return re.compile(rf"^\s*(?:cat|wc -[lwc]+|head(?: -n? ?\d+)?|tail(?: -n? ?\d+)?|grep -[A-Za-z]+ (?:{quoted}|{word})|sed -n {quoted})(?: ['\"]?{root}[\w./@+-]+['\"]?)+\s*$")
+class ReadUnder:
+    """Matches a read of files under one folder. Used like a compiled pattern: `.search(command)`."""
+
+    def __init__(self, folder: str):
+        self.root = os.path.abspath(folder).rstrip("/") + "/"
+        root = re.escape(self.root)
+        # A double-quoted pattern may hold escaped characters (`grep -c "key: \\"x\\"" file`), and
+        # nothing the shell expands inside double quotes: no bare `$`, no bare backtick.
+        quoted = r"(?:'[^']*'|\"(?:[^\"\\$`]|\\.)*\")"
+        # A grep pattern is quoted, or one bare word (`grep -c NEW file`): nothing a shell would expand or redirect.
+        word = r"[A-Za-z0-9_.^-]+"
+        self.path = re.compile(rf"['\"]?({root}[\w./@+-]+)['\"]?")
+        self.pattern = re.compile(rf"^\s*(?:cat|wc -[lwc]+|head(?: -n? ?\d+)?|tail(?: -n? ?\d+)?|grep -[A-Za-z]+ (?:{quoted}|{word})|sed -n {quoted})((?: {self.path.pattern})+)\s*$")
+
+    def search(self, command: str):
+        found = self.pattern.search(command)
+        if not found:
+            return None
+        # `/pack/../other` begins with the folder and is not under it.
+        for path in self.path.findall(found.group(1)):
+            if not (os.path.normpath(path) + "/").startswith(self.root):
+                return None
+        return found
+
+
+def read_pattern(folder: str) -> ReadUnder:
+    """A read of one or more files under `folder`: cat, head, tail, wc, grep or sed -n, with no redirect or pipe."""
+    return ReadUnder(folder)
+
+
+def substitutions(command: str) -> list[str]:
+    """Each place where the command runs another command inside it, as the text around it."""
+    found = []
+    # A here-document with an unquoted delimiter is expanded like a double-quoted string, apostrophes and all.
+    literal_removed = HEREDOC_LITERAL.sub("<<HEREDOC", command)
+    for body in HEREDOC.finditer(literal_removed):
+        if SUBSTITUTION.search(ESCAPED.sub("", body.group(0).split("\n", 1)[1])):
+            found.append(f"in the body of a here-document whose delimiter is not quoted (<<{body.group(1)})")
+    rest = re.sub(r"'[^']*'", "''", HEREDOC.sub("<<HEREDOC", literal_removed))
+    for part in SEPARATOR.split(rest):
+        if SUBSTITUTION.search(ESCAPED.sub("", part)):
+            found.append(part.strip()[:100])
+    return list(dict.fromkeys(found))
+
+
+def resolve_names(parts: list[str]) -> list[str]:
+    """The commands with each plain name put in place: after `F=/srv/pack/a.md`, `wc -l $F`
+    reads as `wc -l /srv/pack/a.md`. Only a value made of path characters counts (a later
+    one may use an earlier one), and a part that only sets such names is dropped: it does
+    nothing by itself. Anything else is left exactly as written."""
+    names: dict[str, str] = {}
+    resolved = []
+    for part in parts:
+        text = NAME_USE.sub(lambda m: names.get(m.group(1) or m.group(2), m.group(0)), part)
+        settings = text.split()
+        if settings and all(NAME_SET.match(word) for word in settings):
+            names.update(word.split("=", 1) for word in settings)
+            continue
+        resolved.append(text)
+    return resolved
 
 
 def audit_command(command: str, allowed: list[re.Pattern], prohibited: re.Pattern) -> list[str]:
     flags = []
-    for part in split_commands(command):
+    parts = resolve_names(split_commands(command))
+    for part in parts:
         if not any(pattern.search(part) for pattern in allowed) and not ECHO.match(part):
             flags.append(f"command outside the contract: {part.splitlines()[0][:100]}")
     # Checked on the text outside quotes and here-documents: a sentence in the worker's notes is not a command.
+    # Checked again with names put in place, so that `C=rm; $C file` is seen for what it runs.
     bare = QUOTED.sub("QUOTED", strip_heredocs(command))
-    if re.search(rf"(^|[;&|\n(]\s*){prohibited.pattern}\b", bare):
+    named = "\n".join(QUOTED.sub("QUOTED", part) for part in parts)
+    if any(re.search(rf"(^|[;&|\n(]\s*){prohibited.pattern}\b", text) for text in (bare, named)):
         flags.append(f"prohibited: {bare.splitlines()[0][:100]}")
+    # Quoting hides a command from the checks above, so a command run inside another is flagged whatever it is.
+    for where in substitutions(command):
+        flags.append(f"runs a command inside another ($( ) or backticks): {where}")
     return flags
 
 
