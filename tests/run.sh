@@ -87,6 +87,7 @@ check "Paperclip Hermes callbacks, routes and termination gates" python3 -B -m u
 check "Paperclip request graph ownership and unknown-write recovery" python3 -B -m unittest discover -s "$REPO/scripts" -p test_work_graph.py
 check "Paperclip read-only audit detects drift and preserves active work" python3 -B -m unittest discover -s "$REPO/scripts" -p test_work_audit.py
 check "board intake installs only with decomposition off and removes only its own job" python3 -B -m unittest discover -s "$REPO/scripts" -p test_work_intake.py
+check "repository map cleans remotes and stays outside checkouts" python3 -B -m unittest discover -s "$REPO/scripts" -p test_map_repositories.py
 check "board report counts attempts and card audit keeps notes out of commands" python3 -B -m unittest discover -s "$REPO/scripts" -p test_work_board_tools.py
 check "issue strategy collection coverage and portable installation" python3 -B -m unittest discover -s "$REPO/scripts" -p test_issue_strategy.py
 check "storage-cleanup compiles" python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$REPO/shared/bin/storage-cleanup"

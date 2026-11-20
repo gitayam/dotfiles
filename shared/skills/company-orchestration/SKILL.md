@@ -8,6 +8,17 @@ Read `~/zenithflow/WORKSTATION.md` and
 current coverage. Work under `~/zenithflow`; private IDs and credentials stay
 in `.workstation`, outside repositories. Use approved company/local inference.
 
+Find a repository through `~/zenithflow/.workstation/REPOSITORIES.md` (written
+by dotfiles `scripts/map_work_repositories.py`; regenerate it with `--apply`
+after checkouts change), not by guessing a path or searching the disk. Before
+changing a repository, read its `DIRECTION.md`, then its `AGENTS.md` and
+`CLAUDE.md` where the map lists them, and settle questions from those files and
+the card before blocking: do the part of the work the rules allow and record a
+limitation for the rest. A draft direction is an inference for the owner to
+correct; the repository's own files and the card win over it. A project-linked
+card already has its own worktree and branch — work there, never in a main
+checkout.
+
 For maintenance, run dotfiles `scripts/audit_work_paperclip.py --check-releases`
 on the enrolled work Mac. It is read-only. A newer stable release still needs
 workspace, callback and data-migration acceptance; preserve the qualified
