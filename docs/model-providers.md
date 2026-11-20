@@ -86,9 +86,14 @@ generation, compression, vision) to another provider. Denied for ZenithFlow.
   before switching a role run a smoke test that makes a real tool call, not just a
   one-line reply.
 - A Qwen coder needs its own sandbox. The shared coding sandbox holds clones of projects
-  ai-policy denies Alibaba for, so give the Qwen lane a separate sandbox and only
-  project-scoped read tokens (Reporter project access tokens for the allowed projects).
-  More board lessons: [hermes-coding-board.md](hermes-coding-board.md).
+  ai-policy denies Alibaba for, so give the Qwen lane a separate sandbox and a GitLab
+  **deploy token** per allowed project. A project access token is not enough: its bot user
+  could still clone internal projects. More board lessons:
+  [hermes-coding-board.md](hermes-coding-board.md).
+- Reviewer-role comparison (2026-11-20, public write-up on Irregularpedia, "Alibaba Model
+  Studio Coding Models"): `kimi-k2.7-code` is the board's quality reviewer, `qwen4-max`
+  the Qwen coder; `qwen4-max` and `kimi-k3.1-pro` return empty structured output through
+  Hermes (lesson 15 in hermes-coding-board.md).
 
 ## OpenCode (Zen and Go)
 
@@ -121,6 +126,14 @@ generation, compression, vision) to another provider. Denied for ZenithFlow.
 
 Hermes bots and the Vibe lane use the Mistral API (keys in secret profiles `vibe` and
 the bot-specific profiles). See [orca-lanes.md](orca-lanes.md) for the local lanes.
+
+Reviewer-role comparison on 2026-11-20 (public write-up: Irregularpedia "Mistral Coding
+Models"): `mistral-large-4` ($0.70/$2.10 per 1M; about $0.08 per real review card) and
+`ministral-14b-2512` ($0.20/$0.20) passed every run. `mistral-small-2603` (the
+`mistral-vibe-cli-fast` preset) and `codestral-2508` approved every buggy patch: never use
+them as a gate. `mistral-vibe-cli-latest` resolves to Medium 3.5, deprecated 2026-10-31
+(retires 2027-04-30) and no longer on the price list. The key also serves `zai-glm-5-3`
+and `-flash`: pass `reasoning_effort: low`, or they overrun the output budget.
 
 ## Giving a server an API key
 
