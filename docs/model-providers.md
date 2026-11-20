@@ -86,9 +86,14 @@ generation, compression, vision) to another provider. Denied for ZenithFlow.
   before switching a role run a smoke test that makes a real tool call, not just a
   one-line reply.
 - A Qwen coder needs its own sandbox. The shared coding sandbox holds clones of projects
-  ai-policy denies Alibaba for, so give the Qwen lane a separate sandbox and only
-  project-scoped read tokens (Reporter project access tokens for the allowed projects).
-  More board lessons: [hermes-coding-board.md](hermes-coding-board.md).
+  ai-policy denies Alibaba for, so give the Qwen lane a separate sandbox and a GitLab
+  **deploy token** per allowed project. A project access token is not enough: its bot user
+  could still clone internal projects. More board lessons:
+  [hermes-coding-board.md](hermes-coding-board.md).
+- Reviewer-role comparison (2026-11-20, public write-up on Irregularpedia, "Alibaba Model
+  Studio Coding Models"): `kimi-k2.7-code` is the board's quality reviewer, `qwen4-max`
+  the Qwen coder; `qwen4-max` and `kimi-k3.1-pro` return empty structured output through
+  Hermes (lesson 15 in hermes-coding-board.md).
 
 ## OpenCode (Zen and Go)
 
