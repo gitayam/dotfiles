@@ -31,6 +31,8 @@ def model_policy(cfg):
         delegated='1' if cfg['routes']['1']['context']>=65536 else 'local'
     if not isinstance(delegated,str) or delegated not in {'local','1'} or cfg['routes'][delegated]['context']<65536:
         raise ValueError('Delegation requires an approved full-context route.')
+    if not isinstance(cfg.get('kanban_auto_decompose',True),bool):
+        raise ValueError('kanban_auto_decompose must be true or false.')
     roles=cfg.get('role_models',{})
     auxiliary=cfg.get('auxiliary_models',{})
     for values,known in [(roles,COMPANY_ROLES),(auxiliary,set(SLOTS))]:
@@ -94,8 +96,10 @@ def install_issue_strategy(target,apply,platform='generic'):
             write(target/relative,content,apply,0o700 if relative.parts[0]=='scripts' else 0o600)
 
 
-def hermes_config(existing, routes, workspace, default='local', company_roles=False, auxiliary_models=None, delegation_model=None):
+def hermes_config(existing, routes, workspace, default='local', company_roles=False, auxiliary_models=None, delegation_model=None, auto_decompose=True):
     cfg = dict(existing)
+    if not isinstance(auto_decompose,bool):
+        raise ValueError('kanban_auto_decompose must be true or false.')
     _,auxiliary_models=model_policy({'routes':routes,'auxiliary_models':{} if auxiliary_models is None else auxiliary_models})
     provider = lambda key: {'1':'server1','2':'server2'}.get(key,key)
     if default not in {'local','1'} or routes[default]['context']<65536:
@@ -129,7 +133,7 @@ def hermes_config(existing, routes, workspace, default='local', company_roles=Fa
         cfg.setdefault(k,{})['write_approval'] = True
     cfg.setdefault('terminal',{}).update({'backend':'local','cwd':str(workspace)})
     cfg.setdefault('kanban',{}).update({'dispatch_interval_seconds':10,
-        'auto_decompose':True,'max_in_progress':2,'max_in_progress_per_profile':1})
+        'auto_decompose':auto_decompose,'max_in_progress':2,'max_in_progress_per_profile':1})
     if company_roles:
         cfg['kanban'].update({'default_assignee':'zf-developer','orchestrator_profile':'zf-planner'})
     cfg.setdefault('agent',{}).update({'api_max_retries':1,'auto_recovery_cycles':1,
@@ -387,7 +391,7 @@ def main():
          'paperclip_api_base':paperclip_base,'paperclip_context':str(state/'paperclip-context.json'),
          'decide_url':f'http://127.0.0.1:{a.decide_port}',
          'decide_key_file':str(state/'secrets/decide-api-key')}
-    for name in ['role_models','auxiliary_models','delegation_model']:
+    for name in ['role_models','auxiliary_models','delegation_model','kanban_auto_decompose']:
         if name in saved:cfg[name]=saved[name]
     _,auxiliary_models=model_policy(cfg)
     write(state/'config.json',json.dumps(cfg,indent=2)+'\n',a.apply)
@@ -428,9 +432,12 @@ def main():
             dst=directory/name; target=state/'bin/work-ai'
             link(dst,target,a.apply)
     hp=hh/'config.yaml'; existing=yaml.safe_load(hp.read_text()) if hp.exists() else {}
+    # The dispatcher reads kanban.auto_decompose from this root config on every tick,
+    # so the private kanban_auto_decompose input is applied here and nowhere else.
     write(hp,yaml.safe_dump(hermes_config(existing or {},routes,w,a.default_model,
         company_roles=a.scope=='device',auxiliary_models=auxiliary_models,
-        delegation_model=cfg.get('delegation_model')),sort_keys=False),a.apply)
+        delegation_model=cfg.get('delegation_model'),
+        auto_decompose=cfg.get('kanban_auto_decompose',True)),sort_keys=False),a.apply)
     # Scope the hook on the personal Mac; the work Mac permits approved routes in every directory.
     hook={'type':'command','command':str(state/'bin/work-ai')+' hook'}
     for cd in {home/'.claude',claude_dir}:
