@@ -263,7 +263,7 @@ class AuditCommand(unittest.TestCase):
 
     def test_a_plain_name_set_in_the_call_is_put_in_place(self):
         allow = [audit.read_pattern("/srv/pack")]
-        # Seen on a real card: seventy reads through one name were reported as outside the contract.
+        # Seen on a real card: 67 reads through a name, and the 6 lines that set the names, were reported as outside the contract.
         self.assertEqual(audit.audit_command('F=/srv/pack/a.md\ngrep -c "own id" $F\nwc -l ${F}', allow, PROHIBITED), [])
         self.assertEqual(audit.audit_command("D=/srv/pack; O=$D/a.md; V=$D/b.md; wc -l $O $V", allow, PROHIBITED), [])
         # The name does not launder a path outside the folder, a value the shell expands, or a command.

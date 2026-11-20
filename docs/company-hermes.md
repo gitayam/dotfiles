@@ -275,9 +275,12 @@ python3 scripts/audit_work_cards.py --board <board> --cards-file cards.txt \
 It sets here-documents and quoted text aside before splitting a command. Without
 that, a worker that writes its notes with `cat > file <<'EOF'` has every sentence
 containing a semicolon reported as a command. A plain name set in the call
-(`F=<path>`, then `$F`) is put in place before a command is checked: one card's
-seventy reads through such a name had all been reported. A read counts as under
-the input folder only when its path stays there (`<folder>/../x` does not).
+(`F=<path>`, then `$F`) is put in place before a command is checked: on one card,
+67 reads through such a name and the 6 lines that set the names had been
+reported, 73 flags and none a real departure. A read counts as under the input
+folder only when its path stays there (`<folder>/../x` does not). Over 39 real
+cards the audit gave 75 flags before these changes, 74 of them false, and 4
+after, each true.
 
 A command run inside another is flagged whatever it is, because quoting hides it
 from the other checks. Two were on real cards: an `echo "... $(wc -l < file)"`,
