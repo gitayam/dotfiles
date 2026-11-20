@@ -24,6 +24,20 @@ SLOTS = ['vision','compression','approval','review','mcp','title_generation',
 COMPANY_ROLES = {'zf-planner','zf-developer','zf-reviewer'}
 
 
+def role_max_turns(cfg):
+    """Validated private step limits per role: {} when the key is absent.
+
+    A role named here gets that many tool iterations per run, whatever its profile holds;
+    a role not named keeps its explicit value, or 16. A change rewrites that role's
+    config.yaml, which the Paperclip qualification pins: plan a new acceptance run.
+    """
+    limits=cfg.get('role_max_turns',{})
+    if not isinstance(limits,dict) or set(limits)-COMPANY_ROLES or any(
+            isinstance(v,bool) or not isinstance(v,int) or not 8<=v<=100 for v in limits.values()):
+        raise ValueError('role_max_turns must map known roles to whole numbers from 8 to 100.')
+    return limits
+
+
 def model_policy(cfg):
     """Validate explicit private assignments before any configuration is written."""
     delegated=cfg.get('delegation_model')
@@ -35,6 +49,7 @@ def model_policy(cfg):
         raise ValueError('kanban_auto_decompose must be true or false.')
     for name in ['kanban_max_in_progress','kanban_max_in_progress_per_profile']:
         kanban_limit(cfg,name)
+    role_max_turns(cfg)
     roles=cfg.get('role_models',{})
     auxiliary=cfg.get('auxiliary_models',{})
     for values,known in [(roles,COMPANY_ROLES),(auxiliary,set(SLOTS))]:
@@ -413,7 +428,7 @@ def main():
          'decide_url':f'http://127.0.0.1:{a.decide_port}',
          'decide_key_file':str(state/'secrets/decide-api-key')}
     for name in ['role_models','auxiliary_models','delegation_model','kanban_auto_decompose',
-                 'kanban_max_in_progress','kanban_max_in_progress_per_profile']:
+                 'kanban_max_in_progress','kanban_max_in_progress_per_profile','role_max_turns']:
         if name in saved:cfg[name]=saved[name]
     _,auxiliary_models=model_policy(cfg)
     write(state/'config.json',json.dumps(cfg,indent=2)+'\n',a.apply)
