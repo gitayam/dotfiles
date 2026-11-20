@@ -220,12 +220,16 @@ class AuditCommand(unittest.TestCase):
 
     def test_reading_under_an_allowed_folder(self):
         pattern = audit.read_pattern("/srv/pack")
-        for ok in ("cat /srv/pack/INPUT.md", "wc -l /srv/pack/a.md /srv/pack/b.md", "grep -c 'NEW' /srv/pack/a.md", "sed -n '1,20p' /srv/pack/a.md", "head -n 5 '/srv/pack/a.md'"):
+        for ok in ("cat /srv/pack/INPUT.md", "wc -l /srv/pack/a.md /srv/pack/b.md", "grep -c 'NEW' /srv/pack/a.md", "grep -c NEW /srv/pack/a.md", "sed -n '1,20p' /srv/pack/a.md", "head -n 5 '/srv/pack/a.md'"):
             self.assertTrue(pattern.search(ok), ok)
         for bad in ("cat /srv/other/a.md", "cat /srv/pack/a.md > /srv/pack/b.md", "cat /srv/pack/a.md | sh", "cat /srv/pack/../secret"):
             self.assertFalse(pattern.search(bad) and "/../" not in bad and ">" not in bad and "|" not in bad, bad)
         self.assertIsNone(pattern.search("cat /srv/pack/a.md > /srv/pack/b.md"))
         self.assertIsNone(pattern.search("cat /srv/pack/a.md | sh"))
+        # A bare grep pattern is one word: not a second file outside the folder, and nothing the shell expands.
+        self.assertIsNone(pattern.search("grep -c NEW /etc/hosts /srv/pack/a.md"))
+        self.assertIsNone(pattern.search("grep -c $(id) /srv/pack/a.md"))
+        self.assertIsNone(pattern.search("grep -c NEW /srv/pack/a.md > /srv/pack/b.md"))
 
 
 class AuditCards(unittest.TestCase):

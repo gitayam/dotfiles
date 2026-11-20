@@ -61,7 +61,9 @@ def read_pattern(folder: str) -> re.Pattern:
     """A read of one file under `folder`: cat, head, tail, wc, grep or sed -n, with no redirect or pipe."""
     root = re.escape(os.path.abspath(folder).rstrip("/") + "/")
     quoted = r"(?:'[^']*'|\"[^\"]*\")"
-    return re.compile(rf"^\s*(?:cat|wc -[lwc]+|head(?: -n? ?\d+)?|tail(?: -n? ?\d+)?|grep -[A-Za-z]+ {quoted}|sed -n {quoted})(?: ['\"]?{root}[\w./@+-]+['\"]?)+\s*$")
+    # A grep pattern is quoted, or one bare word (`grep -c NEW file`): nothing a shell would expand or redirect.
+    word = r"[A-Za-z0-9_.^-]+"
+    return re.compile(rf"^\s*(?:cat|wc -[lwc]+|head(?: -n? ?\d+)?|tail(?: -n? ?\d+)?|grep -[A-Za-z]+ (?:{quoted}|{word})|sed -n {quoted})(?: ['\"]?{root}[\w./@+-]+['\"]?)+\s*$")
 
 
 def audit_command(command: str, allowed: list[re.Pattern], prohibited: re.Pattern) -> list[str]:
