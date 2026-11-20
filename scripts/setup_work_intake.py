@@ -17,15 +17,18 @@ from setup_work_hermes import write
 
 LABEL='io.zenithflow.board-intake'
 MARKER='Managed by dotfiles: company board intake'
-SCOPE='Specifies Triage cards into one card each. Makes one auxiliary model call per Triage card. Does not dispatch, retry, decompose or restart anything.'
+SCOPE='Specifies Triage cards into one card each and parks raw dashboard cards before they burn their step budget. Makes one auxiliary model call per Triage card. Does not dispatch, retry, decompose or restart anything.'
 
 
 def intake_plist(state, hermes, board):
     if not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,63}',board):raise ValueError('Invalid board slug.')
     log=str(Path(state).resolve()/'intake/board-intake.log')
+    guard=str(Path(state).resolve()/'bin/guard_raw_cards.py')
     # No EnvironmentVariables: the launcher's own defaults select the device Hermes home.
     return {'Label':LABEL,'Comment':MARKER,
-            'ProgramArguments':[str(hermes),'kanban','--board',board,'specify','--all','--author','intake'],
+            'ProgramArguments':['/bin/sh','-c',
+                                f'{hermes} kanban --board {board} specify --all --author intake; '
+                                f'{sys.executable} -I {guard} --board {board} --apply'],
             'RunAtLoad':True,'StartInterval':60,'ProcessType':'Background',
             'LowPriorityIO':True,'StandardOutPath':log,'StandardErrorPath':log}
 
@@ -102,6 +105,10 @@ def main(argv=None, run=subprocess.run):
         raise ValueError('The root Hermes config does not set kanban.auto_decompose to false; set kanban_auto_decompose false in the private configuration and refresh first.')
     state=a.state.expanduser().resolve()
     if not state.is_dir():raise ValueError('The state folder does not exist; pass --state.')
+    if a.apply:
+        (state/'intake').mkdir(mode=0o700,exist_ok=True)
+        (state/'bin').mkdir(mode=0o700,exist_ok=True)
+    write(state/'bin/guard_raw_cards.py',(Path(__file__).resolve().parent/'guard_raw_cards.py').read_bytes(),a.apply,0o700)
     content=plistlib.dumps(intake_plist(state,hermes,a.board))
     changed=not target.exists() or target.read_bytes()!=content
     loaded=run(['launchctl','print',service],capture_output=True).returncode==0
