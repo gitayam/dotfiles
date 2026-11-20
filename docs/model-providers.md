@@ -127,6 +127,14 @@ generation, compression, vision) to another provider. Denied for ZenithFlow.
 Hermes bots and the Vibe lane use the Mistral API (keys in secret profiles `vibe` and
 the bot-specific profiles). See [orca-lanes.md](orca-lanes.md) for the local lanes.
 
+Reviewer-role comparison on 2026-11-20 (public write-up: Irregularpedia "Mistral Coding
+Models"): `mistral-large-4` ($0.70/$2.10 per 1M; about $0.08 per real review card) and
+`ministral-14b-2512` ($0.20/$0.20) passed every run. `mistral-small-2603` (the
+`mistral-vibe-cli-fast` preset) and `codestral-2508` approved every buggy patch: never use
+them as a gate. `mistral-vibe-cli-latest` resolves to Medium 3.5, deprecated 2026-10-31
+(retires 2027-04-30) and no longer on the price list. The key also serves `zai-glm-5-3`
+and `-flash`: pass `reasoning_effort: low`, or they overrun the output budget.
+
 ## Giving a server an API key
 
 Pipe the value from the secret store into a script that runs on the server and reads

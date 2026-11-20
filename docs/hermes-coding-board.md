@@ -5,7 +5,7 @@ the coding guest, ship service for merge request, CI, merge and deploy) runs a K
 board of planner, coder and reviewer profiles. Its code and runbooks live in
 `ai-coding-env`; this page keeps the orchestration lessons this Mac's operator needs.
 Public, generalised versions are vibe-coding `lessons-learned/hermes-agent.md` lessons
-73-93. The company work-Mac board is a separate setup: [company-hermes.md](company-hermes.md).
+73-95. The company work-Mac board is a separate setup: [company-hermes.md](company-hermes.md).
 
 ## Dispatch sizing (2026-11-20)
 
@@ -80,4 +80,10 @@ interrupts running cards: use the guarded `hermes-ops restart` and pick an idle 
 18. **Check the token cap before blaming a model.** My eval harness capped output at 2,500
     tokens; every "ended without a verdict" run had used 2,524-2,551. Record
     `finish_reason`. Model comparison: [model-providers.md](model-providers.md).
+19. **Price a real card, and check the cache counter.** `qwen3.6-plus` had zero cached
+    tokens over 96 review cards: about $0.27 and 206 s each against `kimi-k2.7-code`'s $0.10
+    and 69 s. Per-card costs per model are on the Irregularpedia comparison
+    pages; Hermes keeps `cache_read_tokens` per session in each profile's `state.db`.
+20. **Pin reasoning effort per role.** GLM 5.3 at its default effort overran 8K output
+    tokens; at `reasoning_effort: low` (Mistral endpoint) it passed 6/6 in 3 s.
 
