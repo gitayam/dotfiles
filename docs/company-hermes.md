@@ -276,7 +276,28 @@ What a refresh keeps: explicit turn budgets and delegation limits survive
 `setup_work_desktop.py`. The board limits, `kanban.auto_decompose`, each role's
 model and the worker toolsets are written again on every refresh, so a hand edit
 of those is reverted; change the private configuration instead. The installer
-sets `auto_decompose` on and has no input to turn it off.
+sets `auto_decompose` on unless the private configuration has
+`"kanban_auto_decompose": false` (true or false only; anything else is refused).
+That input survives a refresh and changes the root configuration only, which is
+the one the dispatcher reads on every tick, so no restart is needed. The three
+role profiles deliberately keep `auto_decompose` on whatever it says: the
+Paperclip qualification pins a hash of each role's `config.yaml`, and a role
+configuration that never changes leaves that qualification untouched.
+
+Intake with decomposition off: a card in Triage then stays there until
+`hermes kanban --board <board> specify <id>` or `specify --all` runs.
+`scripts/setup_work_intake.py --board <board>` (dry run; `--apply` to install)
+adds a LaunchAgent that runs `specify --all --author intake` every 60 seconds.
+Each Triage card becomes one tightened card (goal, approach, acceptance
+criteria, out of scope) in `todo`, with no child cards, at the cost of one
+auxiliary model call (`triage_specifier`) per Triage card. It does not dispatch,
+retry, decompose or restart anything. It refuses to install unless the root
+configuration says `auto_decompose: false`: with decomposition on, the
+dispatcher already handles Triage and a second intake would race it. Its output
+goes to `intake/board-intake.log` under the state folder, so a failed sweep can
+be read. `--remove --apply` unloads the job and deletes only its own plist; do
+that before turning decomposition back on or changing its board, since a loaded
+job is never rewritten.
 
 ## Local inference and AnyJev on Apple silicon
 
