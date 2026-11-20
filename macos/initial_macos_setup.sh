@@ -230,14 +230,15 @@ gather_user_preferences() {
   echo "5. Proton Mail Bridge (paid plans; mail in Apple Mail, Thunderbird, Outlook)"
   echo "6. Proton Meet"
   echo "7. Proton Authenticator (Mac App Store; prints the link)"
-  echo "8. All of the above"
-  echo "9. None"
-  echo "   Lumo (AI), Wallet and Docs have no Mac app: use lumo.proton.me, wallet.proton.me, drive.proton.me"
-  echo -n "Enter your choice (1-9)(Default: 9) (multiple choices separated by commas): "
+  echo "8. Proton Lumo (cask)"
+  echo "9. All of the above"
+  echo "10. None"
+  echo "   Proton Wallet and Docs have no Mac app: use wallet.proton.me, drive.proton.me"
+  echo -n "Enter your choice (1-10)(Default: 10) (multiple choices separated by commas): "
   read proton_choice
-  PROTON_CHOICES=($(parse_choices "${proton_choice:-9}"))
-  if has_choice 8 "${PROTON_CHOICES[@]}"; then
-    PROTON_CHOICES=(1 2 3 4 5 6 7)
+  PROTON_CHOICES=($(parse_choices "${proton_choice:-10}"))
+  if has_choice 9 "${PROTON_CHOICES[@]}"; then
+    PROTON_CHOICES=(1 2 3 4 5 6 7 8)
   fi
 
   echo ""
@@ -469,6 +470,7 @@ install_gui_apps() {
           note_next_step "Install Proton Authenticator from the Mac App Store: https://apps.apple.com/app/id6741758667"
         fi
         ;;
+      8) install_cask lumo ;;
       9) ;;
       *) echo "Invalid choice: $choice" ;;
     esac
