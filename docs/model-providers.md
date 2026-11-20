@@ -79,6 +79,17 @@ generation, compression, vision) to another provider. Denied for ZenithFlow.
   route is for other repositories only; a server bot that also works on those
   repositories must not use it.
 
+## Alibaba Model Studio (Qwen) on the coding board
+
+- Model lists move: on 2026-11-19 Model Studio listed `qwen4-max` while the board's Qwen
+  reviewer still ran an older model. Re-read the provider's model list now and then, and
+  before switching a role run a smoke test that makes a real tool call, not just a
+  one-line reply.
+- A Qwen coder needs its own sandbox. The shared coding sandbox holds clones of projects
+  ai-policy denies Alibaba for, so give the Qwen lane a separate sandbox and only
+  project-scoped read tokens (Reporter project access tokens for the allowed projects).
+  More board lessons: [hermes-coding-board.md](hermes-coding-board.md).
+
 ## OpenCode (Zen and Go)
 
 - Mac: the OpenCode Console login is OAuth, stored in OpenCode's own database. Don't
