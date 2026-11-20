@@ -278,6 +278,12 @@ gather_user_preferences() {
     echo "6. Proton Mail Bridge (paid plans; prints the download page)"
     echo "7. All of the above"
     echo "8. None"
+    # Proton Lumo has no Linux install line here on purpose: its .deb/.rpm links are
+    # unpinned and unsigned with no published checksums, there is no signed Proton
+    # repository or verified Flathub publisher, and AUR/snap packaging is unofficial.
+    # DIRECTION.md forbids unpinned manual install lines. Proton publishing checksums
+    # or signed repositories, a verified Flathub publisher, or an owner's explicit
+    # exception would change this; until then use lumo.proton.me in a browser.
     echo "   Drive, Lumo (AI), Wallet and Docs have no Linux app: use drive.proton.me, lumo.proton.me"
     echo -n "Enter your choice (1-8)(Default: 8) (multiple choices separated by commas): "
     read proton_choice
