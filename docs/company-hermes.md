@@ -294,6 +294,21 @@ no card running, and that restart interrupts whatever is in flight. Size them to
 what the machine and the model routes can carry at once, not to the number of
 cards waiting; a queue that waits is normal, a queue that fails is not.
 
+Worktrees per card: `hermes project create <name> <path> --board <board>`
+registers a project, and a card created with `--project <name> --workspace
+worktree` then gets its own `<repo>/.worktrees/<task id>` and a deterministic
+branch, whatever profile claims it — the repo path is stored absolute, so the
+dispatching profile needs no project state of its own. Two cards on one
+repository are safe in parallel exactly because of this; register a project
+before fanning work out on it. `scripts/map_work_repositories.py` writes a
+private map of the checkouts a worker can be sent to (`--root label=path`,
+`--output` outside every checkout, dry run by default): each checkout's path,
+origin cleaned to `host/owner/name`, which of `DIRECTION.md`, `AGENTS.md`,
+`CLAUDE.md` and `README.md` it has, and the first heading of its direction file.
+It never prints a remote's scheme, user, password or query, never lists a folder
+named `secrets`, and refuses to write the map inside any checkout — the map
+holds this machine's paths, so it stays in the private state folder.
+
 Intake with decomposition off: a card in Triage then stays there until
 `hermes kanban --board <board> specify <id>` or `specify --all` runs.
 `scripts/setup_work_intake.py --board <board>` (dry run; `--apply` to install)
