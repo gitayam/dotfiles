@@ -4,6 +4,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Generated Python caches from installer imports
+__pycache__/
+*.py[cod]
+
 # Environment files
 .env
 .env.local

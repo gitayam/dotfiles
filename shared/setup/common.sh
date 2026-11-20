@@ -10,6 +10,9 @@ NEXT_STEPS=()
 VIBE_CODING_CHOICES=()
 VIBE_CODING_URL="https://git.juntogroups.org/public-repos/vibe-coding.git"
 VIBE_CODING_DIR="$(dirname "$REPO_ROOT")/vibe-coding"
+# Private full versions of the same rules and skills (sac/agent-config); used only when
+# already cloned beside this repo, since cloning it needs credentials and would prompt.
+AGENT_CONFIG_DIR="$(dirname "$REPO_ROOT")/agent-config"
 
 note_problem() {
   PROBLEMS+=("$1")
@@ -161,6 +164,28 @@ link_if_missing() {
   ln -s "$src" "$dst" && echo "  linked $dst"
 }
 
+# Link the private agent-config rules and skills when a checkout exists. Runs before
+# vibe-coding's links, so for a name both repos have the private version wins.
+link_agent_config() {
+  local f
+  if [[ ! -d "$AGENT_CONFIG_DIR/.git" ]]; then
+    note_next_step "Private rules and skills: if you have access, clone sac/agent-config to $AGENT_CONFIG_DIR and rerun; vibe-coding's public versions are linked meanwhile"
+    return 0
+  fi
+  echo "Linking private rules and skills from $AGENT_CONFIG_DIR..."
+  if is_dry_run; then
+    echo "  [dry-run] Would update $AGENT_CONFIG_DIR (git pull --ff-only)"
+  elif ! git -C "$AGENT_CONFIG_DIR" pull --ff-only --quiet 2>/dev/null; then
+    note_problem "agent-config: could not fast-forward $AGENT_CONFIG_DIR; used it as is"
+  fi
+  for f in "$AGENT_CONFIG_DIR"/rules/*.md; do
+    [[ -e "$f" ]] && link_if_missing "$f" "$HOME/.claude/rules/$(basename "$f")"
+  done
+  for f in "$AGENT_CONFIG_DIR"/skills/*/; do
+    [[ -f "$f/SKILL.md" ]] && link_if_missing "${f%/}" "$HOME/.claude/skills/$(basename "$f")"
+  done
+}
+
 # Clone or update vibe-coding and link the chosen parts in
 install_vibe_coding() {
   if has_choice 6 "${VIBE_CODING_CHOICES[@]}"; then
@@ -188,6 +213,7 @@ install_vibe_coding() {
   for choice in "${VIBE_CODING_CHOICES[@]}"; do
     case $choice in
       1)
+        link_agent_config
         for f in "$repo"/rules/*.md; do
           [[ -e "$f" ]] && link_if_missing "$f" "$HOME/.claude/rules/$(basename "$f")"
         done

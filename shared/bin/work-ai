@@ -1,0 +1,221 @@
+#!/usr/bin/env python3
+"""Workspace-scoped launchers for Enterprise Claude and approved organization models.
+
+Installed into <workspace>/.workstation/bin by setup_work_hermes.py. Device
+addresses, org identifiers and credential paths live in its private config.json.
+"""
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+
+
+class LauncherError(ValueError):
+    """A fixed, credential-free diagnostic safe to show to the operator."""
+
+
+def config():
+    return json.loads((Path(__file__).resolve().parent.parent / 'config.json').read_text())
+
+
+def in_scope(cfg, cwd):
+    if cfg['scope'] == 'device':
+        return True
+    root = Path(cfg['workspace']).resolve()
+    path = Path(cwd).expanduser().resolve()
+    if path == root or root in path.parents:
+        return True
+    r = subprocess.run(['git', '-C', str(path), 'remote', '-v'], capture_output=True,
+                       text=True, timeout=10)
+    return any('/zenithflowinc/' in line.lower() or ':zenithflowinc/' in line.lower()
+               for line in r.stdout.splitlines())
+
+
+def check_claude(cfg, env):
+    """Check the selected route; do not infer permission from a model's vendor alone."""
+    base = env.get('ANTHROPIC_BASE_URL', '').rstrip('/')
+    if any(env.get(k) for k in ['CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX',
+                              'CLAUDE_CODE_USE_FOUNDRY', 'ANTHROPIC_API_KEY']):
+        return 'Company work requires Enterprise Claude or an approved organization endpoint.'
+    models = [v for k, v in env.items() if v and (k.startswith('ANTHROPIC_') and
+              k.endswith('_MODEL') or k == 'CLAUDE_CODE_SUBAGENT_MODEL')]
+    if base:
+        route = next((r for r in cfg['routes'].values()
+                      if r['url'].removesuffix('/v1').rstrip('/') == base.removesuffix('/v1')), None)
+        if not route or not models or any(m != route['model'] for m in models):
+            return 'Unapproved company model route. Use zf-server1, zf-server2 or zf-local.'
+        return None
+    state = Path(env.get('CLAUDE_CONFIG_DIR', str(Path.home()/'.claude'))).with_suffix('.json')
+    # Claude's default state file is ~/.claude.json; a custom config dir uses .claude.json inside it.
+    if env.get('CLAUDE_CONFIG_DIR') and Path(env['CLAUDE_CONFIG_DIR']) != Path.home()/'.claude':
+        state = Path(env['CLAUDE_CONFIG_DIR']) / '.claude.json'
+    try:
+        account = json.loads(state.read_text()).get('oauthAccount', {})
+    except (OSError, ValueError):
+        account = {}
+    if account.get('organizationUuid') != cfg['enterprise_org']:
+        return 'Sign into the company Enterprise account with zf-claude auth login --claudeai --sso.'
+    if account.get('organizationType') != 'claude_enterprise':
+        return 'The saved account is not a Claude Enterprise organization.'
+    if any(not (m.startswith('claude-') or m in {'opus', 'sonnet', 'haiku', 'default'}) for m in models):
+        return 'An unapproved model override remains in the Enterprise environment.'
+    return None
+
+
+def clean_env(cfg):
+    env = dict(os.environ)
+    for key in list(env):
+        if key.startswith(('ANTHROPIC_', 'OPENAI_', 'OPENROUTER_', 'MISTRAL_',
+                           'DEEPSEEK_', 'GEMINI_', 'GOOGLE_API_', 'DASHSCOPE_',
+                           'CLAUDE_CODE_')):
+            env.pop(key)
+    env.pop('HERMES_HOME', None)
+    env.pop('HERMES_PROFILE', None)
+    env.pop('HERMES_PROFILE_NAME', None)
+    env.pop('CLAUDE_CONFIG_DIR', None)
+    env['PATH'] = ':'.join([str(Path(__file__).resolve().parent), str(Path.home()/'.local/bin'),
+                            '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin'])
+    env.update({'DISABLE_TELEMETRY': '1', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1'})
+    return env
+
+
+def model_env(cfg, key, env):
+    route = cfg['routes'][key]
+    model = route['model']
+    env.update({'ANTHROPIC_BASE_URL': route['url'].removesuffix('/v1'),
+                'ANTHROPIC_AUTH_TOKEN': 'selfhosted',
+                'ANTHROPIC_MODEL': model, 'ANTHROPIC_CUSTOM_MODEL_OPTION': model,
+                'ANTHROPIC_CUSTOM_MODEL_OPTION_NAME': route['name'],
+                'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS': '1',
+                'CLAUDE_CODE_MAX_CONTEXT_TOKENS': str(route['context'])})
+    for tier in ['OPUS', 'SONNET', 'HAIKU']:
+        env['ANTHROPIC_DEFAULT_'+tier+'_MODEL'] = model
+    env['CLAUDE_CODE_SUBAGENT_MODEL'] = model
+    env['CLAUDE_CODE_SUBAGENT_MODEL_FORCE'] = '1'
+    if route['context'] < 100000:
+        env['CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT'] = '1'
+        env['CLAUDE_CODE_MAX_OUTPUT_TOKENS'] = str(route['context']//6)
+    return env
+
+
+def request(url, payload=None, key='selfhosted', timeout=180):
+    data = json.dumps(payload).encode() if payload is not None else None
+    req = urllib.request.Request(url, data, {'Content-Type': 'application/json',
+                                           'Authorization': 'Bearer '+key})
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        return json.load(response)
+
+
+def paperclip_args(cfg, args):
+    """Use the private company context rather than the operator's unrelated default."""
+    if not args or args[0] in {'--help','-h','--version','-V'}:
+        return [cfg['paperclip'], *args]
+    if args[0] not in {'company','agent','issue','project','goal'}:
+        raise LauncherError('Use the company issue, agent, project, goal or company commands.')
+    overrides={'--context','--profile','--api-base','--company-id','--config','--data-dir'}
+    if any(arg.split('=',1)[0] in overrides or
+           any(arg.startswith(short) for short in ('-C','-c','-d')) for arg in args):
+        raise LauncherError('Company routing is pinned by this launcher.')
+    context=Path(cfg['paperclip_context'])
+    if not context.is_file():
+        raise LauncherError('Company Paperclip context is missing; configure company metadata and rerun setup.')
+    profile=json.loads(context.read_text())['profiles']['company']
+    command=tuple(args[:2])
+    # These native commands require -C during argument parsing even when their
+    # context profile already contains companyId (Paperclip 2026.1106.0).
+    needs_company={('agent','list'),('agent','create'),('agent','hire'),
+                   ('project','list'),('project','create'),('issue','list'),
+                   ('issue','create'),('goal','list'),('goal','create')}
+    routing=['--company-id',profile['companyId']] if command in needs_company else []
+    return [cfg['paperclip'], *args,*routing,'--context',str(context),'--profile','company',
+            '--api-base',cfg['paperclip_api_base']]
+
+
+def main():
+    cfg = config()
+    name = Path(sys.argv[0]).name
+    args = sys.argv[1:]
+    if name == 'work-ai':
+        name = args.pop(0) if args else 'status'
+    if name == 'hook':
+        try:
+            event = json.load(sys.stdin)
+            error = check_claude(cfg, os.environ) if in_scope(cfg, event.get('cwd', os.getcwd())) else None
+        except Exception:
+            error = 'Company route guard could not read its configuration or request.'
+        if error:
+            print(error, file=sys.stderr)
+            return 2
+        return 0
+    env = clean_env(cfg)
+    if name in {'status', 'zf-status'}:
+        for key, route in cfg['routes'].items():
+            try:
+                data = request(route['url']+'/models', timeout=8)
+                found = any(m['id'] == route['model'] for m in data.get('data', []))
+                print({'1':'server1','2':'server2'}.get(key,key), route['model'], 'UP' if found else 'MODEL MISSING', route['url'])
+            except Exception as exc:
+                print({'1':'server1','2':'server2'}.get(key,key), 'DOWN', type(exc).__name__)
+        return 0
+    if name == 'zf-decide':
+        payload = json.loads(' '.join(args) if args else sys.stdin.read())
+        key = Path(cfg['decide_key_file']).read_text().strip()
+        print(json.dumps(request(cfg['decide_url']+'/v1/decide', payload, key), indent=2))
+        return 0
+    if name == 'zf-paperclip':
+        argv=paperclip_args(cfg,args)
+        os.execve(cfg['paperclip'],argv,env)
+    if name == 'zf-zq':
+        key = args.pop(0) if args else 'local'
+        key = {'server1':'1','server2':'2','z1':'1','z2':'2'}.get(key,key)
+        if key not in cfg['routes']:
+            raise ValueError('Use local, server1 or server2 (1/2 remain aliases).')
+        prompt = ' '.join(args) if args else sys.stdin.read()
+        r = cfg['routes'][key]
+        result = request(r['url']+'/chat/completions', {'model':r['model'],
+            'messages':[{'role':'user','content':prompt}], 'max_tokens':1024, 'stream':False})
+        print(result['choices'][0]['message'].get('content', ''))
+        return 0
+    if name == 'hermes-zenithflow':
+        env['HERMES_HOME'] = cfg['hermes_home']
+        if not args:
+            args = ['chat', '--in', cfg['workspace']]
+        os.execve(cfg['hermes'], [cfg['hermes'], *args], env)
+    if name == 'zf-claude':
+        if Path(cfg['claude_config_dir']) != Path.home()/'.claude':
+            env['CLAUDE_CONFIG_DIR'] = cfg['claude_config_dir']
+        os.execve(cfg['claude'], [cfg['claude'], *args], env)
+    key = {'zf-server1':'1', 'zf-server2':'2', 'zf-z1':'1', 'zf-z2':'2', 'zf-local':'local'}.get(name)
+    if name == 'zf-orca':
+        key = os.environ.get('ZF_MODEL', 'local')
+        key = {'server1':'1','server2':'2','z1':'1','z2':'2'}.get(key,key)
+        if key not in cfg['routes']:
+            raise ValueError('ZF_MODEL must be local, server1 or server2 (1/2 remain aliases).')
+        if 'dispatch' in args:
+            # Orca's built-in Claude adapter is read-only; other adapters have separate credentials.
+            if '--agent' not in args or args[args.index('--agent')+1] != 'claude':
+                raise ValueError('Use --agent claude. Use zf-local/zf-server1/zf-server2 for file edits.')
+        elif args and args[0] not in {'agents','lanes','inspect','logs','status','help','--help','--version'}:
+            print('work-ai: this Orca launcher supports approved Claude dispatch and read-only inspection.',file=sys.stderr)
+            return 2
+        model_env(cfg, key, env)
+        os.execve(cfg['orca'], [cfg['orca'], *args], env)
+    if key:
+        model_env(cfg, key, env)
+        os.execve(cfg['claude'], [cfg['claude'], *args], env)
+    raise ValueError('Unknown workspace launcher: '+name)
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main())
+    except LauncherError as exc:
+        print('work-ai: '+str(exc),file=sys.stderr)
+        sys.exit(2)
+    except (OSError, ValueError, KeyError, urllib.error.HTTPError) as exc:
+        # Do not echo request bodies, headers, credential contents or environment.
+        print('work-ai: '+type(exc).__name__+': check the workspace configuration and service logs.', file=sys.stderr)
+        sys.exit(1)

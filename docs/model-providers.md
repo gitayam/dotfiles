@@ -22,8 +22,29 @@ Ground rules for every route:
 - Hermes server: `hermes auth add openai-codex --no-browser`, then enter the shown code
   at `https://auth.openai.com/codex/device`. Hermes keeps its own session; the Mac login
   is untouched. Every profile of that Hermes home shares the credential.
-- Models through this login include `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini` and `gpt-5.6-*`.
-  In a profile: `model: {provider: openai-codex, default: gpt-5.5}`.
+- The served list changes with the plan. On 2026-11-17 the login refused `gpt-5.5` twice
+  ("not entitled") while listing `gpt-6-sol`, `gpt-6-sol-900k`, `gpt-6-luna`,
+  `gpt-6-luna-900k` and `gpt-5.6-sol`; a profile pinned to `gpt-5.5` silently ran on its
+  fallback. Name a model explicitly (`model: {provider: openai-codex, default: gpt-6-sol}`)
+  and probe it after any plan change:
+  `hermes -p <profile> chat -Q -q "Reply with exactly: ok" --provider openai-codex -m <model>`.
+  Picking the provider without a model sends `auto`, which the subscription refuses.
+
+## Claude (Team seats)
+
+- Subscription logins (Pro, Max, Team …) are for Claude Code and Anthropic's own apps,
+  run as published ([legal and compliance](https://code.claude.com/docs/en/legal-and-compliance)).
+  Another agent's own loop (Hermes, the Agent SDK) needs a Console API key instead. Team,
+  Max and Ultra plans include [monthly API credits](https://support.claude.com/en/articles/17154008-monthly-api-credits-for-max-ultra-and-team-plans).
+- Mac: Claude Code's own Keychain login.
+- Server: run `claude setup-token` on your own machine, then
+  `secret set claude-sandbox CLAUDE_CODE_OAUTH_TOKEN_<SEAT>`; one key per seat
+  (`_ISSA`, `_IDUNN`, both the owner's paid Team seats). The Hermes coding bot runs the real
+  Claude Code CLI in its sandbox (`claude -p`), with each seat's token in a read-only
+  `claude-<n>.env`; a wrapper switches to the next seat when a run ends on Claude Code's
+  own "usage limit reached" message.
+- The standalone CLI comes from npm's `@anthropic-ai/claude-code-linux-x64` package (the
+  main package needs Node 22+); pin the version and its sha512.
 
 ## Lumo
 
@@ -58,6 +79,17 @@ generation, compression, vision) to another provider. Denied for ZenithFlow.
   route is for other repositories only; a server bot that also works on those
   repositories must not use it.
 
+## Alibaba Model Studio (Qwen) on the coding board
+
+- Model lists move: on 2026-11-19 Model Studio listed `qwen4-max` while the board's Qwen
+  reviewer still ran an older model. Re-read the provider's model list now and then, and
+  before switching a role run a smoke test that makes a real tool call, not just a
+  one-line reply.
+- A Qwen coder needs its own sandbox. The shared coding sandbox holds clones of projects
+  ai-policy denies Alibaba for, so give the Qwen lane a separate sandbox and only
+  project-scoped read tokens (Reporter project access tokens for the allowed projects).
+  More board lessons: [hermes-coding-board.md](hermes-coding-board.md).
+
 ## OpenCode (Zen and Go)
 
 - Mac: the OpenCode Console login is OAuth, stored in OpenCode's own database. Don't
@@ -71,12 +103,17 @@ generation, compression, vision) to another provider. Denied for ZenithFlow.
 ## Local models
 
 - llama.cpp behind Tailscale Serve on the local model host: reachable on the tailnet
-  only, with the key in secret profile `vibe` (`PANGOLIN_API_KEY`).
+  only (Serve exposes the OpenAI routes under `/api`, not `/completion` or `/tokenize`).
+- One key per consumer since 2026-11-17: each is a line in the host's root-only
+  `/etc/llama/api-key` (loaded by `LoadCredential` into all three servers), with a copy in
+  `/root/.secrets/llama-keys/<name>` on that host. This Mac's is `vibe/PANGOLIN_API_KEY`
+  (`operator-mac`). To rotate one: add a line, restart the servers, move that consumer,
+  remove the old line, restart again. Root on the host: `secret get pangolin SUDO_PASSWORD`
+  piped to `sudo -S`.
 - A container on a Docker bridge can't resolve MagicDNS names: add the host name with
   `extra_hosts` and keep the TLS name.
-- Hermes refuses a main model with less than 64K context. The Gemma server runs a 32K
-  window today, so it can serve auxiliary tasks but not a profile's main model until
-  its `--ctx-size` is raised.
+- Hermes refuses a main model with less than 64K context. The Gemma server runs a 64K
+  window since 2026-11-17, so a profile can use it as its main model.
 - Alibaba-family local models (Qwen and fine-tunes named after it) are denied for
   IrregularChat and ZenithFlow, wherever they run.
 
@@ -99,3 +136,7 @@ with characters Docker Compose would interpolate (`$`); refuse when the name alr
 exists; back up the `.env` first; append `NAME=value`; and print only the name and the
 value's length. Recreate the container afterwards (`docker compose up -d
 --force-recreate`): `restart` keeps the old environment.
+
+Never put a key on the same stdin as a program: `secret get … | ssh host 'python3 -'` with
+the script appended makes the key line 1 of the code, and the error traceback prints it
+(it happened on 2026-11-17). Copy the script to the host first and pipe only the key.

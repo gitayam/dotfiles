@@ -345,7 +345,7 @@ gather_user_preferences() {
 }
 
 install_terminal_apps() {
-  terminal_apps=("coreutils" "diceware" "git" "gh" "jq" "tree" "python" "ansible" "docker" "kubectl" "gnupg" "age" "magic-wormhole" "wireguard-tools" "ocrmypdf" "pandoc" "tesseract" "clamav" "ghostscript" "imagemagick" "tmux" "mosh" "sops")
+  terminal_apps=("coreutils" "diceware" "git" "gh" "jq" "tree" "python" "ansible" "docker" "kubectl" "gnupg" "age" "magic-wormhole" "wireguard-tools" "ocrmypdf" "pandoc" "tesseract" "clamav" "ghostscript" "imagemagick" "tmux" "mosh" "sops" "autossh" "uv" "glab" "gitleaks")
   for app in "${terminal_apps[@]}"; do
     install_formula "$app"
   done
@@ -397,7 +397,9 @@ install_gui_apps() {
         4) install_cli claude claude-code --cask ;;
         5) install_cli codex codex --cask ;;
         6) install_cli opencode opencode --formula ;;
-        7) install_cli hermes hermes-agent --formula ;;
+        7)
+          install_cli hermes hermes-agent --formula
+          note_next_step "Hermes: run 'hermes setup' (providers), then 'hermes-setup --apply' (computer use, Kanban, approvals, skill)" ;;
         8)
           if [[ "$ARCH" == "arm64" ]]; then
             install_cask deepseek-harness

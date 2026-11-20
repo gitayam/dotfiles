@@ -6,6 +6,20 @@ set -euo pipefail
 DOTFILES="${DOTFILES:-$HOME/Git/dotfiles}"
 [ -d "$DOTFILES" ] || { echo "dotfiles not found at $DOTFILES"; exit 1; }
 
+# A work-only device must not acquire the personal provider catalog, aliases,
+# tunnels or generic Hermes skill during a routine refresh.
+WORK_AI_CONFIG="$HOME/zenithflow/.workstation/config.json"
+if [ -f "$WORK_AI_CONFIG" ]; then
+    work_scope=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["scope"])' "$WORK_AI_CONFIG") || exit 1
+    if [ "$work_scope" = device ]; then
+        echo "Company device: refreshing only its approved work configuration."
+        if command -v uv >/dev/null 2>&1; then
+            exec uv run --with pyyaml python "$DOTFILES/scripts/setup_work_hermes.py" --from-config "$WORK_AI_CONFIG" --apply
+        fi
+        exec python3 "$DOTFILES/scripts/setup_work_hermes.py" --from-config "$WORK_AI_CONFIG" --apply
+    fi
+fi
+
 # 1. Symlink claude-switch into ~/.local/bin
 mkdir -p "$HOME/.local/bin"
 ln -sfn "$DOTFILES/shared/bin/claude-switch" "$HOME/.local/bin/claude-switch"
@@ -82,7 +96,10 @@ fi
 # 5b. macOS: one always-on tunnel per model server in shared/llm/models.conf.
 #     Ad-hoc tunnels that claude-z started earlier hold the same ports, so they
 #     are stopped first; launchd then owns the forwards.
-if [ "$(uname -s)" = "Darwin" ]; then
+if [ "$(uname -s)" = "Darwin" ] && ! command -v autossh >/dev/null 2>&1; then
+    # claude-z tunnel-run execs autossh; without it launchd would restart a failing job forever
+    echo "⚠ skipped the model-server tunnels: autossh is not installed (brew install autossh, then rerun)"
+elif [ "$(uname -s)" = "Darwin" ]; then
     hosts=$(awk '!/^[[:space:]]*(#|$)/ && $3 != "-" { print $3 }' "$DOTFILES/shared/llm/models.conf" | sort -u)
     pkill -f "autossh -M 0 -N -o ControlMaster=no" 2>/dev/null || true
     for host in $hosts; do
@@ -150,12 +167,11 @@ if [ "$(uname -s)" = "Darwin" ] && [ -f "$PAPERCLIP_PLIST" ]; then
     fi
 fi
 
-# 5d. Hermes (CLI and Hermes.app share ~/.hermes): the coding-stack skill that
-#     teaches it to drive claude-z, Paperclip, Orca and zq
-if [ -d "$HOME/.hermes/skills" ]; then
-    mkdir -p "$HOME/.hermes/skills/autonomous-ai-agents"
-    ln -sfn "$DOTFILES/shared/hermes/skills/coding-stack" "$HOME/.hermes/skills/autonomous-ai-agents/coding-stack"
-    echo "✓ Hermes skill coding-stack → $DOTFILES/shared/hermes/skills/coding-stack"
+# 5d. Hermes (CLI and Hermes.app share ~/.hermes): computer use, Kanban, write
+#     approvals and the coding-stack skill. hermes-setup reports what still needs a
+#     person (macOS permissions, Linux packages); its exit 1 must not stop this script.
+if command -v hermes >/dev/null 2>&1 && [ -f "$HOME/.hermes/config.yaml" ]; then
+    DOTFILES="$DOTFILES" "$DOTFILES/shared/bin/hermes-setup" --apply || echo "⚠ hermes-setup left items above to finish"
 fi
 
 # 6. Linux: install systemd user unit for LiteLLM autostart.

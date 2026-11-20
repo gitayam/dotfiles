@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+# hermes-setup: check, and with --apply configure, a local Hermes Agent (CLI and
+# Hermes.app share ~/.hermes) for the coding stack: computer use, the Kanban
+# board, write approvals and the coding-stack skill. macOS and Linux.
+#
+#   hermes-setup            report only; changes nothing
+#   hermes-setup --apply    make the changes below, then report again
+#
+# Applies: supports_vision on the z1 model (else computer_use screenshots go to
+# an unset auxiliary vision provider instead of the model), memory and skill
+# write approval, the computer_use and kanban toolsets for the CLI/desktop
+# platform, the Kanban database, the cua-driver binary and its ~/.local/bin link,
+# the coding-stack skill link, and a fallback chain (z1, z2) for every profile
+# that has none, so an empty or failing model switches instead of ending the turn. Never applies: the macOS Accessibility and
+# Screen Recording grants (a person must approve them), providers (see
+# vibe-coding claude-selfhosted/hermes/config.example.yaml), Linux system
+# packages (sudo), or the gateway (Hermes.app starts it; `hermes gateway start`).
+# Exit 1 when anything is still FAIL.
+set -uo pipefail
+
+APPLY=false
+case "${1:-}" in
+    --apply) APPLY=true ;;
+    "" ) ;;
+    -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "usage: hermes-setup [--apply]" >&2; exit 2 ;;
+esac
+
+HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
+CONFIG="$HERMES_HOME/config.yaml"
+DOTFILES="${DOTFILES:-$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")/../.." && pwd)}"
+VISION_MODEL="glm-5.3-flash"          # z1; checked to read images on 2026-11-17
+TOOLSETS=(computer_use kanban)
+OS=$(uname -s)
+fails=0
+
+pass() { echo "PASS  $*"; }
+fail() { echo "FAIL  $*"; fails=$((fails + 1)); }
+info() { echo "INFO  $*"; }
+manual() { echo "MANUAL $*"; }
+# hermes prints an "install out of sync" banner on every command; keep it out of parsing
+# (grep -v exits 1 on empty output; pipefail still reports a failing hermes)
+h() { hermes "$@" 2>&1 | { grep -v 'install out of sync' || true; }; }
+
+if ! command -v hermes >/dev/null 2>&1; then
+    if [ "$OS" = Darwin ]; then
+        fail "hermes not installed: brew install hermes-agent (app: brew install --cask hermes-desktop)"
+    else
+        fail "hermes not installed: see https://hermes-agent.nousresearch.com/docs (installer or container)"
+    fi
+    exit 1
+fi
+[ -f "$CONFIG" ] || { fail "no $CONFIG: run 'hermes setup' first"; exit 1; }
+
+# 1. Providers: report only
+if grep -qE '^  z1:$' "$CONFIG"; then pass "provider z1 configured"
+else info "no z1 provider in $CONFIG (vibe-coding: claude-selfhosted/hermes/config.example.yaml)"; fi
+
+# 2. Vision on the z1 model, so computer_use screenshots reach it natively
+vision_ok() { grep -A1 -E "^      ${VISION_MODEL//./\\.}:$" "$CONFIG" | grep -q 'supports_vision: true'; }
+if vision_ok; then
+    pass "$VISION_MODEL declares supports_vision"
+elif grep -qE "^      ${VISION_MODEL//./\\.}: \{\}$" "$CONFIG"; then
+    if $APPLY; then
+        cp "$CONFIG" "$CONFIG.backup.$(date +%Y%m%d%H%M%S)"
+        # portable in-place edit (BSD and GNU sed differ on -i)
+        tmp=$(mktemp) && sed -E "s/^      ${VISION_MODEL//./\\.}: \{\}$/      ${VISION_MODEL}:\\
+        supports_vision: true/" "$CONFIG" > "$tmp" && cat "$tmp" > "$CONFIG" && rm -f "$tmp"
+        vision_ok && pass "$VISION_MODEL: set supports_vision: true (backup kept)" \
+                  || fail "could not set supports_vision; edit $CONFIG by hand"
+    else
+        fail "$VISION_MODEL lacks supports_vision: true (screenshots go to aux vision)"
+    fi
+elif grep -q "$VISION_MODEL" "$CONFIG"; then
+    fail "add 'supports_vision: true' under providers.z1.models.$VISION_MODEL in $CONFIG"
+fi
+
+# 3. Write approval for memory and skills (lesson 20 in vibe-coding self-hosted-claude-code.md)
+for key in memory.write_approval skills.write_approval; do
+    if [ "$(h config get "$key" | tail -1)" = "true" ]; then
+        pass "$key"
+    elif $APPLY && h config set "$key" true >/dev/null && [ "$(h config get "$key" | tail -1)" = "true" ]; then
+        pass "$key: set to true"
+    else
+        fail "$key is off: hermes config set $key true"
+    fi
+done
+
+# 4. Toolsets on the cli platform (the CLI, Hermes.app and the web dashboard)
+tools=$(h tools list --platform cli)
+for t in "${TOOLSETS[@]}"; do
+    if grep -qE "✓ enabled +$t( |$)" <<<"$tools"; then
+        pass "toolset $t enabled (cli)"
+    elif $APPLY && h tools enable --platform cli "$t" >/dev/null &&
+         h tools list --platform cli | grep -qE "✓ enabled +$t( |$)"; then
+        pass "toolset $t: enabled (cli; new sessions only)"
+    else
+        fail "toolset $t disabled: hermes tools enable --platform cli $t"
+    fi
+done
+
+# 5. Kanban: the database, and a gateway to dispatch cards
+if [ -f "$HERMES_HOME/kanban.db" ]; then
+    pass "kanban database exists"
+elif $APPLY && h kanban init >/dev/null && [ -f "$HERMES_HOME/kanban.db" ]; then
+    pass "kanban database created"
+else
+    fail "no kanban database: hermes kanban init"
+fi
+if h status | grep -qE 'Gateway: +✓'; then
+    pass "gateway running (dispatches ready cards)"
+else
+    manual "gateway not running; ready cards wait until it is: open Hermes.app or run 'hermes gateway start'"
+fi
+
+# 6. Computer use: the driver, and what the OS needs
+if h computer-use status | grep -q 'Runtime contract ready'; then
+    pass "cua-driver installed"
+elif $APPLY && h computer-use install && h computer-use status | grep -q 'Runtime contract ready'; then
+    pass "cua-driver installed now"
+else
+    fail "cua-driver missing: hermes computer-use install"
+fi
+# On macOS the TCC grants belong to the copy inside CuaDriver.app; Linux has only the bare binary
+drivers=$(find "$HERMES_HOME/tools" -maxdepth 5 -name cua-driver -type f -perm -u+x 2>/dev/null | sort -V)
+driver=$(grep 'CuaDriver.app/Contents/MacOS/' <<<"$drivers" | tail -1)
+[ -n "$driver" ] || driver=$(tail -1 <<<"$drivers")
+if [ -n "$driver" ]; then
+    if [ "$(readlink "$HOME/.local/bin/cua-driver" 2>/dev/null)" = "$driver" ]; then
+        pass "~/.local/bin/cua-driver → current driver"
+    elif $APPLY; then
+        mkdir -p "$HOME/.local/bin" && ln -sfn "$driver" "$HOME/.local/bin/cua-driver"
+        pass "~/.local/bin/cua-driver linked to $driver"
+    else
+        info "~/.local/bin/cua-driver not linked to $driver (convenience only)"
+    fi
+fi
+if [ "$OS" = Darwin ]; then
+    perms=$(h computer-use permissions status)
+    if grep -q '❌' <<<"$perms"; then
+        manual "CuaDriver lacks Accessibility/Screen Recording. Run 'hermes computer-use permissions grant',"
+        manual "  approve both in System Settings, then: pkill -f 'cua-driver serve'; hermes computer-use doctor"
+        manual "  (a stale grant: tccutil reset Accessibility com.trycua.driver; tccutil reset ScreenCapture com.trycua.driver)"
+    elif grep -q '✅' <<<"$perms"; then
+        pass "CuaDriver has Accessibility and Screen Recording"
+    else
+        info "CuaDriver permission state unknown (driver not running): hermes computer-use doctor"
+    fi
+elif [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+    # Headless Linux: each profile gets its own Xvnc + Xfce screen
+    if h computer-use screen status | grep -qiE 'running'; then
+        pass "headless screen running"
+    else
+        manual "headless Linux: 'hermes computer-use screen install' (system packages, sudo), then 'hermes computer-use screen start'"
+    fi
+else
+    info "Linux desktop session: computer_use drives it; check with 'hermes computer-use doctor'"
+fi
+
+# 7. The coding-stack skill (teaches Hermes claude-z, Paperclip, Orca and zq)
+skill_src="$DOTFILES/shared/hermes/skills/coding-stack"
+skill_dst="$HERMES_HOME/skills/autonomous-ai-agents/coding-stack"
+if [ -f "$HOME/.config/ai-policy/device-models.conf" ] &&
+   [ -f "$HERMES_HOME/skills/autonomous-ai-agents/company-coding-stack/SKILL.md" ]; then
+    pass "company coding skill retained (work-only device)"
+elif [ -d "$skill_src" ]; then
+    if [ "$(readlink "$skill_dst" 2>/dev/null)" = "$skill_src" ]; then
+        pass "skill coding-stack linked"
+    elif $APPLY; then
+        mkdir -p "$(dirname "$skill_dst")" && ln -sfn "$skill_src" "$skill_dst"
+        pass "skill coding-stack linked to $skill_src"
+    else
+        fail "skill coding-stack not linked: ln -sfn $skill_src $skill_dst"
+    fi
+fi
+
+# 8. A fallback chain per profile: Hermes's only automatic model switching
+helper="$DOTFILES/shared/hermes/fallback_chain.py"
+if [ -f "$helper" ]; then
+    if $APPLY; then report=$(python3 -I "$helper" "$HERMES_HOME" --apply); else report=$(python3 -I "$helper" "$HERMES_HOME"); fi
+    echo "$report"
+    fails=$((fails + $(grep -c '^FAIL' <<<"$report")))
+    # Prove each chain answers: static without --apply, one tiny live request per entry with it
+    if h fallback --help | grep -q ' check '; then
+        for profile in default $(ls "$HERMES_HOME/profiles" 2>/dev/null); do
+            args=(fallback check); $APPLY && args+=(--live)
+            [ "$profile" = default ] && out=$(h "${args[@]}") || out=$(h -p "$profile" "${args[@]}")
+            if grep -qE ' (auth|config|live_[a-z_]+|model_mismatch)$' <<<"$out"; then
+                info "profile $profile: a fallback entry is not usable; run: hermes -p $profile fallback check --live"
+            fi
+        done
+    fi
+fi
+
+echo
+if [ "$fails" -gt 0 ]; then
+    $APPLY && echo "$fails item(s) still need attention." || echo "$fails item(s) to fix: hermes-setup --apply"
+    exit 1
+fi
+echo "Hermes is set up. Start a new session (or reopen Hermes.app) so toolset changes apply."

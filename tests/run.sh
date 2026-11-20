@@ -60,7 +60,7 @@ syntax_bash() {
   local f bad=0
   for f in "$REPO"/macos/*.sh "$REPO"/linux/*.sh "$REPO"/shared/setup/*.sh "$REPO"/tests/*.sh \
            "$REPO"/shared/bin/git-wip "$REPO"/shared/bin/git-sync-all "$REPO"/shared/bin/secret \
-           "$REPO"/shared/bin/claude-switch "$REPO"/shared/bin/claude-z "$REPO"/shared/bin/oz "$REPO"/shared/vibe/run-litellm.sh \
+           "$REPO"/shared/bin/claude-switch "$REPO"/shared/bin/claude-z "$REPO"/shared/bin/oz "$REPO"/shared/bin/hermes-setup "$REPO"/shared/vibe/run-litellm.sh \
            "$REPO"/scripts/install-claude-aliases.sh "$REPO"/shared/zsh/.zsh_*; do
     [[ "$f" == *.original ]] && continue
     bash -n "$f" || { echo "bash -n failed: $f"; bad=1; }
@@ -81,6 +81,14 @@ if command -v zsh >/dev/null; then
 fi
 check "launchd plists are valid XML" python3 -c "import plistlib,sys; [plistlib.load(open(f,'rb')) for f in sys.argv[1:]]" "$REPO"/shared/launchd/*.plist
 check "git-inventory compiles" python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$REPO/shared/bin/git-inventory"
+check "company Hermes routes, isolation and backup behavior" python3 -B -m unittest discover -s "$REPO/scripts" -p test_work_hermes.py
+check "company model probe oracles and endpoint boundaries" python3 -B -m unittest discover -s "$REPO/scripts" -p test_work_model_probe.py
+check "Paperclip Hermes callbacks, routes and termination gates" python3 -B -m unittest discover -s "$REPO/scripts" -p test_work_paperclip.py
+check "Paperclip request graph ownership and unknown-write recovery" python3 -B -m unittest discover -s "$REPO/scripts" -p test_work_graph.py
+check "Paperclip read-only audit detects drift and preserves active work" python3 -B -m unittest discover -s "$REPO/scripts" -p test_work_audit.py
+check "board intake installs only with decomposition off and removes only its own job" python3 -B -m unittest discover -s "$REPO/scripts" -p test_work_intake.py
+check "board report counts attempts and card audit keeps notes out of commands" python3 -B -m unittest discover -s "$REPO/scripts" -p test_work_board_tools.py
+check "issue strategy collection coverage and portable installation" python3 -B -m unittest discover -s "$REPO/scripts" -p test_issue_strategy.py
 check "storage-cleanup compiles" python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$REPO/shared/bin/storage-cleanup"
 if command -v node >/dev/null; then
   check "secrets scripts parse" bash -c "node --check '$REPO/typescript/sync-secrets.js' && node --check '$REPO/typescript/get-secrets.js'"
@@ -357,14 +365,16 @@ claude_z_server_env() {
 }
 check "claude-z: every tier and subagent uses the served model; window from vLLM" claude_z_server_env
 claude_z_registry() {
-  local out rc=0
-  out=$(PATH="$CZT/bin:$PATH" bash "$REPO/shared/bin/claude-z" ensure qwen 2>/dev/null)
+  # An empty home: a work-only device's ~/.config/ai-policy/device-models.conf replaces
+  # the repository registry in claude-z, and holds only the two organization rows
+  local out rc=0 home="$CZT/home"; mkdir -p "$home"
+  out=$(HOME="$home" PATH="$CZT/bin:$PATH" bash "$REPO/shared/bin/claude-z" ensure qwen 2>/dev/null)
   [[ "$out" == "8003 huihui-ai/Huihui-Qwen3.8-27B-abliterated nothink" ]] || { echo "ensure alias: $out"; rc=1; }
-  out=$(PATH="$CZT/bin:$PATH" bash "$REPO/shared/bin/claude-z" ensure 1 2>/dev/null)
+  out=$(HOME="$home" PATH="$CZT/bin:$PATH" bash "$REPO/shared/bin/claude-z" ensure 1 2>/dev/null)
   [[ "$out" == "8001 glm-5.3-flash -" ]] || { echo "ensure 1: $out"; rc=1; }
-  out=$(PATH="$CZT/bin:$PATH" bash "$REPO/shared/bin/claude-z" 2f -p x 2>&1); [[ $? -eq 2 && "$out" == *"zq 2f"* && "$out" != *"args="* ]] || { echo "32K not refused: $out"; rc=1; }
-  out=$(PATH="$CZT/bin:$PATH" bash "$REPO/shared/bin/claude-z" embed -p x 2>&1); [[ "$out" == *"embed model"* && "$out" != *"args="* ]] || { echo "embed not refused: $out"; rc=1; }
-  PATH="$CZT/bin:$PATH" bash "$REPO/shared/bin/claude-z" nope 2>/dev/null | grep -q "args=nope" || { echo "unknown first arg not passed to claude"; rc=1; }
+  out=$(HOME="$home" PATH="$CZT/bin:$PATH" bash "$REPO/shared/bin/claude-z" 2f -p x 2>&1); [[ $? -eq 2 && "$out" == *"zq 2f"* && "$out" != *"args="* ]] || { echo "32K not refused: $out"; rc=1; }
+  out=$(HOME="$home" PATH="$CZT/bin:$PATH" bash "$REPO/shared/bin/claude-z" embed -p x 2>&1); [[ "$out" == *"embed model"* && "$out" != *"args="* ]] || { echo "embed not refused: $out"; rc=1; }
+  HOME="$home" PATH="$CZT/bin:$PATH" bash "$REPO/shared/bin/claude-z" nope 2>/dev/null | grep -q "args=nope" || { echo "unknown first arg not passed to claude"; rc=1; }
   return $rc
 }
 check "claude-z: registry keys and aliases; 32K and non-chat models refused for Claude Code" claude_z_registry
@@ -470,6 +480,44 @@ if [[ "$(uname -s)" == Darwin ]]; then
   }
   check "installer: Paperclip PATH added and Node pin repointed, one reload, rerun is a no-op" paperclip_node_pin
 fi
+
+# Tunnels exec autossh; without it launchd restarts a failing job forever. uname and
+# launchctl are stubbed so the step runs (and must load nothing) on any OS.
+tunnels_need_autossh() {
+  local h; h="$(mktemp -d)"; mkdir -p "$h/stub" "$h/Library/LaunchAgents"
+  printf '#!/bin/sh\necho Darwin\n' > "$h/stub/uname"
+  printf '#!/bin/sh\necho "$*" >> "%s/launchctl.log"\n' "$h" > "$h/stub/launchctl"
+  chmod +x "$h/stub/uname" "$h/stub/launchctl"
+  local step; step="$(awk '/^# 5b\./,/^# 5c\./' "$REPO/scripts/install-claude-aliases.sh" | sed '$d')"
+  local out; out=$(HOME="$h" DOTFILES="$REPO" PATH="$h/stub:/usr/bin:/bin" bash -c "$step" 2>&1)
+  grep -q "autossh is not installed" <<<"$out" || { echo "no warning: $out"; return 1; }
+  [[ ! -e "$h/launchctl.log" && -z "$(ls "$h/Library/LaunchAgents")" ]] || { echo "loaded a tunnel anyway"; return 1; }
+  rm -rf "$h"
+}
+check "installer: no autossh, no tunnel jobs and a clear warning" tunnels_need_autossh
+
+# Private agent-config rules and skills win over vibe-coding's public ones of the same name;
+# without a checkout the run only adds a next step (cloning it would prompt for credentials).
+agent_config_links() {
+  local d; d="$(mktemp -d)"
+  mkdir -p "$d/home" "$d/agent-config/rules" "$d/agent-config/skills/ops" "$d/vibe-coding/rules"
+  echo private > "$d/agent-config/rules/shared.md"; echo s > "$d/agent-config/skills/ops/SKILL.md"
+  echo public > "$d/vibe-coding/rules/shared.md"; echo p > "$d/vibe-coding/rules/public-only.md"
+  git -C "$d/agent-config" init -q; git -C "$d/vibe-coding" init -q
+  HOME="$d/home" bash -c '
+    REPO_ROOT="$1/dotfiles"; source "$2/shared/setup/common.sh"
+    VIBE_CODING_CHOICES=(1); install_vibe_coding >/dev/null
+    [[ "$(readlink "$HOME/.claude/rules/shared.md")" == "$1/agent-config/rules/shared.md" ]] || { echo "public rule won"; exit 1; }
+    [[ "$(readlink "$HOME/.claude/skills/ops")" == "$1/agent-config/skills/ops" ]] || { echo "skill not linked"; exit 2; }
+    [[ -L "$HOME/.claude/rules/public-only.md" ]] || { echo "public-only rule missing"; exit 3; }
+    rm -rf "$1/agent-config" "$HOME/.claude"; NEXT_STEPS=()
+    VIBE_CODING_CHOICES=(1); install_vibe_coding >/dev/null
+    [[ "$(readlink "$HOME/.claude/rules/shared.md")" == "$1/vibe-coding/rules/shared.md" ]] || { echo "fallback missing"; exit 4; }
+    [[ "${NEXT_STEPS[*]}" == *agent-config* ]] || { echo "no next step"; exit 5; }
+  ' _ "$d" "$REPO" || return 1
+  rm -rf "$d"
+}
+check "setup: private agent-config links first, public fallback plus a next step without it" agent_config_links
 
 echo "== git wip"
 wip_setup() {
@@ -614,6 +662,52 @@ if command -v npm >/dev/null; then
   kill "$SC_PID" 2>/dev/null; wait "$SC_PID" 2>/dev/null
 fi
 
+echo "== hermes-setup"
+# A fake hermes that keeps config values and enabled toolsets in files under $HERMES_HOME
+HS="$WORK/hermes"; mkdir -p "$HS/bin" "$HS/home/.hermes/tools" "$HS/home/.hermes/skills"
+cat > "$HS/bin/hermes" <<'FAKE'
+#!/usr/bin/env bash
+s="$HERMES_HOME"
+case "$1 $2" in
+  "config get") cat "$s/.cfg-$3" 2>/dev/null || echo false ;;
+  "config set") echo "$4" > "$s/.cfg-$3" ;;
+  "tools list") for t in computer_use kanban; do
+                  [ -f "$s/.on-$t" ] && echo "  ✓ enabled  $t  x" || echo "  ✗ disabled  $t  x"; done ;;
+  "tools enable") touch "$s/.on-${!#}" ;;
+  "kanban init") touch "$s/kanban.db" ;;
+  "status "*) echo "  Gateway:      ✗ stopped" ;;
+  "computer-use status") echo "  ✓ Runtime contract ready (Hermes PM pin)." ;;
+  "computer-use permissions") echo "  ✅ Accessibility"; echo "  ✅ Screen Recording" ;;
+  "computer-use screen") echo "stopped" ;;
+esac
+FAKE
+chmod +x "$HS/bin/hermes"
+printf 'providers:\n  z1:\n    models:\n      glm-5.3-flash: {}\nmodel:\n  provider: z1\n' > "$HS/home/.hermes/config.yaml"
+hs_run() { env -u DISPLAY -u WAYLAND_DISPLAY HOME="$HS/home" HERMES_HOME="$HS/home/.hermes" DOTFILES="$REPO" \
+             PATH="$HS/bin:$PATH" bash "$REPO/shared/bin/hermes-setup" "$@"; }
+hs_report_changes_nothing() {
+  local before; before=$(cat "$HS/home/.hermes/config.yaml")
+  ! hs_run >/dev/null && [ "$(cat "$HS/home/.hermes/config.yaml")" = "$before" ] &&
+    [ ! -e "$HS/home/.hermes/kanban.db" ] && [ ! -e "$HS/home/.hermes/.on-kanban" ]
+}
+check "hermes-setup without --apply reports failures and changes nothing" hs_report_changes_nothing
+expect "hermes-setup reports the missing supports_vision" 'FAIL +glm-5.3-flash lacks supports_vision' hs_run
+hs_apply() {
+  hs_run --apply >/dev/null || return 1
+  grep -A1 '^      glm-5.3-flash:$' "$HS/home/.hermes/config.yaml" | grep -q '^        supports_vision: true$' &&
+    ls "$HS/home/.hermes"/config.yaml.backup.* >/dev/null 2>&1 &&
+    [ -e "$HS/home/.hermes/.on-kanban" ] && [ -e "$HS/home/.hermes/.on-computer_use" ] &&
+    [ -e "$HS/home/.hermes/kanban.db" ] && [ "$(cat "$HS/home/.hermes/.cfg-memory.write_approval")" = true ] &&
+    [ -L "$HS/home/.hermes/skills/autonomous-ai-agents/coding-stack" ]
+}
+check "hermes-setup --apply sets vision (with a backup), toolsets, kanban, approvals and the skill" hs_apply
+hs_idempotent() {
+  local before; before=$(cat "$HS/home/.hermes/config.yaml")
+  hs_run --apply >/dev/null && [ "$(cat "$HS/home/.hermes/config.yaml")" = "$before" ] &&
+    [ "$(grep -c supports_vision "$HS/home/.hermes/config.yaml")" = 1 ]
+}
+check "hermes-setup --apply twice changes nothing more" hs_idempotent
+
 echo "== ssh-doctor"
 if command -v ssh-agent >/dev/null; then
   SD="$WORK/sshbad"; mkdir -p "$SD/.ssh"; chmod 755 "$SD/.ssh"
@@ -626,6 +720,10 @@ if command -v ssh-agent >/dev/null; then
   expect "ssh-doctor: private key readable by others" 'private key .*id_test is 644' ssh_doctor_bad
   expect "ssh-doctor: agent without keys" 'agent is running but has no keys' ssh_doctor_bad
   expect "ssh-doctor: IdentitiesOnly with a missing key" 'Host box: IdentitiesOnly yes' ssh_doctor_bad
+  if [[ "$(uname -s)" == Darwin ]]; then
+    expect "ssh-doctor: macOS agent advice keeps the passphrase in the Keychain" 'ssh-add --apple-use-keychain' ssh_doctor_bad
+    expect "ssh-doctor: macOS config that won't re-add keys after a reboot" "keys don't come back after a reboot" ssh_doctor_bad
+  fi
 fi
 
 echo "== harden.sh logic"
@@ -707,6 +805,78 @@ gastown_fetch_checked() {
   ' _ "$REPO/linux/initial_linux_setup.sh" "$d"
 }
 check "gastown: pinned sums complete; checksum mismatch installs nothing" gastown_fetch_checked
+
+echo "== Hermes fallback chains"
+fallback_chain() {
+  local h; h="$(mktemp -d)"; mkdir -p "$h/profiles/zf-developer" "$h/profiles/zf-reviewer"
+  local providers=$'providers:\n  local:\n    name: local\n  z1:\n    name: z1\n  z2:\n    name: z2\n'
+  printf '%smodel:\n  provider: local\n  default: gemma\nfallback_providers: []\n' "$providers" > "$h/config.yaml"
+  printf '%smodel:\n  provider: z1\n  default: glm-5.3-flash\n' "$providers" > "$h/profiles/zf-developer/config.yaml"
+  printf '%smodel:\n  provider: z1\n  default: glm-5.3-flash\nfallback_providers:\n  - provider: local\n    model: gemma\n' "$providers" > "$h/profiles/zf-reviewer/config.yaml"
+  local before; before=$(cat "$h/config.yaml")
+  local out; out=$(python3 -I "$REPO/shared/hermes/fallback_chain.py" "$h") && { echo "report passed with empty chains"; return 1; }
+  grep -q 'FAIL  profile default' <<<"$out" && grep -q 'PASS  profile zf-reviewer' <<<"$out" || { echo "$out"; return 1; }
+  grep -q 'WARN  profile zf-reviewer reviews with the same model as zf-developer' <<<"$out" || { echo "no reviewer warning: $out"; return 1; }
+  [ "$(cat "$h/config.yaml")" = "$before" ] || { echo "report changed a file"; return 1; }
+  python3 -I "$REPO/shared/hermes/fallback_chain.py" "$h" --apply >/dev/null || { echo "apply left an empty chain"; return 1; }
+  grep -q '  - provider: z1' "$h/config.yaml" && grep -q '  - provider: z2' "$h/config.yaml" || { echo "default chain not set"; return 1; }
+  ! grep -q '  - provider: z1' "$h/profiles/zf-developer/config.yaml" || { echo "developer chain includes its own primary"; return 1; }
+  grep -q '  - provider: z2' "$h/profiles/zf-developer/config.yaml" || { echo "developer chain not set"; return 1; }
+  grep -c '^  - provider:' "$h/profiles/zf-reviewer/config.yaml" | grep -qx 1 || { echo "existing chain was changed"; return 1; }
+  ls "$h"/config.yaml.backup.* >/dev/null 2>&1 || { echo "no backup"; return 1; }
+  rm -rf "$h"
+}
+check "hermes fallback chains: report only reports; apply fills empty chains without own primary; keeps existing" fallback_chain
+
+echo "== Hermes board doctor"
+board_doctor() {
+  local d; d="$(mktemp -d)"; mkdir -p "$d/bin" "$d/home"
+  printf 'providers:\n  z1:\n    name: z1\n    model: glm-5.3-flash\n  z2:\n    name: z2\n    model: openai/gpt-oss-120b\nmodel:\n  provider: z1\n' > "$d/home/config.yaml"
+  cat > "$d/bin/hermes" <<'FAKE'
+#!/usr/bin/env python3
+import json, os, sys
+log = os.environ['FAKE_LOG']; open(log, 'a').write(' '.join(sys.argv[1:]) + '\n')
+args = [a for a in sys.argv[1:] if a not in ('kanban',)]
+if args[:2] == ['--board', 'zf']: args = args[2:]
+cmd = args[0]
+out = {
+ 'assignees': [{'name': 'default', 'on_disk': True}, {'name': 'zf-developer', 'on_disk': True},
+               {'name': 'zf-planner', 'on_disk': True}, {'name': 'developer', 'on_disk': False},
+               {'name': 'zf-reviewer', 'on_disk': True}, {'name': 'zf-reviewer-2', 'on_disk': True}],
+ 'diagnostics': [
+   {'task_id': 't_orphan', 'title': 'Build it', 'status': 'ready', 'assignee': 'developer',
+    'diagnostics': [{'kind': 'stranded_in_ready', 'title': 'Ready for 47m with no worker'}]},
+   {'task_id': 't_review', 'title': 'Review it', 'status': 'ready', 'assignee': 'reviewer',
+    'diagnostics': [{'kind': 'stranded_in_ready', 'title': 'Ready for 40m with no worker'}]},
+   {'task_id': 't_asked', 'title': 'Which page?', 'status': 'blocked', 'assignee': 'zf-planner',
+    'diagnostics': [{'kind': 'stuck_in_blocked', 'title': 'Blocked for 2h'}]}],
+ 'list': [{'id': 't_tokens', 'title': 'Hosted Demo</div>`}<tool_call|><|channel>thought', 'status': 'ready', 'assignee': 'zf-developer'},
+          {'id': 't_fresh', 'title': 'Fresh block', 'status': 'blocked', 'assignee': 'zf-developer'}],
+ 'show': {'events': [{'kind': 'blocked', 'created_at': 100}],
+          'comments': [{'author': 'zf-planner', 'body': 'waiting', 'created_at': 110},
+                       {'author': 'desktop', 'body': 'ok try it with z2 model', 'created_at': 120}]},
+}.get(cmd)
+print(json.dumps(out) if out is not None else 'ok')
+FAKE
+  chmod +x "$d/bin/hermes"
+  local out
+  out=$(FAKE_LOG="$d/log" HERMES_HOME="$d/home" PATH="$d/bin:$PATH" python3 -I "$REPO/shared/bin/hermes-board-doctor" --board zf) && { echo "report exited 0 with work left"; return 1; }
+  grep -q 'would fix: t_orphan: developer -> zf-developer' <<<"$out" || { echo "$out"; return 1; }
+  grep -q 'needs a person: t_review: assigned to "reviewer"' <<<"$out" || { echo "ambiguous role not left to a person: $out"; return 1; }
+  grep -q 'would fix: t_asked: unblocked (answered by desktop) on z2/openai/gpt-oss-120b as asked' <<<"$out" || { echo "$out"; return 1; }
+  grep -q 'would fix: t_tokens: title cleaned ("Hosted Demo")' <<<"$out" || { echo "$out"; return 1; }
+  grep -q 'would fix: t_fresh: unblocked (answered by desktop)' <<<"$out" || { echo "fresh blocked card not checked: $out"; return 1; }
+  ! grep -qE '^kanban --board zf (reassign|unblock|edit|comment)' "$d/log" || { echo "report mode changed the board"; return 1; }
+  : > "$d/log"
+  FAKE_LOG="$d/log" HERMES_HOME="$d/home" PATH="$d/bin:$PATH" python3 -I "$REPO/shared/bin/hermes-board-doctor" --board zf --apply >/dev/null
+  grep -q '^kanban --board zf reassign t_orphan zf-developer' "$d/log" || { echo "no reassign"; cat "$d/log"; return 1; }
+  grep -q '^kanban --board zf unblock t_asked' "$d/log" || { echo "no unblock"; return 1; }
+  grep -q '^kanban --board zf set-model t_asked openai/gpt-oss-120b --provider z2' "$d/log" || { echo "model not pinned"; cat "$d/log"; return 1; }
+  grep -q '^kanban --board zf edit t_tokens --title Hosted Demo' "$d/log" || { echo "title not cleaned"; return 1; }
+  ! grep -q 'reassign t_review' "$d/log" || { echo "guessed an ambiguous role"; return 1; }
+  rm -rf "$d"
+}
+check "hermes board doctor: report changes nothing; apply reassigns orphans, cleans titles, unblocks answers; ambiguous roles go to a person" board_doctor
 
 echo "== Setup dry runs"
 # Everything the setup asks comes first; after "Preferences saved" nothing may prompt
