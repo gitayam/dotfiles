@@ -5,7 +5,7 @@ the coding guest, ship service for merge request, CI, merge and deploy) runs a K
 board of planner, coder and reviewer profiles. Its code and runbooks live in
 `ai-coding-env`; this page keeps the orchestration lessons this Mac's operator needs.
 Public, generalised versions are vibe-coding `lessons-learned/hermes-agent.md` lessons
-73-96. The company work-Mac board is a separate setup: [company-hermes.md](company-hermes.md).
+73-107. The company work-Mac board is a separate setup: [company-hermes.md](company-hermes.md).
 
 ## Dispatch sizing (2026-11-20)
 
@@ -86,4 +86,30 @@ interrupts running cards: use the guarded `hermes-ops restart` and pick an idle 
     pages; Hermes keeps `cache_read_tokens` per session in each profile's `state.db`.
 20. **Pin reasoning effort per role.** GLM 5.3 at its default effort overran 8K output
     tokens; at `reasoning_effort: low` (Mistral endpoint) it passed 6/6 in 3 s.
+
+## Lessons from 2026-11-20 (afternoon), ai-coding-env !184-!193
+
+21. **Hand-offs by creator.** The healer held whole plans behind the vendor UX plan's integration
+    card because my operator-created plan (and six cards I reassigned to the planner) looked like
+    a coder hand-off; the board ran 0-1 cards with 30 waiting. A hand-off is now a planner card its
+    parent coder created (!185). Chain my own cards only on file overlap.
+22. **Migration numbers.** Three lanes took 0008, then two took 0011. The ship service refuses a
+    duplicate number at merge (!187) and the healer keeps one migration card in flight per
+    project (!188, !189: a woken card that has run is in flight, not unstarted). The planner has
+    no `kanban_list`, so a planner-only rule could not work.
+23. **Review template.** "Every required test must be in the patch" rejected tests already on
+    main and tests titled differently; reviewers now judge whether requirements are met, by the
+    patch or already in the project via `ship_search`/`ship_file` (!186).
+24. **Security floor for coders.** A short section in the coding SOUL from the day's security
+    rejections (!191); the next four jobs passed first time.
+25. **Releases are not waits.** `waited_cards` read "releasing child t_…" as a wait, so the
+    deadlock rule cut chains and a parallel patch conflicted (!192).
+26. **Busy means full.** One running card made a profile busy, so parked cards waited up to 50
+    minutes; busy is now all 3 slots (!193, `PROFILE_SLOTS` mirrors the config).
+27. **No follow-up after a hand-off** (!190), and **no coder edits to `AGENTS.md`**: protected
+    files wait for an approval nobody gives; notes go to `DIRECTION.md` (!186).
+28. **Measure the queue first.** Ready-to-claimed was 6 s median, 9 s p90 for the default coder:
+    slots are not the limit, so no overflow lane for `coder-alibaba` (3 runs vs 300). The limit
+    is chain length and each card's review/CI/deploy cycle. No coder or planner hit its step
+    budget; the Lumo shadow reviewer hit 30/30 twice and had 4 protocol violations.
 
