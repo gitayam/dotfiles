@@ -5,7 +5,7 @@ the coding guest, ship service for merge request, CI, merge and deploy) runs a K
 board of planner, coder and reviewer profiles. Its code and runbooks live in
 `ai-coding-env`; this page keeps the orchestration lessons this Mac's operator needs.
 Public, generalised versions are vibe-coding `lessons-learned/hermes-agent.md` lessons
-73-95. The company work-Mac board is a separate setup: [company-hermes.md](company-hermes.md).
+73-96. The company work-Mac board is a separate setup: [company-hermes.md](company-hermes.md).
 
 ## Dispatch sizing (2026-11-20)
 
