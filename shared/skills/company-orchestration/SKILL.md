@@ -66,7 +66,10 @@ the profiles. On the measured board, cards written from a contract finished far
 more often than free-form or automatically decomposed cards. Afterwards run
 dotfiles `scripts/audit_work_cards.py` on the cards and
 `scripts/report_work_board.py` on the board. A clean audit says the worker stayed
-inside its contract; it is not acceptance of what it wrote.
+inside its contract; it is not acceptance of what it wrote. Run
+`scripts/report_work_blocks.py` to see why each open card is open. A comment does
+not release a blocked card: a decision answered in a comment still needs the
+card unblocked or completed by its owner, with the answer recorded.
 
 Where the private configuration sets `kanban_auto_decompose` false and the board
 intake job is installed, a rough request typed into Triage is specified within

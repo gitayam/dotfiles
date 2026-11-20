@@ -278,6 +278,14 @@ containing a semicolon reported as a command. A card with no recorded session is
 reported as unaudited, never as clean. A clean audit says the worker stayed inside
 its contract; it does not accept what the worker wrote.
 
+`scripts/report_work_blocks.py` says why each open card is open, read-only and
+with ids and counts only: it waits for a person (and whether a person has
+commented since the block, because a comment does not release a card), it ran out
+of steps, it failed another way, or it waits behind another card, whose root is
+named. It also splits waiting time by what else was running: a card of the same
+role, the total limit, or nothing. On one board that read 68% and 27% before the
+limits were raised.
+
 What a refresh keeps: explicit turn budgets and delegation limits survive
 `setup_work_desktop.py`. The board limits, `kanban.auto_decompose`, each role's
 model and the worker toolsets are written again on every refresh, so a hand edit
