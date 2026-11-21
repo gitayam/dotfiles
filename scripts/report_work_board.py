@@ -33,7 +33,7 @@ import sys
 
 COMPLETED = "completed"
 BUDGET = re.compile(r"Iteration budget exhausted \((\d+)/(\d+)\)")
-TIME_LIMIT = re.compile(r"elapsed \d+s > limit \d+s")
+TIME_LIMIT = re.compile(r"elapsed (\d+)s > limit (\d+)s")
 
 
 def open_ro(path: str) -> sqlite3.Connection:
@@ -173,7 +173,7 @@ def summarise(data: dict, facts: dict[str, dict], lookup=lambda profile, session
     holds = collections.Counter()
     budgets = collections.Counter()
     budget_by_creator = collections.Counter()
-    time_limits = 0
+    time_deaths: list[dict] = []
     attempts_per_card = collections.Counter()
     for run in runs:
         task = tasks.get(run["task"], {})
@@ -194,8 +194,9 @@ def summarise(data: dict, facts: dict[str, dict], lookup=lambda profile, session
         if match:
             budgets[f"{match.group(1)}/{match.group(2)} {run['profile']}"] += 1
             budget_by_creator[task.get("created_by", "(none)")] += 1
-        if TIME_LIMIT.search(run["error"]):
-            time_limits += 1
+        match = TIME_LIMIT.search(run["error"])
+        if match:
+            time_deaths.append({"limit": int(match.group(2)), "elapsed": int(match.group(1))})
 
     def rows(groups: dict) -> list:
         out = []
@@ -213,6 +214,7 @@ def summarise(data: dict, facts: dict[str, dict], lookup=lambda profile, session
         step_rows.append(dict(profile=profile, cap=cap, runs=len(used), median=statistics.median(used), p90=percentile(used, 0.9), max=max(used),
                               at_cap_or_one_below=sum(1 for n in used if cap and n >= cap - 1) if cap else None))
     auto = collections.Counter(t["status"] for t in tasks.values() if t["created_by"] == "auto-decomposer")
+    worst_overrun = max((d["elapsed"] / d["limit"] for d in time_deaths), default=None)
     summary = dict(
         cards=dict(collections.Counter(t["status"] for t in tasks.values())),
         cards_total=len(tasks),
@@ -225,7 +227,11 @@ def summarise(data: dict, facts: dict[str, dict], lookup=lambda profile, session
         steps_on_completed_runs=step_rows,
         step_budget_exhausted=dict(budgets),
         step_budget_exhausted_by_card_author=dict(budget_by_creator),
-        time_limit_exceeded=time_limits,
+        time_limit_exceeded=len(time_deaths),
+        time_limit_deaths=dict(
+            by_limit=dict(sorted(collections.Counter(d["limit"] for d in time_deaths).items())),
+            worst_overrun=round(worst_overrun, 2) if worst_overrun else None,
+        ),
         block_loops_detected=data["events"].get("block_loop_detected", 0),
         decompositions=data["events"].get("decomposed", 0),
         auto_created_cards=dict(auto),
@@ -256,6 +262,12 @@ def look_at(summary: dict, small: int = 10) -> list[str]:
     auto = summary["auto_created_cards"]
     if sum(auto.values()) >= 5 and auto.get("done", 0) / sum(auto.values()) < 0.7:
         notes.append(f"Of {sum(auto.values())} cards the board created by itself, {auto.get('done', 0)} are done. Read what it wrote into them before releasing more.")
+    if summary["time_limit_exceeded"] >= 3:
+        deaths = summary["time_limit_deaths"]
+        worst = f", the worst {deaths['worst_overrun']}x its limit" if deaths["worst_overrun"] else ""
+        notes.append(f"{summary['time_limit_exceeded']} runs died at a time limit written on the card{worst}. "
+                     "Size a limit from the loaded board's running 90th percentile printed above, not from an idle board; "
+                     "a card left without a limit is not killed for time.")
     if summary["block_loops_detected"]:
         notes.append(f"A second block on the same card was treated as a loop {summary['block_loops_detected']} times. Do not block a card twice: answer the question, or archive it and write a new card.")
     return notes
@@ -279,8 +291,17 @@ def as_text(board: str, s: dict) -> str:
         cap = f"limit {row['cap']}" if row["cap"] else "limit not read"
         near = f"; {row['at_cap_or_one_below']} at the limit or one below" if row["cap"] else ""
         out.append(f"  Steps on completed runs, {row['profile']} ({cap}): median {row['median']}, 90th percentile {row['p90']}, most {row['max']}{near}.")
-    if s["step_budget_exhausted"]:
-        out.append(f"  Step budget exhausted: {', '.join(f'{k} x{v}' for k, v in s['step_budget_exhausted'].items())}. Time limit exceeded: {s['time_limit_exceeded']}.")
+    exhausted = ", ".join(f"{k} x{v}" for k, v in s["step_budget_exhausted"].items())
+    limits = ""
+    if s["time_limit_exceeded"]:
+        deaths = s["time_limit_deaths"]
+        limits = f"time limit exceeded on {s['time_limit_exceeded']} runs (limits written at creation: " \
+                 f"{', '.join(f'{k} x{v}' for k, v in deaths['by_limit'].items())}"
+        if deaths["worst_overrun"]:
+            limits += f"; the worst ran {deaths['worst_overrun']}x its limit"
+        limits += ")"
+    if exhausted or limits:
+        out.append("  " + "; ".join(part for part in (exhausted, limits) if part) + ".")
     out.append(f"  Block loops detected: {s['block_loops_detected']}. Decompositions: {s['decompositions']}. Cards the board created itself: {s['auto_created_cards'] or 'none'}.")
     wait, run = s["wait_seconds_no_parent"], s["run_seconds"]
     if wait["cards"]:
