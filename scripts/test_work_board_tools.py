@@ -144,6 +144,20 @@ class BoardReport(unittest.TestCase):
         self.assertEqual(wait["cards"], 4)                               # t_aaaa0006 waited 800 s for its parent and is left out
         self.assertLess(wait["p90"], 800)
 
+    def test_time_limit_deaths_record_the_limits_set_and_the_overrun(self):
+        deaths = self.summary["time_limit_deaths"]
+        self.assertEqual(deaths["by_limit"], {900: 1})
+        self.assertEqual(deaths["worst_overrun"], 1.01)   # 911 s against a 900 s limit
+
+    def test_time_limit_note_fires_from_three_deaths_and_names_the_sizing_rule(self):
+        base = dict(self.summary)
+        two = dict(base, time_limit_exceeded=2, time_limit_deaths={"by_limit": {900: 2}, "worst_overrun": 1.01})
+        self.assertFalse([note for note in report.look_at(two) if "time limit" in note])
+        three = dict(base, time_limit_exceeded=3, time_limit_deaths={"by_limit": {900: 2, 1500: 1}, "worst_overrun": 1.53})
+        note = next(note for note in report.look_at(three) if "time limit" in note)
+        self.assertIn("3 runs died at a time limit", note)
+        self.assertIn("90th percentile", note)
+
     def test_prints_counts_only_and_never_a_title(self):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
