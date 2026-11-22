@@ -161,3 +161,29 @@ interrupts running cards: use the guarded `hermes-ops restart` and pick an idle 
       pipeline with its last MR pipeline.
     - Muse still runs some untagged jobs on the shell runner on main. It pins no image, so it
       needs one chosen first.
+
+## Lessons from 2026-11-22 (evening): ai-coding-env !222-!230
+
+35. **Merged is not live; a stamp can tell.** Hand-deployed ship-service merges stayed
+    "Merged, not live" forever, because the ship service could only read a container's
+    version. The installed ship files now carry `SOURCE_MANIFEST` and `SOURCE_VERSION`. A
+    timer publishes the version only while every file still matches its digest. After every
+    ship-file deploy, re-stamp. The board built the reader and the loader check (!222-!224).
+36. **A tool-output cap and a turn budget pull in opposite directions.** Hermes moves an MCP result
+    over 50,000 characters into a file the reviewer can't open, so `ship_diff` went from 48 KiB
+    to 4 KiB (!221). A 190 KB patch then took 47 calls against a 30-turn budget, and in one hour
+    reviewers failed 18 of 38 runs. Windows are now as large as fit 40,000 characters (!229),
+    and the failures stopped. When you shrink a tool's output, count the calls a large input
+    now needs.
+37. **Cards that own the same file must take turns.** Cards in a hand-made UX series each owned
+    files, and the planner can't see the board, so two cards edited `SubmissionForm.tsx` in
+    parallel. One of them, UX-5, needed four ships. The healer now chains an unstarted card
+    behind any open card in the same project that declares the same file on its `Owned:` line
+    (!228). It already did this for migrations. Bare locale files are left out on purpose.
+38. **A stricter server needs every caller in the same change.** UX-11 made a signup endpoint
+    require a Turnstile token and passed review, while a second page still posted there
+    without one. That signup said "sent" and mailed nothing until a follow-up card fixed it.
+    The coder SOULs now make the card update every caller, and the quality reviewers search
+    for callers of any route that starts refusing old input (!230). Earlier the same day, a
+    canceled release pipeline (main moved on) counted as a failed deploy. It now waits for
+    the later release, as a failed one does (!227).
