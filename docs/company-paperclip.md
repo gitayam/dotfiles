@@ -71,6 +71,36 @@ release lookup reads official GitHub metadata. Matching files do not replace
 real model/artifact/cancellation acceptance. An idle company queue is not
 permission to restart a service used by another company or gateway session.
 
+### Native profile metadata migrations
+
+Hermes can add `_config_version` and reformat a profile when it runs a native
+configuration migration. The exact-byte guard correctly refuses the changed
+file even if its model, tool and budget settings stayed identical. Do not
+remove that guard or overwrite an intentionally tuned profile to clear it.
+
+For this narrow case, preview the metadata-only requalification on the work
+device, then apply it with a new private receipt path:
+
+```sh
+uv run --with PyYAML==6.0.3 --no-project python scripts/requalify_work_profile_metadata.py
+uv run --with PyYAML==6.0.3 --no-project python scripts/requalify_work_profile_metadata.py \
+  --apply --receipt ~/zenithflow/.workstation/reviews/profile-metadata-REVIEW/qualification.json
+```
+
+The helper removes only the added integer version marker in memory and uses
+the installer’s YAML rendering to reconstruct the prior bytes. Their SHA-256
+must match the accepted profile exactly. Changed model/tool/budget settings,
+duplicate YAML keys, runtime or receipt drift, busy Paperclip agents and
+concurrent manifest changes all refuse the operation. A new receipt links the
+preceding qualification; the registry keeps exact current-byte fingerprints.
+No profile, worker, model route, service or existing receipt is rewritten.
+Existing native graph/cancellation evidence is retained, with the limited
+metadata scope recorded explicitly; this does not qualify an engine upgrade.
+
+Afterward run `audit_work_paperclip.py --health --board zenithflow` and check the
+fresh scheduled monitor result. An interrupted write leaves a prior-manifest
+snapshot and receipt to reconcile rather than silently retrying.
+
 For ongoing read-only checks on the enrolled macOS work device:
 
 ```sh
