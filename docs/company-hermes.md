@@ -227,16 +227,24 @@ a model benchmark.
   or a limit.
 - **Count attempts, not rows.** A `blocked` run with no worker is a hold someone
   placed (17 of them here), not a failed run. The model a run used is in the
-  worker's session; failed runs often record no session, so their model is only
+  worker's session. A completed run names its session in its own record; a run
+  that ended any other way names none there, but the board's admission event
+  for that run does, and the report reads it. Only a run with neither is
   assumed from the card or the profile. A first count that ignored both points
-  reported one route at 45% when 5 of its 6 real runs had completed.
+  reported one route at 45% when 5 of its 6 real runs had completed. A later
+  one that assumed where the admission record existed (65 of 65 failed runs
+  had one) showed a role at 16 of 16 on its local model; the sessions put it
+  at 16 of 37, because 22 of that role's 37 failed runs had been charged to
+  the model the role runs today.
 - **Steps.** Completed runs used a median of 7 tool-calling turns and a 90th
   percentile of 11 or 12, against limits of 16 (24 for a planner whose explicit
   value was kept). Write a contract for about 7 to 11 steps. A card that needs
   more than the limit cannot finish however often it is retried.
 - **Waiting.** With two workers in total and one per profile, a card with no
   parent waited a median of 6 minutes and a 90th percentile of 23; a run took a
-  median of 2.5 minutes. Spread a wave across the profiles.
+  median of 2.5 minutes. Spread a wave across the profiles. After the limits
+  were raised to 16 and 8, a ready card was claimed after a median of 6 seconds
+  (260 runs over two days, up to 12 workers at once).
 - **Chains.** A card created with `--parent <id>` stays in `todo` until every
   parent is done and then starts by itself: a four-card chain started each next
   card within a second of its parent finishing.
