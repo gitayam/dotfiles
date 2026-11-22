@@ -88,7 +88,14 @@ wave and set the limit above it; a card left without a limit is not killed for
 time. Set the model at creation, never
 on a running card. How many cards run at once, in total and per profile, is set
 by the installer's inputs (two and one unless raised): read the configured limits
-before sizing a wave, and spread it across the profiles. Have the worker write
+before sizing a wave, and spread it across the profiles. A limit is not a
+capacity: `report_work_board.py --since-hours <hours since the last change>`
+prints the model turns a minute the board made at each width. On the measured
+board a worker alone made 2.9 turns a minute and one among eleven or more made
+0.6, so a card took about five times as long in a wave that wide, while the
+board as a whole made about two and a half times the turns. Size the time limit
+for the width the wave will run at, and compare two windows before changing a
+limit: the model server has other users. Have the worker write
 its file through a here-document whose delimiter is quoted (`<<'EOF'`) and put
 single quotes round a search pattern that holds backticks: inside double quotes
 and inside a bare here-document the shell runs them as commands. On the measured

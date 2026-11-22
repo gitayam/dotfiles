@@ -3,6 +3,7 @@
 
     report_work_board.py                       # every board under ~/.hermes/kanban/boards
     report_work_board.py --board work --json   # one board, as JSON
+    report_work_board.py --since-hours 24      # only runs that started in the last day
 
 It opens the board database and each profile's session store read-only and never
 dispatches, retries, edits or restarts anything. It prints counts only: no card
@@ -22,10 +23,23 @@ way the card was written. Three traps it avoids, each learned from a wrong first
   runs today instead of the ones they ran on.
 - A card that waits for a parent card is waiting by design. Waiting time is measured on
   cards with no parent.
+
+Every figure covers the board's whole history unless `--since-hours` is given. A board
+whose limits, models or prompts changed last week mixes two systems in one row: give the
+hours since the change. The window keeps runs that started inside it and the cards that
+were created or run inside it.
+
+It also prints how many model turns a minute the board made at each number of workers
+running, from the times the sessions recorded. A board setting says how many workers may
+run; only this says whether the model behind them kept up: how much slower each worker
+gets as the board widens, and whether the board as a whole still gains. It is what
+happened, not a test: the bands differ in hour and in what the cards asked, and a shared
+model server has other users. Compare two windows before acting on one.
 """
 from __future__ import annotations
 
 import argparse
+import bisect
 import collections
 import json
 import os
@@ -33,10 +47,12 @@ import re
 import sqlite3
 import statistics
 import sys
+import time
 
 COMPLETED = "completed"
 BUDGET = re.compile(r"Iteration budget exhausted \((\d+)/(\d+)\)")
 TIME_LIMIT = re.compile(r"elapsed (\d+)s > limit (\d+)s")
+WIDTHS = ((1, 1), (2, 2), (3, 4), (5, 6), (7, 8), (9, 10), (11, None))
 
 
 def open_ro(path: str) -> sqlite3.Connection:
@@ -95,7 +111,8 @@ def profile_facts(hermes_home: str) -> dict[str, dict]:
     return facts
 
 
-def load(board_db: sqlite3.Connection) -> dict:
+def load(board_db: sqlite3.Connection, since: float | None = None) -> dict:
+    """Cards, runs and event counts. With `since`: runs that started from then on, and the cards created or run from then on."""
     task_cols = columns(board_db, "tasks")
     override = "model_override" if "model_override" in task_cols else "null"
     tasks = {}
@@ -120,8 +137,16 @@ def load(board_db: sqlite3.Connection) -> dict:
                          error=row[5] or "", session=session or admitted.get(row[9]), session_from_admission=from_admission,
                          worker=bool(row[7] or row[8]) or bool(row[3] and row[4] and row[4] > row[3])))
     children = {row[0] for row in board_db.execute("select child_id from task_links")} if "task_links" in tables(board_db) else set()
-    events = dict(board_db.execute("select kind, count(*) from task_events group by 1")) if "task_events" in tables(board_db) else {}
-    return dict(tasks=tasks, runs=runs, children=children, events=events)
+    events = {}
+    if "task_events" in tables(board_db):
+        dated = since is not None and "created_at" in columns(board_db, "task_events")
+        events = dict(board_db.execute(f"select kind, count(*) from task_events {'where created_at >= ?' if dated else ''} group by 1", (since,) if dated else ()))
+    cards = tasks
+    if since is not None:
+        runs = [run for run in runs if (run["started_at"] or 0) >= since]
+        ran = {run["task"] for run in runs}
+        cards = {tid: task for tid, task in tasks.items() if tid in ran or (task["created_at"] or 0) >= since}
+    return dict(tasks=tasks, cards=cards, runs=runs, children=children, events=events)
 
 
 def tables(db: sqlite3.Connection) -> set[str]:
@@ -172,14 +197,58 @@ def session_reader(facts: dict[str, dict]):
             return None, None
         return (model[0] if model and model[0] else None), (turns[0] if turns else None)
 
+    def turn_times(profile: str, session: str | None) -> list[float]:
+        """When each model turn of the session was recorded; none when the store keeps no times."""
+        if lookup(profile, session)[0] is None:
+            return []
+        try:
+            return [row[0] for row in stores[profile].execute("select timestamp from messages where session_id=? and role='assistant' and timestamp is not null order by timestamp", (session,))]
+        except sqlite3.Error:
+            return []
+
     def close():
         for store in stores.values():
             if store is not None:
                 store.close()
         stores.clear()
 
+    lookup.turn_times = turn_times
     lookup.close = close
     return lookup
+
+
+def turns_by_width(runs: list[dict], turn_times, least_seconds: int = 600) -> dict:
+    """Model turns a minute across the board, by how many workers were running at that moment.
+
+    A band the board spent under `least_seconds` in is left out. A turn is counted at the width
+    the board had when the session recorded it, and only inside its own run: a session's closing
+    turn, recorded after the card completed, is not counted.
+    """
+    spans = [run for run in runs if run["worker"] and run["started_at"] and run["ended_at"] and run["ended_at"] > run["started_at"]]
+    starts, ends = sorted(run["started_at"] for run in spans), sorted(run["ended_at"] for run in spans)
+    seconds, width, last = collections.Counter(), 0, None
+    for at, step in sorted([(at, 1) for at in starts] + [(at, -1) for at in ends]):
+        if last is not None and width > 0:
+            seconds[width] += at - last
+        width, last = width + step, at
+    turns, read = collections.Counter(), 0
+    for run in spans:
+        times = turn_times(run["profile"], run["session"]) if run["session"] else []
+        read += bool(times)
+        for at in times:
+            if run["started_at"] <= at <= run["ended_at"]:
+                turns[bisect.bisect_right(starts, at) - bisect.bisect_left(ends, at)] += 1
+    rows = []
+    for low, high in WIDTHS:
+        inside = [n for n in seconds if n >= low and (high is None or n <= high)]
+        spent = sum(seconds[n] for n in inside)
+        if spent < least_seconds:
+            continue
+        made = sum(count for n, count in turns.items() if n >= low and (high is None or n <= high))
+        worker_seconds = sum(n * seconds[n] for n in inside)
+        rows.append(dict(workers=str(low) if low == high else f"{low}-{high}" if high else f"{low}+", minutes=round(spent / 60), turns=made,
+                         turns_per_minute=round(made * 60 / spent, 2), per_worker_per_minute=round(made * 60 / worker_seconds, 2)))
+    return dict(runs_measured=len(spans), runs_with_turn_times=read, by_width=rows)
 
 
 def percentile(values: list, share: float):
@@ -190,7 +259,7 @@ def percentile(values: list, share: float):
 
 
 def summarise(data: dict, facts: dict[str, dict], lookup=lambda profile, session: (None, None)) -> dict:
-    tasks, runs = data["tasks"], data["runs"]
+    tasks, runs, cards = data["tasks"], data["runs"], data.get("cards", data["tasks"])
     by_model: dict[tuple, collections.Counter] = collections.defaultdict(collections.Counter)
     by_creator: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
     steps: dict[str, list] = collections.defaultdict(list)
@@ -233,18 +302,18 @@ def summarise(data: dict, facts: dict[str, dict], lookup=lambda profile, session
                             other={name: count for name, count in sorted(outcomes.items()) if name != COMPLETED}))
         return out
 
-    waits = [t["started_at"] - t["created_at"] for tid, t in tasks.items() if t["started_at"] and t["created_at"] and tid not in data["children"]]
-    lasted = [t["completed_at"] - t["started_at"] for t in tasks.values() if t["started_at"] and t["completed_at"]]
+    waits = [t["started_at"] - t["created_at"] for tid, t in cards.items() if t["started_at"] and t["created_at"] and tid not in data["children"]]
+    lasted = [t["completed_at"] - t["started_at"] for t in cards.values() if t["started_at"] and t["completed_at"]]
     step_rows = []
     for profile, used in sorted(steps.items()):
         cap = facts.get(profile, {}).get("step_cap")
         step_rows.append(dict(profile=profile, cap=cap, runs=len(used), median=statistics.median(used), p90=percentile(used, 0.9), max=max(used),
                               at_cap_or_one_below=sum(1 for n in used if cap and n >= cap - 1) if cap else None))
-    auto = collections.Counter(t["status"] for t in tasks.values() if t["created_by"] == "auto-decomposer")
+    auto = collections.Counter(t["status"] for t in cards.values() if t["created_by"] == "auto-decomposer")
     worst_overrun = max((d["elapsed"] / d["limit"] for d in time_deaths), default=None)
     summary = dict(
-        cards=dict(collections.Counter(t["status"] for t in tasks.values())),
-        cards_total=len(tasks),
+        cards=dict(collections.Counter(t["status"] for t in cards.values())),
+        cards_total=len(cards),
         runs_total=len(runs),
         worker_runs=sum(attempts_per_card.values()),
         holds_without_a_worker=dict(holds),
@@ -265,6 +334,7 @@ def summarise(data: dict, facts: dict[str, dict], lookup=lambda profile, session
         auto_created_cards=dict(auto),
         wait_seconds_no_parent=dict(cards=len(waits), median=statistics.median(waits) if waits else None, p90=percentile(waits, 0.9)),
         run_seconds=dict(cards=len(lasted), median=statistics.median(lasted) if lasted else None, p90=percentile(lasted, 0.9)),
+        model_turns_by_workers_running=turns_by_width(runs, getattr(lookup, "turn_times", lambda profile, session: [])),
     )
     summary["look_at"] = look_at(summary)
     return summary
@@ -296,13 +366,23 @@ def look_at(summary: dict, small: int = 10) -> list[str]:
         notes.append(f"{summary['time_limit_exceeded']} runs died at a time limit written on the card{worst}. "
                      "Size a limit from the loaded board's running 90th percentile printed above, not from an idle board; "
                      "a card left without a limit is not killed for time.")
+    width = summary.get("model_turns_by_workers_running") or {}
+    bands = [row for row in width.get("by_width", []) if row["turns"] >= 30]
+    if len(bands) >= 2 and width["runs_with_turn_times"] >= 0.9 * width["runs_measured"]:
+        narrow, top, below = bands[0], bands[-1], bands[-2]
+        if narrow["workers"] in ("1", "2") and top["per_worker_per_minute"] * 2 <= narrow["per_worker_per_minute"]:
+            notes.append(f"A worker made {narrow['per_worker_per_minute']} model turns a minute with {narrow['workers']} running and {top['per_worker_per_minute']} with {top['workers']}: "
+                         f"a card takes about {narrow['per_worker_per_minute'] / top['per_worker_per_minute']:.1f} times as long in a wave that wide. Size a card's time limit for the width it will run in.")
+        if min(top["minutes"], below["minutes"]) >= 30 and top["turns_per_minute"] <= below["turns_per_minute"] * 1.1:
+            notes.append(f"With {top['workers']} workers running the board made {top['turns_per_minute']} model turns a minute over {top['minutes']} minutes, against {below['turns_per_minute']} with {below['workers']}: "
+                         "in this window more width was more waiting on the model, not more work. Look at a second window before changing a limit; a shared model server is busier at some hours.")
     if summary["block_loops_detected"]:
         notes.append(f"A second block on the same card was treated as a loop {summary['block_loops_detected']} times. Do not block a card twice: answer the question, or archive it and write a new card.")
     return notes
 
 
-def as_text(board: str, s: dict) -> str:
-    out = [f"Board {board}: {s['cards_total']} cards ({', '.join(f'{k} {v}' for k, v in sorted(s['cards'].items(), key=lambda i: -i[1]))}); {s['runs_total']} runs, of which a worker started {s['worker_runs']}."]
+def as_text(board: str, s: dict, window: str = "") -> str:
+    out = [f"Board {board}{window}: {s['cards_total']} cards ({', '.join(f'{k} {v}' for k, v in sorted(s['cards'].items(), key=lambda i: -i[1]))}); {s['runs_total']} runs, of which a worker started {s['worker_runs']}."]
     if s["holds_without_a_worker"]:
         out.append(f"  Holds with no worker (not attempts): {', '.join(f'{k} {v}' for k, v in s['holds_without_a_worker'].items())}.")
     through = f"; {s['models_read_through_admission']} of them found through the board's admission record" if s.get("models_read_through_admission") else ""
@@ -335,17 +415,25 @@ def as_text(board: str, s: dict) -> str:
     wait, run = s["wait_seconds_no_parent"], s["run_seconds"]
     if wait["cards"]:
         out.append(f"  Waiting before the first start (cards with no parent, {wait['cards']}): median {wait['median']:.0f} s, 90th percentile {wait['p90']:.0f} s. Running: median {run['median']:.0f} s, 90th percentile {run['p90']:.0f} s.")
+    width = s.get("model_turns_by_workers_running") or {}
+    if width.get("by_width"):
+        out.append(f"  Model turns a minute by workers running (turn times read for {width['runs_with_turn_times']} of {width['runs_measured']} runs):")
+        for row in width["by_width"]:
+            out.append(f"    {row['workers']:>5} running {row['minutes']:>5} min {row['turns']:>6} turns {row['turns_per_minute']:>6.2f} a minute {row['per_worker_per_minute']:>5.2f} per worker")
     for note in s["look_at"]:
         out.append(f"  LOOK AT: {note}")
     return "\n".join(out)
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, now: float | None = None) -> int:
     parser = argparse.ArgumentParser(description="Read-only summary of how Hermes Kanban cards ended. Prints counts only.")
     parser.add_argument("--hermes-home", default=os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes"))
     parser.add_argument("--board", action="append", help="board name (repeatable); default: every board found")
+    parser.add_argument("--since-hours", type=float, help="count only runs that started in the last this many hours, and the cards created or run in them")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+    since = None if args.since_hours is None else (time.time() if now is None else now) - args.since_hours * 3600
+    window = "" if since is None else f", runs started in the last {args.since_hours:g} h"
     boards_root = os.path.join(args.hermes_home, "kanban", "boards")
     names = args.board or (sorted(os.listdir(boards_root)) if os.path.isdir(boards_root) else [])
     facts = profile_facts(args.hermes_home)
@@ -358,15 +446,15 @@ def main(argv: list[str] | None = None) -> int:
             continue
         board = open_ro(path)
         try:
-            result[name] = summarise(load(board), facts, lookup)
+            result[name] = summarise(load(board, since), facts, lookup)
         finally:
             board.close()
     lookup.close()
     if args.json:
-        print(json.dumps(dict(boards=result, missing=missing, profiles={k: {a: b for a, b in v.items() if a != "home"} for k, v in facts.items()}), indent=2))
+        print(json.dumps(dict(boards=result, missing=missing, since_hours=args.since_hours, profiles={k: {a: b for a, b in v.items() if a != "home"} for k, v in facts.items()}), indent=2))
     else:
         for name, summary in result.items():
-            print(as_text(name, summary))
+            print(as_text(name, summary, window))
         for name in missing:
             print(f"Board {name}: no database found under {boards_root}.")
         if not names:
