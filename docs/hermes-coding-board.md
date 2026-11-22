@@ -144,3 +144,20 @@ interrupts running cards: use the guarded `hermes-ops restart` and pick an idle 
     lesson 110 on 2026-11-21. Its CI now fails on a repeated, missing or out-of-order lesson
     heading (vibe-coding !73). Wait for a green pipeline before merging: I had merged !72 while
     its pipeline was still running.
+
+## Lessons from 2026-11-22 (afternoon): lunarnewyear !350, downtown-creative-works !70, downtown-guide !246
+
+34. **Make MR CI and main CI run in the same place.** lunarnewyear !347 passed its MR pipeline and
+    then failed `test` on main. The MR jobs ran on the Docker runner inside `node:22.22.0`
+    (CLDR 47). On protected main, the same untagged jobs could also land on the shell runner,
+    which ignores `image:` and uses the host's Node 22.23.4 (CLDR 48). Which runner took the
+    job was luck, so the next push's pipeline passed and released the change.
+    - A shared runner tag, `pinned-image`, now exists only on the two Docker-executor runners.
+      The verify jobs of every CI-deployed GitLab project that had this split now carry it.
+      Release jobs keep the deploy-only `docker` tag, which the MR runner must never get.
+    - Fixing the card alone was not enough. Its worker also made the snapshot test tolerate
+      another CLDR (!348), but the next test that depends on the toolchain would hit the same
+      split. To check another project, compare the runner of each job in its last `main`
+      pipeline with its last MR pipeline.
+    - Muse still runs some untagged jobs on the shell runner on main. It pins no image, so it
+      needs one chosen first.
