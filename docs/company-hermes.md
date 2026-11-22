@@ -373,6 +373,24 @@ escapes; a card whose body carries the contract marker is left alone; unblocking
 runs it as-is. Size the work where it is created when you can; the guard is the
 net under the one entry point no contract writer sees.
 
+Sleep-aware run timers: the dispatcher measures a worker's runtime and a
+claim's age from wall-clock epochs, so a Mac that sleeps bills every running
+worker — on wake it kills workers as timed out and reclaims claims that never
+went stale, though the work was frozen, not slow.
+`scripts/setup_work_sleep_compensate.py --board <board>` (dry run; `--apply`)
+adds a LaunchAgent that runs `work_sleep_compensate.py --apply` every 60
+seconds: it records the machine's slept seconds since boot
+(`mach_continuous_time - mach_absolute_time`, both declared 64-bit — ctypes'
+32-bit default truncates them into negative nonsense) and, on the tick after a
+sleep, pushes running workers' active starts forward by exactly the sleep, so
+elapsed time counts only awake time and closing the lid pauses work instead of
+killing it. The state ledger beside the board database advances every tick,
+with or without `--apply`, so a dry run followed by an apply never shifts the
+same sleep twice; the shift is capped at the wall time between ticks plus one
+interval; a reboot resets the ledger; a run started inside the sleep window is
+left alone, at most one interval under-compensated. `--remove --apply` unloads
+the job and deletes only its own plist.
+
 Observed on one device after turning decomposition off and installing the
 intake: the refresh changed one key of the root configuration and left the three
 role configurations byte for byte as they were, so the setup audit passed all of
