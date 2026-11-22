@@ -36,3 +36,8 @@ jobs:
         run: HOMEBREW_NO_ASK=1 brew install sops age
       - name: Run tests
         run: tests/run.sh -v
+      - name: Test profile metadata qualification with the real YAML renderer
+        run: |
+          python3 -m venv "$RUNNER_TEMP/profile-metadata-tests"
+          "$RUNNER_TEMP/profile-metadata-tests/bin/python" -m pip install --disable-pip-version-check PyYAML==6.0.3
+          "$RUNNER_TEMP/profile-metadata-tests/bin/python" -B -m unittest discover -s scripts -p test_work_profile_metadata.py -v

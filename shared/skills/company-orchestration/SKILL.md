@@ -34,6 +34,14 @@ tasks, changes inference routes or restarts the gateway/Paperclip. Instance-wide
 recovery counters can describe historical or other-company issues; inspect exact
 task/run evidence rather than automatically retrying them. Enrollment/service
 failures produce a failed receipt instead of leaving an old success as current.
+If native Hermes adds `_config_version` and reformats qualified YAML, preserve
+the exact-byte guard. The explicit `requalify_work_profile_metadata.py` helper
+can preview a narrowly scoped repair: removing only that metadata in memory and
+rendering with the installer must reproduce the accepted bytes exactly. Apply
+only with an idle enrolled Paperclip team and a new private receipt. Behavioral,
+runtime, binding or receipt changes require ordinary qualification. The helper
+never rewrites profiles or interrupts workers; it preserves prior evidence and
+pins the actual current bytes rather than ignoring future drift.
 The monitor retains only board counts, not task bodies. A card's creation age
 does not establish how long it has been ready. Before a review, locate its exact
 evidence and existing acceptance file; stop with the missing input/owner decision
