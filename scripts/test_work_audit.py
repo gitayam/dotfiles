@@ -42,6 +42,12 @@ class Audit(unittest.TestCase):
     def test_error_state_does_not_hide_behind_matching_fingerprints(self):
         self.agent['status']='error';r=collect(self.root,self.api)
         self.assertFalse(r['all_pass']);self.assertFalse(r['checks']['zf-planner_available'])
+    def test_the_adapter_turn_limit_is_reported_beside_the_profile_limit_and_is_not_a_failure(self):
+        self.agent['adapterConfig']['maxTurnsPerRun']=16;r=collect(self.root,self.api)
+        self.assertEqual([(a['max_turns'],a['run_turn_limit']) for a in r['agents']],[(24,16)]);self.assertTrue(r['all_pass'])
+        for unusable in ['16',True,None]:
+            self.agent['adapterConfig']['maxTurnsPerRun']=unusable
+            self.assertIsNone(collect(self.root,self.api)['agents'][0]['run_turn_limit'])
     def test_missing_registered_role_cannot_report_a_healthy_empty_team(self):
         self.reg['profiles']={};(self.root/'paperclip-hermes.json').write_text(json.dumps(self.reg))
         r=collect(self.root,self.api);self.assertFalse(r['all_pass']);self.assertFalse(r['checks']['qualification_profiles'])

@@ -107,7 +107,10 @@ def collect(state,api=None):
         checks[role+'_timers_off']=heartbeat.get('enabled') is False
         checks[role+'_one_run']=heartbeat.get('maxConcurrentRuns')==1
         checks[role+'_available']=a.get('status') in {'idle','running'}
-        agents.append({'profile':role,'status':a.get('status'),'provider':p.get('provider'),'model':p.get('model'),'max_turns':p.get('max_turns')})
+        # What a Paperclip run of this role may take, beside what its profile allows: setup keeps a lower adapter limit.
+        limit=cfg.get('maxTurnsPerRun')
+        agents.append({'profile':role,'status':a.get('status'),'provider':p.get('provider'),'model':p.get('model'),'max_turns':p.get('max_turns'),
+                       'run_turn_limit':limit if type(limit) is int else None})
     live=api('/api/companies/'+reg['company_id']+'/live-runs');live=live.get('items',live) if isinstance(live,dict) else live
     active=[{'id':r['id'],'status':r['status']} for r in live if r['status'] in {'running','queued','scheduled_retry'}]
     package=paths['native_stage_sha256'].parent.parent.parent/'package.json'

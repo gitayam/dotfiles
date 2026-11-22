@@ -53,8 +53,9 @@ guard. Recheck installed scheduler fingerprints and behavior after an upgrade.
 
 November 18 audit: Hermes CLI 0.23.2 and Orca 0.2.25 matched stable releases on
 both Macs. The work Mac has run Hermes 0.23.3 since November 21 (see the
-`hermes` entry below); the native graph and cancellation acceptance predates
-that update. Paperclip 2026.1117.0 is newer than the accepted 2026.1106.0 runtime.
+`hermes` entry below). The native graph and cancellation acceptance was repeated
+on that revision on November 22 and its receipt names it; see "Repeating the
+acceptance after a runtime update". Paperclip 2026.1117.0 is newer than the accepted 2026.1106.0 runtime.
 Its [release notes](https://github.com/paperclipai/paperclip/releases/tag/v2026.1117.0)
 change child workspace and rollback contracts. Keep the qualified runtime until
 a separate canary and backup/restore test accept the replacement. The isolated
@@ -148,6 +149,64 @@ within one monitor cycle. A receipt that names no runtime adds no check, and
 `accepted_revision` stays `null`: the audit cannot say which runtime was
 accepted. Write the field only in a receipt whose acceptance actually ran on
 that revision; the metadata-only requalification above does not add it.
+
+Each agent in the report also carries `run_turn_limit`, the adapter's
+`maxTurnsPerRun`, beside the profile's `max_turns`. Setup keeps an adapter limit
+that is lower than the profile's, because it cannot tell a limit an operator
+chose from the default it wrote before the profile was raised. So raising a
+profile does not by itself raise what a Paperclip run of that role may take:
+after the November 20 raise the developer and reviewer adapters still said 16
+where the profiles said 40 and 24. The difference is reported, not failed.
+
+### Repeating the acceptance after a runtime update
+
+A narrower requalification (profile-only, metadata-only) carries the original
+receipts forward without running anything. Each is honest about that, but a
+chain of them can go on asserting a path nobody has executed: before November
+22 the Paperclip team had not run once since the day it was accepted, while
+the runtime, two role profiles and the installed skill all changed. After a
+runtime update, run the battery again; do not extend the chain.
+
+Use a new private review folder, new request keys and the helpers unchanged, so
+a difference in the result is a difference in the system:
+
+1. Confirm the contract and profile fingerprints match the registry, the three
+   agents are idle and no run is live. Back up the registry.
+2. A coding graph staged and activated as a pilot, then its acceptance.
+3. An analysis graph, its acceptance, and the check of its two leaves.
+4. The cancellation fixture: cancel while the terminal tool is alive, wait past
+   the tool's deadline, then accept.
+5. A coding graph through normal intake (`--apply --start`), its acceptance,
+   then the same request again: same native IDs, same worktree, no new run.
+6. Check the frozen oracles still fail their bad controls. Write the receipt
+   with `hermes_runtime.revision` read from the checkout, and assert that
+   revision is the same as before step 2. Run the audit before and after.
+
+Run nothing else of your own on the machine meanwhile. On November 22 the first
+coding graph ran while a 4,000-test suite used eight workers on the same Mac,
+and it was the only graph the unchanged helper rejected; the two causes can no
+longer be told apart.
+
+What that run showed, on Hermes 0.23.3 with other board work on the same model
+server: 17 native runs, 15 succeeded, one was cancelled on purpose and one was
+refused before launch. The analysis graph, its leaves, the cancellation, the
+normal-intake coding graph and the repeat all passed unchanged at the first
+attempt. The pilot coding graph passed on its second run. Its first run
+finished without an operator and its code passed the frozen oracle, but one
+phase had two native runs and its evidence files were under `.agent-work/`,
+the phase contract's default, not at the names the request gave.
+
+The two native runs are the predecessor wait doing its job. The launcher gives
+a predecessor 20 seconds to exit after its native Done. On November 18 that
+took 3 to 12 seconds over 11 runs. On November 22 it took 5 to 15 seconds in
+14 of 15 runs, a model call being 1.4 times slower, and 26 seconds once, when
+a planner ran two more commands after `finish`. The next phase's first launch
+was then refused with "The prior phase is still closing; no second Hermes
+writer was started", the native run failed with exit 2 and no launch record,
+and Paperclip started it again 35 seconds later without anyone asking. A phase
+with a failed first run of that shape and one succeeded run has had one
+writer. The margin is thin under load: the wait is part of the pinned launcher,
+so widening it is a contract change with its own acceptance.
 
 To stop only this monitor, use
 `launchctl bootout gui/$(id -u)/io.zenithflow.agent-audit`. Keep its latest
