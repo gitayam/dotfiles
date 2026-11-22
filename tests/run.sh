@@ -88,6 +88,7 @@ check "Paperclip request graph ownership and unknown-write recovery" python3 -B 
 check "Paperclip read-only audit detects drift and preserves active work" python3 -B -m unittest discover -s "$REPO/scripts" -p test_work_audit.py
 check "board intake installs only with decomposition off and removes only its own job" python3 -B -m unittest discover -s "$REPO/scripts" -p test_work_intake.py
 check "the intake guard parks only raw dashboard cards" python3 -B -m unittest discover -s "$REPO/scripts" -p test_work_guard.py
+check "the sleep compensator shifts only running workers by the slept time" python3 -B -m unittest discover -s "$REPO/scripts" -p test_work_sleep_compensate.py
 check "repository map cleans remotes and stays outside checkouts" python3 -B -m unittest discover -s "$REPO/scripts" -p test_map_repositories.py
 check "board report counts attempts and card audit keeps notes out of commands" python3 -B -m unittest discover -s "$REPO/scripts" -p test_work_board_tools.py
 check "open-cards report classes every open card and splits waiting time" python3 -B -m unittest discover -s "$REPO/scripts" -p test_work_blocks.py
