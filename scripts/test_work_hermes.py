@@ -69,6 +69,18 @@ class WorkRoutes(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'kanban_auto_decompose must be true or false'):
                 hermes_config({},ROUTES,workspace,auto_decompose=bad)
 
+    def test_sleep_compensate_input_validates_and_prints_the_per_board_follow_up(self):
+        # Off by default and on refresh without the key: nothing is printed and nothing changes.
+        for cfg in [{}, {'kanban_sleep_compensate': False}]:
+            self.assertIsNone(setup.sleep_compensate_notice(cfg))
+        notice = setup.sleep_compensate_notice({'kanban_sleep_compensate': True})
+        self.assertIn('setup_work_sleep_compensate.py', notice)
+        self.assertIn('--board <board> --apply', notice)
+        for bad in ['true', 'yes', 1, None, []]:
+            with self.assertRaisesRegex(ValueError, 'kanban_sleep_compensate must be true or false'):
+                model_policy(dict(routes=ROUTES, kanban_sleep_compensate=bad))
+        model_policy(dict(routes=ROUTES, kanban_sleep_compensate=True))   # accepted
+
     def test_decomposition_input_survives_a_refresh_and_changes_only_the_root_config(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp).resolve()

@@ -47,6 +47,8 @@ def model_policy(cfg):
         raise ValueError('Delegation requires an approved full-context route.')
     if not isinstance(cfg.get('kanban_auto_decompose',True),bool):
         raise ValueError('kanban_auto_decompose must be true or false.')
+    if 'kanban_sleep_compensate' in cfg and not isinstance(cfg['kanban_sleep_compensate'],bool):
+        raise ValueError('kanban_sleep_compensate must be true or false.')
     for name in ['kanban_max_in_progress','kanban_max_in_progress_per_profile']:
         kanban_limit(cfg,name)
     role_max_turns(cfg)
@@ -374,6 +376,15 @@ artifacts and actual native child sessions rather than reporting a planned fan-o
 '''
 
 
+def sleep_compensate_notice(cfg):
+    """The per-board follow-up that makes run timers sleep-aware, or None when off."""
+    if not cfg.get('kanban_sleep_compensate'):return None
+    script=Path(__file__).resolve().parent/'setup_work_sleep_compensate.py'
+    return ('Sleep-aware run timers: run python3 '+str(script)+
+            ' --board <board> --apply (dry run first) so closing the lid pauses '
+            'workers instead of killing them on wake.')
+
+
 def main():
     import yaml
     p=argparse.ArgumentParser(description=__doc__)
@@ -389,6 +400,8 @@ def main():
     p.add_argument('--paperclip-port',type=int,help='3100 on work Mac; 13100 for personal-Mac relay')
     p.add_argument('--default-model',choices=['local','1'],default='local')
     p.add_argument('--local-context',type=int,default=131072)
+    p.add_argument('--sleep-compensate',action='store_true',dest='sleep_compensate',
+                   help='Record that this workstation wants sleep-aware run timers; the follow-up command is printed')
     p.add_argument('--apply',action='store_true')
     a=p.parse_args()
     saved={}
@@ -428,8 +441,10 @@ def main():
          'decide_url':f'http://127.0.0.1:{a.decide_port}',
          'decide_key_file':str(state/'secrets/decide-api-key')}
     for name in ['role_models','auxiliary_models','delegation_model','kanban_auto_decompose',
-                 'kanban_max_in_progress','kanban_max_in_progress_per_profile','role_max_turns']:
+                 'kanban_max_in_progress','kanban_max_in_progress_per_profile','role_max_turns',
+                 'kanban_sleep_compensate']:
         if name in saved:cfg[name]=saved[name]
+    if a.sleep_compensate:cfg['kanban_sleep_compensate']=True
     _,auxiliary_models=model_policy(cfg)
     write(state/'config.json',json.dumps(cfg,indent=2)+'\n',a.apply)
     repair_paperclip_shim(Path(cfg['paperclip']),Path('/opt/homebrew/opt/node/bin/node'),a.apply)
@@ -516,6 +531,8 @@ and tests independently. Do not send communications unless specifically asked.
             link(alias,codex_skill,a.apply,state/'backups')
         else:
             print('INFO existing Codex issue-strategy installation retained; company copy is under .workstation/skills/codex.')
+    notice=sleep_compensate_notice(cfg)
+    if notice:print(notice)
     print('Configuration prepared. Services and authentication require independent live verification.')
 
 

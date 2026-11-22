@@ -377,6 +377,9 @@ Sleep-aware run timers: the dispatcher measures a worker's runtime and a
 claim's age from wall-clock epochs, so a Mac that sleeps bills every running
 worker — on wake it kills workers as timed out and reclaims claims that never
 went stale, though the work was frozen, not slow.
+the main installer records the choice (`setup_work_hermes.py --sleep-compensate`,
+carried on refreshes, validated like the other private inputs and printed as a
+follow-up command, since the board is chosen per install) and then
 `scripts/setup_work_sleep_compensate.py --board <board>` (dry run; `--apply`)
 adds a LaunchAgent that runs `work_sleep_compensate.py --apply` every 60
 seconds: it records the machine's slept seconds since boot
