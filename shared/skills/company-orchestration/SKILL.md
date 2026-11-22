@@ -102,7 +102,10 @@ and inside a bare here-document the shell runs them as commands. On the measured
 board, cards written from a contract finished far more often than free-form or
 automatically decomposed cards. Afterwards run
 dotfiles `scripts/audit_work_cards.py` on the cards and
-`scripts/report_work_board.py` on the board. A clean audit says the worker stayed
+`scripts/report_work_board.py` on the board. The audit opens every attempt of a
+card, the ones that timed out, gave up or crashed included: a failed attempt
+has run commands and written files too, and on the measured board one had
+patched a main checkout. A clean audit says the worker stayed
 inside its contract; it is not acceptance of what it wrote. Run
 `scripts/report_work_blocks.py` to see why each open card is open. A comment does
 not release a blocked card: a decision answered in a comment still needs the
