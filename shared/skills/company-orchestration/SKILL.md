@@ -101,6 +101,15 @@ inside its contract; it is not acceptance of what it wrote. Run
 not release a blocked card: a decision answered in a comment still needs the
 card unblocked or completed by its owner, with the answer recorded.
 
+A card marked done says a run ended, not that its work left the checkout. When a
+wave finishes, run `scripts/report_work_landing.py --board <board>` and give
+every checkout it lists an end: a request opened or merged, a decision written
+where the owner reads decisions, or the work rejected and the checkout removed.
+Work that needs someone's word before it is pushed is itself a decision to
+queue, with its age: on the measured board five accepted changes sat committed
+on one laptop for four days with no card open and no decision listed, and one no
+longer merged cleanly onto the branch it was written for.
+
 Where the private configuration sets `kanban_auto_decompose` false and the board
 intake job is installed, a rough request typed into Triage is specified within
 about a minute into ONE card (goal, approach, acceptance criteria, out of scope)
