@@ -92,6 +92,7 @@ check "the sleep compensator shifts only running workers by the slept time" pyth
 check "repository map cleans remotes and stays outside checkouts" python3 -B -m unittest discover -s "$REPO/scripts" -p test_map_repositories.py
 check "board report counts attempts and card audit keeps notes out of commands" python3 -B -m unittest discover -s "$REPO/scripts" -p test_work_board_tools.py
 check "open-cards report classes every open card and splits waiting time" python3 -B -m unittest discover -s "$REPO/scripts" -p test_work_blocks.py
+check "landing report tells a squash merge from unlanded work and writes nothing in a checkout" python3 -B -m unittest discover -s "$REPO/scripts" -p test_work_landing.py
 check "issue strategy collection coverage and portable installation" python3 -B -m unittest discover -s "$REPO/scripts" -p test_issue_strategy.py
 check "storage-cleanup compiles" python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$REPO/shared/bin/storage-cleanup"
 if command -v node >/dev/null; then

@@ -311,6 +311,32 @@ named. It also splits waiting time by what else was running: a card of the same
 role, the total limit, or nothing. On one board that read 68% and 27% before the
 limits were raised.
 
+`scripts/report_work_landing.py` says where the work of finished cards stands,
+because done says a run ended and nothing about where the commit is. For every
+done or archived card whose workspace is a git checkout it gives the checkout one
+class: on the default branch, uncommitted, committed on no remote branch, pushed
+but not merged, gone, or a plain folder. It lists the checkouts whose work is not
+on a default branch with their card ids, branch, age and the age of the last
+fetch, and never prints a title or a diff:
+
+```bash
+python3 scripts/report_work_landing.py --board <board> --older-than-hours 24
+```
+
+An ancestry test alone would call every squash merge unlanded, so commits also
+count as landed when each has an equivalent patch on the default branch, when the
+default branch holds every file they touched as the tip has it, or when one of
+its commits carries the same change as all of them together. It runs git read
+commands only, with optional locks off: reading the status of a checkout a worker
+is using does not rewrite its index. It never fetches, so "not on the default
+branch" is as of the last fetch, and a commit cherry-picked onto another pushed
+branch reads as local until that branch merges. On one board it found five
+accepted changes, each committed on its own branch four days earlier, that were
+on no remote: no card was open, no decision listed them, and one of the five no
+longer merged cleanly onto the branch it was written for. Give every checkout it
+lists an end: a request opened or merged, a decision written where the owner
+reads decisions, or the work rejected and the checkout removed.
+
 What a refresh keeps: explicit turn budgets and delegation limits survive
 `setup_work_desktop.py`. The board limits, `kanban.auto_decompose`, each role's
 model and the worker toolsets are written again on every refresh, so a hand edit
