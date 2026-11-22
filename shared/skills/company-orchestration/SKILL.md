@@ -30,7 +30,12 @@ The enrolled work Mac can install `scripts/setup_work_monitor.py --apply` after
 reviewing its dry run. This read-only LaunchAgent checks every five minutes and
 writes `.workstation/monitor/paperclip-latest.json`; check its timestamp and
 `fresh_until` before trusting it. It never calls models, dispatches or recovers
-tasks, changes inference routes or restarts the gateway/Paperclip. Instance-wide
+tasks, changes inference routes or restarts the gateway/Paperclip. On a laptop,
+install `scripts/setup_work_sleep_compensate.py --board <board> --apply` (the
+main installer records the choice with `--sleep-compensate` and prints this
+command): every minute it pushes running workers' active starts forward by the
+time the Mac slept, so closing the lid pauses work instead of the dispatcher
+killing it as timed out on wake. Instance-wide
 recovery counters can describe historical or other-company issues; inspect exact
 task/run evidence rather than automatically retrying them. Enrollment/service
 failures produce a failed receipt instead of leaving an old success as current.
@@ -74,7 +79,13 @@ what is prohibited and a stop condition, sized for about 7 to 11 steps. Tell it
 to write "not in the input" where the input is silent, and to complete and say
 what stopped it rather than block. Create the card with `--body-file`, the model
 and provider, `--max-runtime`, an idempotency key and, for a chain, `--parent`:
-a child stays in todo until its parents finish. Set the model at creation, never
+a child stays in todo until its parents finish. Size `--max-runtime` from the
+loaded board, never from an idle one: on the measured board every time-limit
+death had a limit written at creation (900 to 1800 seconds, so a bigger number
+alone did not save it), and under a wide wave runs took 1.3 to 1.5 times the
+limit. Read the running 90th percentile from `report_work_board.py` before a
+wave and set the limit above it; a card left without a limit is not killed for
+time. Set the model at creation, never
 on a running card. How many cards run at once, in total and per profile, is set
 by the installer's inputs (two and one unless raised): read the configured limits
 before sizing a wave, and spread it across the profiles. Have the worker write
