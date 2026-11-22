@@ -5,7 +5,7 @@ the coding guest, ship service for merge request, CI, merge and deploy) runs a K
 board of planner, coder and reviewer profiles. Its code and runbooks live in
 `ai-coding-env`; this page keeps the orchestration lessons this Mac's operator needs.
 Public, generalised versions are vibe-coding `lessons-learned/hermes-agent.md` lessons
-73-107. The company work-Mac board is a separate setup: [company-hermes.md](company-hermes.md).
+73-110. The company work-Mac board is a separate setup: [company-hermes.md](company-hermes.md).
 
 ## Dispatch sizing (2026-11-20)
 
@@ -113,3 +113,19 @@ interrupts running cards: use the guarded `hermes-ops restart` and pick an idle 
     is chain length and each card's review/CI/deploy cycle. No coder or planner hit its step
     budget; the Lumo shadow reviewer hit 30/30 twice and had 4 protocol violations.
 
+## Lessons from 2026-11-21, ai-coding-env !199-!200
+
+29. **A red main is not the card's fault.** lunarnewyear !318 and !319 each passed CI, merged a
+    minute apart, and together pushed the catalogs past the translation API's 32 KB source cap;
+    main went red and !319's deploy failed. !321 and !323 were built on that commit, failed the
+    same test, and went back to their cards, which re-shipped unchanged patches through three
+    reviews each (2 of 7 jobs redone). The ship service now holds a failure whose base commit
+    was already red on the branch, waits for the branch to pass, re-applies the same patch once
+    (force-with-lease over its own head only) and re-runs CI (!199). Not covered: two changes
+    that pass alone and fail together; that needs merge-result testing before each merge.
+30. **Quote search patterns.** The company board's audit found a worker whose double-quoted
+    search for a markdown phrase ran a backticked word as a command and reported "0 found"
+    (vibe-coding lesson 108). The coding SOUL now says to single-quote any pattern holding
+    backticks or `$` (!200); it already sent file writes through the file tools. Our board's
+    budget deaths in the last three days were the Lumo shadow reviewer at 30/30 (12) and two
+    coders at 60/60; every one finished on its retry.
