@@ -34,6 +34,12 @@ tasks, changes inference routes or restarts the gateway/Paperclip. Instance-wide
 recovery counters can describe historical or other-company issues; inspect exact
 task/run evidence rather than automatically retrying them. Enrollment/service
 failures produce a failed receipt instead of leaving an old success as current.
+The snapshot's `hermes` entry is the installed runtime: revision, version, when
+it changed and what changed it. Read it before stating a version or deciding
+about an upgrade; a version in a note or a guide is a dated claim. The Hermes
+Desktop app's update replaces the runtime and restarts the gateway, so start
+one only with no card running. Installed is not accepted: `accepted_revision`
+is what the qualification receipt names, and `null` means it names none.
 If native Hermes adds `_config_version` and reformats qualified YAML, preserve
 the exact-byte guard. The explicit `requalify_work_profile_metadata.py` helper
 can preview a narrowly scoped repair: removing only that metadata in memory and

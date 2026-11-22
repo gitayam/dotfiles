@@ -124,8 +124,8 @@ for source edits. Use the work Mac's Desktop/relay from a personal machine rathe
 than creating these device-wide roles in a personal default Hermes installation.
 
 **Required UI step:** in Hermes Desktop, open **Capabilities → Plugins** and
-enable **Desktop: Kanban** and **Desktop: Bots**. Hermes 0.23.2 ships Kanban's
-Desktop pane off by default. Backend `kanban` tools and a running dispatcher do
+enable **Desktop: Kanban** and **Desktop: Bots**. Hermes 0.23.2 and 0.23.3 ship
+Kanban's Desktop pane off by default. Backend `kanban` tools and a running dispatcher do
 not enable that pane. This script cannot change renderer-local preferences: it
 prints the required switches and writes `.workstation/DESKTOP-SETUP.md` plus
 `desktop-readiness.json`, initially `action-required`. After the user enables

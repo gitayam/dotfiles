@@ -29,11 +29,59 @@ def http_json(base,path):
     with urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect).open(req,timeout=10) as r:return json.load(r)
 
 
+REVISION=re.compile(r'[0-9a-f]{40}(?:[0-9a-f]{24})?')
+PLAIN=re.compile(r'[A-Za-z0-9][A-Za-z0-9._+:-]{0,39}')
+
+
+def hermes_runtime(home):
+    """Installed Hermes revision, when the checkout last moved to it and what moved it. Files only.
+
+    The revision and the time are the checkout's own HEAD and reflog. The version and the
+    initiator come from Hermes's update receipt for that exact revision, when one exists.
+    """
+    home=Path(home);git=home/'hermes-agent/.git'
+    scope=('Read from the checkout and its update receipts; a version is shown only when a receipt matches '
+           'the installed revision. Installed is not accepted: acceptance is what the qualification receipt names.')
+    try:
+        head=(git/'HEAD').read_text().strip()
+        if head.startswith('ref: '):
+            ref=head[5:]
+            if not re.fullmatch(r'refs/[A-Za-z0-9._/-]+',ref) or '..' in ref:raise ValueError('Unknown HEAD reference.')
+            head=(git/ref).read_text().strip() if (git/ref).is_file() else next(
+                line.split()[0] for line in (git/'packed-refs').read_text().splitlines() if line.endswith(' '+ref))
+        if not REVISION.fullmatch(head):raise ValueError('Unknown revision.')
+    except (OSError,ValueError,StopIteration):
+        return {'status':'unverified','scope':scope}
+    moved=None
+    try:
+        for line in (git/'logs/HEAD').read_text().splitlines():
+            fields=line.split('\t')[0].split()
+            # A checkout of the revision already checked out is logged too; only a real move counts.
+            if len(fields)>=4 and fields[0]!=fields[1] and fields[1]==head:moved=int(fields[-2])
+    except (OSError,ValueError):moved=None
+    plain=lambda value:value if isinstance(value,str) and PLAIN.fullmatch(value) else None
+    runtime={'revision':head,'version':None,'last_update':None,'scope':scope,
+             'changed_at':datetime.datetime.fromtimestamp(moved,datetime.timezone.utc).isoformat() if moved else None}
+    for receipt in sorted((home/'logs/update_receipts').glob('update_*.json')):
+        try:
+            if receipt.stat().st_size>1<<20:continue
+            update=json.loads(receipt.read_text())
+            post=update.get('post_update') or {};pre=update.get('pre_update') or {}
+            # A later run that found nothing to update has the same revision on both sides: not what moved it.
+            if post.get('sha')!=head or pre.get('sha')==head or update.get('outcome')!='success':continue
+            runtime['version']=plain(post.get('version'))
+            runtime['last_update']={'finished_at':plain(update.get('finished_at')),'from_version':plain(pre.get('version')),
+                                    'initiator':plain(update.get('initiator'))}
+        except (OSError,ValueError,AttributeError):continue
+    return runtime
+
+
 def collect(state,api=None):
     state=Path(state);reg=json.loads((state/'paperclip-hermes.json').read_text())
     if reg.get('scope')!='device':raise ValueError('Run this on the enrolled company work Mac.')
     api=api or (lambda path:http_json(reg['api_base'],path))
     checks={};contract=reg.get('contract') or {}
+    runtime=hermes_runtime(reg['hermes_home']);runtime['accepted_revision']=None
     paths={'runtime_sha256':state/'bin/work-paperclip','intake_sha256':state/'bin/work-orchestrate',
            'graph_module_sha256':state/'lib/work_paperclip_graph.py','native_stage_sha256':Path(contract.get('native_stage_file','/unconfigured-paperclip-source'))}
     for key,path in paths.items():checks[key]=bool(contract.get(key)) and digest(path)==contract[key]
@@ -44,6 +92,12 @@ def collect(state,api=None):
         pins=accepted.get('profiles') or {}
         checks['qualification_profiles']=bool(pins) and set(pins)==set(reg['profiles']) and all(
             all(reg['profiles'][role].get(k)==v for k,v in fields.items()) for role,fields in pins.items())
+        # A receipt that names the runtime it accepted is held to it; one that names none adds no check.
+        named=accepted.get('hermes_runtime') if isinstance(accepted.get('hermes_runtime'),dict) else {}
+        if named.get('revision'):
+            valid=isinstance(named['revision'],str) and bool(REVISION.fullmatch(named['revision']))
+            runtime['accepted_revision']=named['revision'] if valid else 'invalid'
+            checks['hermes_runtime_accepted']=valid and named['revision']==runtime.get('revision')
     agents=[]
     for role,p in reg['profiles'].items():
         checks[role+'_config']=digest(Path(reg['hermes_home'])/'profiles'/role/'config.yaml')==p['config_sha256']
@@ -59,7 +113,7 @@ def collect(state,api=None):
     package=paths['native_stage_sha256'].parent.parent.parent/'package.json'
     version=json.loads(package.read_text()).get('version') if package.is_file() else None
     return {'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'all_pass':all(checks.values()),'checks':checks,
-            'paperclip_version':version,'agents':agents,'active_runs':active,'company_run_queue_idle':not active,
+            'paperclip_version':version,'hermes':runtime,'agents':agents,'active_runs':active,'company_run_queue_idle':not active,
             'scope':'configuration and company run metadata; not a new model/artifact/cancellation qualification or permission to restart; inspect other companies and gateway users separately'}
 
 
