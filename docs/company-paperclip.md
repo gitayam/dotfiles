@@ -52,7 +52,9 @@ guard. Recheck installed scheduler fingerprints and behavior after an upgrade.
 ## Current release and upgrade review
 
 November 18 audit: Hermes CLI 0.23.2 and Orca 0.2.25 matched stable releases on
-both Macs. Paperclip 2026.1117.0 is newer than the accepted 2026.1106.0 runtime.
+both Macs. The work Mac has run Hermes 0.23.3 since November 21 (see the
+`hermes` entry below); the native graph and cancellation acceptance predates
+that update. Paperclip 2026.1117.0 is newer than the accepted 2026.1106.0 runtime.
 Its [release notes](https://github.com/paperclipai/paperclip/releases/tag/v2026.1117.0)
 change child workspace and rollback contracts. Keep the qualified runtime until
 a separate canary and backup/restore test accept the replacement. The isolated
@@ -126,6 +128,26 @@ run and dependency records before considering recovery. Likewise, a successful
 audit does not accept artifacts or prove that blocked Kanban cards can proceed.
 Use native `hermes kanban --board BOARD stats` for the intended board, followed
 by `show TASK --json` and `runs TASK --json` when investigating an individual card.
+
+Every report also carries a `hermes` entry: the installed revision, when the
+checkout last moved to it, and, when Hermes wrote an update receipt for that
+exact revision, the version, the version it replaced and what started the
+update. It is read from the checkout's `HEAD` and reflog and from
+`logs/update_receipts`, with no command run; an install that is not a Git
+checkout reports `unverified`. Read the installed version here before stating
+one or deciding about an upgrade: a guide that names a version is a dated claim.
+The Hermes Desktop app's update replaces the runtime and restarts the gateway
+without any of these scripts running, so this entry is where such an update
+first shows.
+
+Installed is not accepted. A qualification receipt may name the runtime it
+accepted as `"hermes_runtime": {"revision": "<full revision>"}`. The audit then
+adds the check `hermes_runtime_accepted`, which fails as soon as the installed
+revision differs, so an update from the Desktop app shows up under its own name
+within one monitor cycle. A receipt that names no runtime adds no check, and
+`accepted_revision` stays `null`: the audit cannot say which runtime was
+accepted. Write the field only in a receipt whose acceptance actually ran on
+that revision; the metadata-only requalification above does not add it.
 
 To stop only this monitor, use
 `launchctl bootout gui/$(id -u)/io.zenithflow.agent-audit`. Keep its latest

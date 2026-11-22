@@ -7,8 +7,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from audit_work_paperclip import collect,digest,service_health,write_report,board_health
+from audit_work_paperclip import collect,digest,service_health,write_report,board_health,hermes_runtime
 from setup_work_monitor import monitor_plist,check_owned,MARKER
+
+OLD='a'*40;NEW='b'*40
 
 class Audit(unittest.TestCase):
     def setUp(self):
@@ -43,6 +45,55 @@ class Audit(unittest.TestCase):
     def test_missing_registered_role_cannot_report_a_healthy_empty_team(self):
         self.reg['profiles']={};(self.root/'paperclip-hermes.json').write_text(json.dumps(self.reg))
         r=collect(self.root,self.api);self.assertFalse(r['all_pass']);self.assertFalse(r['checks']['qualification_profiles'])
+    def install(self,head=NEW,moves=((OLD,NEW,1000),),receipts=()):
+        """A synthetic Hermes checkout: HEAD, its reflog and any update receipts."""
+        git=self.root/'hermes/hermes-agent/.git';(git/'logs').mkdir(parents=True,exist_ok=True)
+        (git/'HEAD').write_text(head+'\n')
+        (git/'logs/HEAD').write_text(''.join(f'{old} {new} Tester <t@example.invalid> {at} -0500\tcheckout: moving\n' for old,new,at in moves))
+        folder=self.root/'hermes/logs/update_receipts';folder.mkdir(parents=True,exist_ok=True)
+        for n,receipt in enumerate(receipts):(folder/f'update_2026010{n}_000000_1_x.json').write_text(json.dumps(receipt))
+    def accept(self,**fields):
+        q=Path(self.reg['qualification']['file']);q.write_text(json.dumps({**json.loads(q.read_text()),**fields}))
+        self.reg['qualification']['sha256']=digest(q);(self.root/'paperclip-hermes.json').write_text(json.dumps(self.reg))
+    def receipt(self,sha=NEW,**fields):
+        return {'outcome':'success','finished_at':'2026-01-02T03:04:05.000000+00:00','initiator':'desktop',
+                'pre_update':{'sha':OLD,'version':'1.2.2'},'post_update':{'sha':sha,'version':'1.2.3'},**fields}
+    def test_installed_runtime_is_read_from_the_checkout_and_its_matching_receipt(self):
+        # The second reflog line is a checkout of the revision already checked out: it must not move the time.
+        # The third receipt is a later run that found nothing to update: it must not replace the real one.
+        self.install(moves=((OLD,NEW,1000),(NEW,NEW,2000)),receipts=[self.receipt(sha=OLD,initiator='cli'),self.receipt(),
+            self.receipt(initiator='cli',pre_update={'sha':NEW,'version':'1.2.3'})])
+        r=collect(self.root,self.api);h=r['hermes']
+        self.assertEqual((h['revision'],h['version'],h['changed_at']),(NEW,'1.2.3','1970-01-01T00:16:40+00:00'))
+        self.assertEqual(h['last_update'],{'finished_at':'2026-01-02T03:04:05.000000+00:00','from_version':'1.2.2','initiator':'desktop'})
+        # A receipt that names no runtime adds no check: the count and the result stay as they were.
+        self.assertIsNone(h['accepted_revision']);self.assertNotIn('hermes_runtime_accepted',r['checks']);self.assertTrue(r['all_pass'])
+    def test_a_receipt_that_names_its_runtime_fails_once_the_runtime_moves(self):
+        self.install();self.accept(hermes_runtime={'revision':NEW})
+        r=collect(self.root,self.api);self.assertTrue(r['checks']['hermes_runtime_accepted']);self.assertTrue(r['all_pass'])
+        self.install(head=OLD,moves=((OLD,NEW,1000),(NEW,OLD,3000)))
+        r=collect(self.root,self.api);self.assertFalse(r['checks']['hermes_runtime_accepted']);self.assertFalse(r['all_pass'])
+        self.assertEqual((r['hermes']['revision'],r['hermes']['accepted_revision']),(OLD,NEW))
+    def test_an_unreadable_runtime_is_unverified_and_never_satisfies_a_named_revision(self):
+        self.assertEqual(collect(self.root,self.api)['hermes']['status'],'unverified')
+        for head in ['not-a-revision','ref: refs/heads/../../outside','ref: refs/heads/missing']:
+            with self.subTest(head=head):
+                self.install(head=head);self.assertEqual(hermes_runtime(self.root/'hermes')['status'],'unverified')
+        self.accept(hermes_runtime={'revision':NEW});r=collect(self.root,self.api)
+        self.assertFalse(r['checks']['hermes_runtime_accepted']);self.assertFalse(r['all_pass'])
+        self.install();self.accept(hermes_runtime={'revision':'PRIVATE'})
+        r=collect(self.root,self.api);self.assertFalse(r['checks']['hermes_runtime_accepted'])
+        self.assertEqual(r['hermes']['accepted_revision'],'invalid');self.assertNotIn('PRIVATE',json.dumps(r))
+    def test_a_branch_checkout_resolves_and_receipt_text_is_never_copied_unchecked(self):
+        self.install(head='ref: refs/heads/main',moves=((OLD,NEW,1000),),receipts=[
+            self.receipt(initiator='PRIVATE VALUE',finished_at=['PRIVATE'],pre_update={'version':'x'*41}),
+            self.receipt(outcome='failed',initiator='cli'),'PRIVATE'])
+        git=self.root/'hermes/hermes-agent/.git';(git/'packed-refs').write_text(f'# pack-refs\n{NEW} refs/heads/main\n')
+        h=hermes_runtime(self.root/'hermes');self.assertEqual((h['revision'],h['version']),(NEW,'1.2.3'))
+        self.assertEqual(h['last_update'],{'finished_at':None,'from_version':None,'initiator':None})
+        self.assertNotIn('PRIVATE',json.dumps(h))
+        (git/'refs/heads').mkdir(parents=True);(git/'refs/heads/main').write_text(OLD+'\n')
+        h=hermes_runtime(self.root/'hermes');self.assertEqual((h['revision'],h['version'],h['changed_at']),(OLD,None,None))
     def health(self):
         return {'status':'ok','version':'2026.1106.0','startupRecovery':{'phase':'ready'},
                 'databaseBackup':{'enabled':True,'status':'ok','backupDir':'PRIVATE_PATH',
