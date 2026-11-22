@@ -215,7 +215,11 @@ Alibaba/Qwen and Lumo restrictions remain applicable.
 `scripts/report_work_board.py` summarises a board read-only: runs by profile and
 model, by who created the card, attempts per card, steps used against each
 profile's limit, exhausted budgets, block loops and waiting time. It prints
-counts only, never a title or a body. On one company board after three days
+counts only, never a title or a body. Every figure covers the board's whole
+history unless `--since-hours N` is given: after a limit, a model or a prompt
+changes, give the hours since the change, or one row mixes two systems. The
+window keeps runs that started inside it and the cards created or run inside
+it. On one company board after three days
 (334 cards, 348 runs) it showed the following. This is one board's history, not
 a model benchmark.
 
@@ -245,6 +249,21 @@ a model benchmark.
   median of 2.5 minutes. Spread a wave across the profiles. After the limits
   were raised to 16 and 8, a ready card was claimed after a median of 6 seconds
   (260 runs over two days, up to 12 workers at once).
+- **Width.** The report prints how many model turns a minute the board made at
+  each number of workers running, from the times the sessions recorded. Over
+  the two days after the limits were raised (319 runs, all but 13 on one
+  served model) a worker running alone made 2.9 turns a minute and a worker among eleven or
+  more made 0.6: a card took about five times as long in a wave that wide. The
+  board as a whole made 2.9 turns a minute at width one, 5.9 at seven or
+  eight, 7.9 at nine or ten and 7.7 at eleven or more, the last over only 22
+  minutes. So the binding number is now what the model server answers at once,
+  not a board limit: width bought about two and a half times the work at five
+  times the time per card. This is what happened, not a test. The middle bands moved
+  between windows (5 or 6 workers made 2.5 turns a minute over fifteen hours
+  and 6.3 over the last six), which the board cannot explain: the bands differ
+  in hour and in what the cards asked, and the server has other users. Look at
+  two windows before changing a limit, and size a card's time limit for the
+  width it will run in.
 - **Chains.** A card created with `--parent <id>` stays in `todo` until every
   parent is done and then starts by itself: a four-card chain started each next
   card within a second of its parent finishing.
@@ -362,7 +381,10 @@ configuration byte for byte. Unlike `auto_decompose`, the dispatcher reads these
 two once when the gateway starts: a change needs a gateway restart, taken with
 no card running, and that restart interrupts whatever is in flight. Size them to
 what the machine and the model routes can carry at once, not to the number of
-cards waiting; a queue that waits is normal, a queue that fails is not.
+cards waiting; a queue that waits is normal, a queue that fails is not. The
+report's width table shows what the routes carried: once turns a minute stop
+rising with width, a higher limit adds waiting, and the next step is another
+model route, not a bigger number.
 
 Worktrees per card: `hermes project create <name> <path> --board <board>`
 registers a project, and a card created with `--project <name> --workspace

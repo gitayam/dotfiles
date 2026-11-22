@@ -32,7 +32,7 @@ def make_home(root: str) -> str:
         create table task_runs (id integer primary key, task_id text, profile text, status text, outcome text, started_at integer,
                                 ended_at integer, error text, metadata text, worker_pid integer, worker_started_at integer);
         create table task_links (parent_id text, child_id text);
-        create table task_events (id integer primary key, task_id text, run_id integer, kind text, payload text);
+        create table task_events (id integer primary key, task_id text, run_id integer, kind text, payload text, created_at integer);
     """)
     tasks = [  # id, status, assignee, author, override, created, started, completed
         ("t_aaaa0001", "done", "builder", "operator", "big-model", 100, 110, 250),
@@ -56,7 +56,7 @@ def make_home(root: str) -> str:
         "insert into task_runs (task_id, profile, status, outcome, started_at, ended_at, error, metadata, worker_pid) values (?, ?, 'ended', ?, ?, ?, ?, ?, ?)",
         [(t, p, o, s, e, err, json.dumps({"worker_session_id": sid}) if sid else "{}", pid) for t, p, o, s, e, err, sid, pid in runs])
     board.execute("insert into task_links values ('t_aaaa0001', 't_aaaa0006')")
-    board.executemany("insert into task_events (task_id, kind) values (?, ?)",
+    board.executemany("insert into task_events (task_id, kind, created_at) values (?, ?, 300)",
                       [("t_aaaa0005", "block_loop_detected"), ("t_aaaa0005", "decomposed"), ("t_aaaa0001", "created")])
     # The board admits a session for every run. Run 2 timed out and its own record names no session;
     # run 6 gave up and its admission payload cannot be read.
@@ -69,11 +69,11 @@ def make_home(root: str) -> str:
     def store(profile_home: str, sessions: dict):
         os.makedirs(profile_home, exist_ok=True)
         db = sqlite3.connect(os.path.join(profile_home, "state.db"))
-        db.executescript("create table sessions (id text primary key, model text); create table messages (id integer primary key, session_id text, role text, tool_calls text);")
-        for sid, (model, calls) in sessions.items():
+        db.executescript("create table sessions (id text primary key, model text); create table messages (id integer primary key, session_id text, role text, tool_calls text, timestamp real);")
+        for sid, (model, calls, first) in sessions.items():
             db.execute("insert into sessions values (?, ?)", (sid, model))
-            for call in calls:
-                db.execute("insert into messages (session_id, role, tool_calls) values (?, 'assistant', ?)", (sid, json.dumps([call]) if call else None))
+            for turn, call in enumerate(calls):                                       # one turn a second from `first`
+                db.execute("insert into messages (session_id, role, tool_calls, timestamp) values (?, 'assistant', ?, ?)", (sid, json.dumps([call]) if call else None, first + turn))
         db.commit()
         db.close()
 
@@ -82,14 +82,14 @@ def make_home(root: str) -> str:
 
     builder = os.path.join(home, "profiles", "builder")
     store(builder, {
-        "s1": ("big-model", [shell("cat /srv/pack/INPUT.md")] * 15),                 # 15 tool-calling turns: one below the limit of 16
-        "s2": ("big-model", [shell("cat /srv/pack/INPUT.md"), None]),                # one tool-calling turn and a text-only turn
-        "s3": ("small-model", [shell("cat /srv/pack/INPUT.md"), shell("cat > /srv/out/N1.md <<'EOF'\nA note; with a semicolon && an ampersand.\nrm is a word here, not a command\nEOF")]),
-        "s5": ("small-model", [shell("cat /srv/pack/INPUT.md")]),                   # the timed-out run: its card says big-model
+        "s1": ("big-model", [shell("cat /srv/pack/INPUT.md")] * 15, 111),            # 15 tool-calling turns: one below the limit of 16
+        "s2": ("big-model", [shell("cat /srv/pack/INPUT.md"), None], 520),           # one tool-calling turn, and a text-only turn recorded after the run ended
+        "s3": ("small-model", [shell("cat /srv/pack/INPUT.md"), shell("cat > /srv/out/N1.md <<'EOF'\nA note; with a semicolon && an ampersand.\nrm is a word here, not a command\nEOF")], 131),
+        "s5": ("small-model", [shell("cat /srv/pack/INPUT.md")], 151),              # the timed-out run: its card says big-model
     })
     write(os.path.join(builder, "config.yaml"), "model:\n  provider: local\n  default: small-model\nagent:\n  # comment\n  max_turns: 16\n  nested:\n    max_turns: 99\n")
     checker = os.path.join(home, "profiles", "checker")
-    store(checker, {"s4": ("big-model", [shell("cat /srv/pack/INPUT.md; curl https://example.invalid/x"), {"function": {"name": "write_file", "arguments": json.dumps({"path": "/srv/out/other.txt"})}}])})
+    store(checker, {"s4": ("big-model", [shell("cat /srv/pack/INPUT.md; curl https://example.invalid/x"), {"function": {"name": "write_file", "arguments": json.dumps({"path": "/srv/out/other.txt"})}}], 901)})
     write(os.path.join(checker, "config.yaml"), "model:\n  default: 'big-model'\nagent:\n  max_turns: 24\n")
     write(os.path.join(home, "config.yaml"), "model:\n  default: small-model\n")
     return home
@@ -174,6 +174,72 @@ class BoardReport(unittest.TestCase):
         note = next(note for note in report.look_at(three) if "time limit" in note)
         self.assertIn("3 runs died at a time limit", note)
         self.assertIn("90th percentile", note)
+
+    def test_model_turns_are_counted_at_the_width_the_board_had_and_only_inside_their_run(self):
+        runs = [dict(worker=True, profile="p", session=name, started_at=start, ended_at=end) for name, start, end in
+                (("a", 1000, 2200), ("b", 1600, 2200), ("d", 2200, 2800), (None, 2800, 2800))]  # d starts as a and b end: never three at once
+        times = {"a": [1100, 1200, 1300, 1700, 1800, 2300], "b": [1650, 1900], "d": [2500]}      # a's turn at 2300 is after its run
+        width = report.turns_by_width(runs, lambda profile, session: times[session])
+        self.assertEqual((width["runs_measured"], width["runs_with_turn_times"]), (3, 3))        # the last has no duration: not a run to measure
+        self.assertEqual(width["by_width"], [
+            dict(workers="1", minutes=20, turns=4, turns_per_minute=0.2, per_worker_per_minute=0.2),
+            dict(workers="2", minutes=10, turns=4, turns_per_minute=0.4, per_worker_per_minute=0.2)])
+        self.assertEqual(report.turns_by_width(runs, lambda profile, session: times[session], least_seconds=700)["by_width"][0]["workers"], "1")
+        self.assertEqual(len(report.turns_by_width(runs, lambda profile, session: times[session], least_seconds=700)["by_width"]), 1)
+
+    def test_turn_times_come_from_the_session_store_and_a_store_without_times_gives_none(self):
+        width = self.summary["model_turns_by_workers_running"]
+        self.assertEqual((width["runs_measured"], width["runs_with_turn_times"], width["by_width"]), (6, 5, []))   # no band lasted ten minutes
+        board = report.open_ro(os.path.join(self.home, "kanban", "boards", "work", "kanban.db"))
+        lookup = report.session_reader(self.facts)
+        rows = report.turns_by_width(report.load(board)["runs"], lookup.turn_times, least_seconds=1)["by_width"]
+        self.assertEqual(sum(row["turns"] for row in rows), 15 + 1 + 2 + 1 + 2)                 # s2's second turn came after its run ended
+        self.assertEqual(lookup.turn_times("builder", "no such session"), [])
+        lookup.close()
+        board.close()
+        old = os.path.join(self.tmp.name, "old")
+        os.makedirs(old)
+        db = sqlite3.connect(os.path.join(old, "state.db"))
+        db.executescript("create table sessions (id text primary key, model text); create table messages (id integer primary key, session_id text, role text, tool_calls text); insert into sessions values ('s9', 'big-model'); insert into messages (session_id, role) values ('s9', 'assistant');")
+        db.commit()
+        db.close()
+        lookup = report.session_reader({"old": {"home": old}})
+        self.assertEqual(lookup("old", "s9")[0], "big-model")
+        self.assertEqual(lookup.turn_times("old", "s9"), [])
+        lookup.close()
+
+    def test_width_notes_say_how_much_slower_a_card_runs_and_need_half_an_hour_to_call_a_plateau(self):
+        def notes(top, runs_read=100, first="1"):
+            bands = [dict(workers=first, minutes=99, turns=283, turns_per_minute=2.9, per_worker_per_minute=2.9),
+                     dict(workers="9-10", minutes=40, turns=320, turns_per_minute=8.0, per_worker_per_minute=0.85), top]
+            summary = dict(self.summary, model_turns_by_workers_running=dict(runs_measured=100, runs_with_turn_times=runs_read, by_width=bands))
+            return [note for note in report.look_at(summary) if "running" in note]
+        flat = dict(workers="11+", minutes=30, turns=230, turns_per_minute=7.7, per_worker_per_minute=0.6)
+        slower, plateau = notes(flat)
+        self.assertIn("A worker made 2.9 model turns a minute with 1 running and 0.6 with 11+: a card takes about 4.8 times as long", slower)
+        self.assertIn("With 11+ workers running the board made 7.7 model turns a minute over 30 minutes, against 8.0 with 9-10", plateau)
+        self.assertIn("Look at a second window", plateau)
+        self.assertEqual(len(notes(dict(flat, minutes=29))), 1)                       # under half an hour: the slowdown only, no plateau
+        self.assertEqual(len(notes(dict(flat, turns_per_minute=11.0))), 1)            # the board still gained
+        self.assertEqual(len(notes(dict(flat, per_worker_per_minute=1.5, turns_per_minute=11.0))), 0)   # not half as fast, still gaining: nothing to say
+        self.assertEqual(len(notes(dict(flat, turns=29))), 1)                         # too few turns in the widest band: the next one down is compared
+        self.assertEqual(len(notes(flat, runs_read=80)), 0)                           # too many runs with no turn times
+        self.assertEqual(len(notes(flat, first="3-4")), 1)                            # no narrow band to measure a worker's pace against
+
+    def test_since_keeps_runs_started_in_the_window_and_the_cards_they_ran(self):
+        board = report.open_ro(os.path.join(self.home, "kanban", "boards", "work", "kanban.db"))
+        lookup = report.session_reader(self.facts)
+        summary = report.summarise(report.load(board, since=400), self.facts, lookup)
+        lookup.close()
+        board.close()
+        self.assertEqual((summary["runs_total"], summary["worker_runs"], summary["cards_total"]), (2, 2, 2))   # the runs of 400 and 900
+        self.assertEqual(summary["holds_without_a_worker"], {})
+        self.assertEqual(summary["by_card_author"], [dict(key="operator", runs=2, completed=2, other={})])    # the author of a card made before the window
+        self.assertEqual((summary["time_limit_exceeded"], summary["block_loops_detected"]), (0, 0))            # both happened before it
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            report.main(["--hermes-home", self.home, "--since-hours", "1"], now=4000)
+        self.assertIn("Board work, runs started in the last 1 h: 2 cards", out.getvalue())
 
     def test_prints_counts_only_and_never_a_title(self):
         out = io.StringIO()
