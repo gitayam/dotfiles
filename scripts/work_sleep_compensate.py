@@ -61,7 +61,11 @@ def slept_seconds() -> float:
     if libc.mach_timebase_info(tb) != 0:
         raise OSError("mach_timebase_info failed")
     scale = tb[0] / tb[1] / 1e9
-    return (libc.mach_continuous_time() - libc.mach_absolute_time()) * scale
+    # Read the non-sleeping clock first: read second, it has moved on and an awake Mac reports a
+    # few hundred nanoseconds of negative sleep (macOS CI, 2026-11-22). Clamp what is left.
+    absolute = libc.mach_absolute_time()
+    continuous = libc.mach_continuous_time()
+    return max(0, continuous - absolute) * scale
 
 
 def load_state(path: Path) -> dict | None:
