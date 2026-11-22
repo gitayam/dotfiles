@@ -11,6 +11,14 @@ A card's summary is the worker's own claim. This reads the tool calls the worker
 from the profile's session store (read-only) and checks every shell command against the
 patterns the contract allowed. It never changes a card, a session or a file.
 
+Every attempt of a card is audited, not only the one that completed. A completed run
+names its session in its own record; a run that timed out, gave up or crashed names
+none there, but the board's admission event for that run does. Reading only the first
+record left 72 ended runs on one board unopened and reported 34 cards as having no
+session when each had one. Those runs held a `git reset --hard`, a `git checkout` of a
+commit, two `rm` and a file patched twice in a repository's main checkout. A flag from
+an attempt other than the newest says which run it came from.
+
 A cards file has one card per line: `<label> <card id> [<profile>]` or just `<card id>`.
 An allow file has one regular expression per line; blank lines and `#` lines are skipped.
 
@@ -28,10 +36,13 @@ import re
 import sqlite3
 import sys
 
+from report_work_board import admitted_sessions
+
 SHELL_TOOLS = {"terminal", "shell", "bash", "execute_command", "run_command"}
 WRITE_TOOLS = {"write_file", "write", "create_file", "patch", "edit_file", "apply_patch"}
 # Never part of a read-or-write-one-file contract. Override with --prohibit.
-DEFAULT_PROHIBITED = r"(rm|mv|cp|chmod|chown|sudo|git (commit|push|add|checkout|reset|merge|rebase|clean|stash)|curl|wget|ssh|scp|rsync|node|npm|npx|pip|brew|docker|kill|launchctl)"
+# `git merge-base` and `git merge-tree` only read: four of the first eight "prohibited" git commands found in failed attempts were `merge-base --is-ancestor`.
+DEFAULT_PROHIBITED = r"(rm|mv|cp|chmod|chown|sudo|git (commit|push|add|checkout|reset|merge(?!-base|-tree)|rebase|clean|stash)|curl|wget|ssh|scp|rsync|node|npm|npx|pip|brew|docker|kill|launchctl)"
 # A bare echo that writes nowhere: workers print separators between two commands.
 ECHO = re.compile(r"^\s*echo [^>|]*$")
 HEREDOC = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?[^\n]*\n.*?\n[ \t]*\1[ \t]*(?=\n|$)", re.S)
@@ -184,21 +195,28 @@ def tool_calls_of(store: sqlite3.Connection, session: str) -> tuple[int, list[tu
     return len(rows), calls
 
 
-def card_runs(board: sqlite3.Connection, card: str) -> dict | None:
-    """Status, assignee and the newest run that recorded a worker session, read from the board itself."""
+def card_runs(board: sqlite3.Connection, card: str, admitted: dict[int, str] | None = None) -> dict | None:
+    """Status, assignee and every run of the card that has a worker session, read from the board itself.
+
+    The session is the one the run's own record names, else the one the board admitted for that
+    run (`admitted`, run id to session). `profile` and `session` are the newest attempt's.
+    """
     task = board.execute("select status, assignee from tasks where id=?", (card,)).fetchone()
     if task is None:
         return None
-    session, profile, runs = None, task[1], 0
-    for run_profile, metadata in board.execute("select profile, metadata from task_runs where task_id=? order by id", (card,)):
+    admitted = admitted or {}
+    attempts, runs = [], 0
+    for run, run_profile, outcome, metadata in board.execute("select id, profile, coalesce(outcome, status), metadata from task_runs where task_id=? order by id", (card,)):
         runs += 1
         try:
             found = (json.loads(metadata or "{}") or {}).get("worker_session_id")
         except (ValueError, AttributeError):
             found = None
+        found = found or admitted.get(run)
         if found:
-            session, profile = found, run_profile or profile
-    return dict(status=task[0], profile=profile, session=session, runs=runs)
+            attempts.append(dict(run=run, outcome=outcome or "?", profile=run_profile or task[1], session=found))
+    newest = attempts[-1] if attempts else {}
+    return dict(status=task[0], profile=newest.get("profile", task[1]), session=newest.get("session"), runs=runs, attempts=attempts)
 
 
 def profile_store(hermes_home: str, profile: str | None) -> str:
@@ -250,28 +268,42 @@ def main(argv: list[str] | None = None) -> int:
         print(f"No database for board {args.board} under {os.path.dirname(os.path.dirname(board_path))}.", file=sys.stderr)
         return 2
     board = sqlite3.connect(f"file:{board_path}?mode=ro", uri=True)
+    admitted = admitted_sessions(board)
     results, flagged = [], 0
     for label, card in cards:
-        found = card_runs(board, card)
+        found = card_runs(board, card, admitted)
         if found is None:
             results.append(dict(label=label, card=card, problem="no such card on this board"))
             flagged += 1
             continue
+        attempts = found.pop("attempts")
         entry = dict(label=label, card=card, **found)
-        store_path = profile_store(args.hermes_home, found["profile"])
-        if not found["session"] or not os.path.exists(store_path):
-            entry["problem"] = "no worker session recorded: nothing to audit (a run that failed before or without a session leaves none)"
+        for attempt in attempts:
+            store_path = profile_store(args.hermes_home, attempt["profile"])
+            messages, calls = 0, []
+            if os.path.exists(store_path):
+                store = sqlite3.connect(f"file:{store_path}?mode=ro", uri=True)
+                try:
+                    messages, calls = tool_calls_of(store, attempt["session"])
+                finally:
+                    store.close()
+            if messages:
+                attempt.update(messages=messages, **audit_calls(calls, allowed, prohibited, args.write_suffix))
+            else:
+                attempt.update(messages=0, tool_calls=0, shell_calls=0, write_calls=0, calls=[], flags=["not audited: its session is not in the profile's store"])
+        audited = [attempt for attempt in attempts if attempt["messages"]]
+        if not audited:
+            entry["problem"] = "no worker session recorded: nothing to audit (neither a run's own record nor the board's admission record names one that the store holds)"
             flagged += 1
         else:
-            store = sqlite3.connect(f"file:{store_path}?mode=ro", uri=True)
-            try:
-                messages, calls = tool_calls_of(store, found["session"])
-            finally:
-                store.close()
-            entry.update(messages=messages, **audit_calls(calls, allowed, prohibited, args.write_suffix))
+            newest = attempts[-1]
+            entry.update({key: sum(attempt[key] for attempt in attempts) for key in ("messages", "tool_calls", "shell_calls", "write_calls")})
+            entry["flags"] = [flag if attempt is newest else f"run {attempt['run']} ({attempt['outcome']}): {flag}" for attempt in attempts for flag in attempt["flags"]]
+            entry["attempts"] = attempts
             flagged += 1 if entry["flags"] else 0
             if not args.full:
-                entry.pop("calls")
+                for attempt in attempts:
+                    attempt.pop("calls")
         results.append(entry)
     board.close()
 
@@ -282,11 +314,15 @@ def main(argv: list[str] | None = None) -> int:
             if "problem" in entry and "tool_calls" not in entry:
                 print(f"{entry['label']} {entry['card']}: {entry.get('status', '?')} | {entry['problem']}")
                 continue
-            print(f"{entry['label']} {entry['card']} {entry['profile']}: status={entry['status']} runs={entry['runs']} messages={entry['messages']} tool calls={entry['tool_calls']} (shell {entry['shell_calls']}, file writes {entry['write_calls']})")
+            several = f" attempts audited={len(entry['attempts'])}" if len(entry["attempts"]) > 1 else ""
+            print(f"{entry['label']} {entry['card']} {entry['profile']}: status={entry['status']} runs={entry['runs']}{several} messages={entry['messages']} tool calls={entry['tool_calls']} (shell {entry['shell_calls']}, file writes {entry['write_calls']})")
             for flag in entry["flags"]:
                 print("    FLAG", flag)
-            for name, target in entry.get("calls", []):
-                print("     ", name, "|", target.replace("\n", " ")[:170])
+            for attempt in entry["attempts"]:
+                if several and "calls" in attempt:
+                    print(f"    run {attempt['run']} ({attempt['outcome']}):")
+                for name, target in attempt.get("calls", []):
+                    print("     ", name, "|", target.replace("\n", " ")[:170])
         print(f"{len(results)} cards, {flagged} with something to look at.")
     return 1 if flagged else 0
 

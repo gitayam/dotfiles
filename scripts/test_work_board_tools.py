@@ -85,7 +85,7 @@ def make_home(root: str) -> str:
         "s1": ("big-model", [shell("cat /srv/pack/INPUT.md")] * 15, 111),            # 15 tool-calling turns: one below the limit of 16
         "s2": ("big-model", [shell("cat /srv/pack/INPUT.md"), None], 520),           # one tool-calling turn, and a text-only turn recorded after the run ended
         "s3": ("small-model", [shell("cat /srv/pack/INPUT.md"), shell("cat > /srv/out/N1.md <<'EOF'\nA note; with a semicolon && an ampersand.\nrm is a word here, not a command\nEOF")], 131),
-        "s5": ("small-model", [shell("cat /srv/pack/INPUT.md")], 151),              # the timed-out run: its card says big-model
+        "s5": ("small-model", [shell("cat /srv/pack/INPUT.md; rm -rf /srv/out")], 151),   # the timed-out run: its card says big-model
     })
     write(os.path.join(builder, "config.yaml"), "model:\n  provider: local\n  default: small-model\nagent:\n  # comment\n  max_turns: 16\n  nested:\n    max_turns: 99\n")
     checker = os.path.join(home, "profiles", "checker")
@@ -309,6 +309,13 @@ class AuditCommand(unittest.TestCase):
         flags = audit.audit_command("cat /srv/pack/INPUT.md; curl https://example.invalid/x", self.allow, PROHIBITED)
         self.assertTrue(any(flag.startswith("prohibited:") for flag in flags))
 
+    def test_a_git_command_that_only_reads_is_not_prohibited(self):
+        allow = [re.compile(r"^git ")]
+        self.assertEqual(audit.audit_command("git merge-base --is-ancestor topic main", allow, PROHIBITED), [])   # seen on four real runs
+        self.assertEqual(audit.audit_command("git merge-tree --write-tree main topic", allow, PROHIBITED), [])
+        for command in ("git merge topic", "git merge --ff-only topic", "git reset --hard HEAD~1"):
+            self.assertTrue([f for f in audit.audit_command(command, allow, PROHIBITED) if f.startswith("prohibited")], command)
+
     def test_a_prohibited_word_inside_notes_or_quotes_is_not_flagged(self):
         notes = "cat > /srv/out/N1.md <<'EOF'\ncurl would be needed; rm the stale row\nEOF"
         self.assertFalse([f for f in audit.audit_command(notes, [re.compile(r"^cat > /srv/out/")], PROHIBITED) if f.startswith("prohibited")])
@@ -397,6 +404,36 @@ class AuditCards(unittest.TestCase):
         self.assertIn("wrote another file: /srv/out/other.txt", flags)
         self.assertTrue(any(flag.startswith("prohibited:") for flag in flags))
         self.assertTrue(any(flag.startswith("command outside the contract: curl") for flag in flags))
+
+    def test_an_attempt_that_failed_is_audited_through_the_admission_record(self):
+        # Run 2 of this card timed out and names no session in its own record; run 3 completed and is clean.
+        code, text = self.run_tool("--card", "t_aaaa0002", "--allow-read-under", "/srv/pack", "--json")
+        self.assertEqual(code, 1)
+        card = json.loads(text)["cards"][0]
+        self.assertEqual([(attempt["run"], attempt["outcome"], attempt["session"], len(attempt["flags"])) for attempt in card["attempts"]],
+                         [(2, "timed_out", "s5", 2), (3, "completed", "s2", 0)])
+        self.assertEqual(card["flags"], ["run 2 (timed_out): command outside the contract: rm -rf /srv/out", "run 2 (timed_out): prohibited: cat /srv/pack/INPUT.md; rm -rf /srv/out"])
+        self.assertEqual((card["session"], card["messages"], card["tool_calls"], card["shell_calls"]), ("s2", 3, 2, 2))   # the newest attempt; counts over both
+        code, text = self.run_tool("--card", "t_aaaa0002", "--allow-read-under", "/srv/pack", "--full")
+        self.assertIn("runs=2 attempts audited=2 messages=3", text)
+        self.assertIn("    run 2 (timed_out):\n      terminal | cat /srv/pack/INPUT.md; rm -rf /srv/out", text)
+
+    def test_a_card_whose_only_run_failed_is_opened_and_a_session_the_store_lacks_is_not_passed(self):
+        board = sqlite3.connect(os.path.join(self.home, "kanban", "boards", "work", "kanban.db"))
+        board.execute("insert into tasks (id, title, status, assignee, created_by, created_at) values ('t_aaaa0007', 'x', 'blocked', 'builder', 'operator', 100)")
+        board.execute("insert into tasks (id, title, status, assignee, created_by, created_at) values ('t_aaaa0008', 'x', 'blocked', 'builder', 'operator', 100)")
+        board.execute("insert into task_runs (id, task_id, profile, status, outcome, started_at, ended_at, metadata, worker_pid) values (20, 't_aaaa0007', 'builder', 'ended', 'crashed', 100, 200, '{}', 20)")
+        board.execute("insert into task_runs (id, task_id, profile, status, outcome, started_at, ended_at, metadata, worker_pid) values (21, 't_aaaa0008', 'builder', 'ended', 'gave_up', 100, 200, '{}', 21)")
+        board.execute("insert into task_events (task_id, run_id, kind, payload) values ('t_aaaa0007', 20, 'owner_admitted', ?)", (json.dumps({"session_id": "s3"}),))
+        board.execute("insert into task_events (task_id, run_id, kind, payload) values ('t_aaaa0008', 21, 'owner_admitted', ?)", (json.dumps({"session_id": "s404"}),))
+        board.commit()
+        board.close()
+        code, text = self.run_tool("--card", "t_aaaa0007", "--allow-read-under", "/srv/pack", "--allow", r"^cat > /srv/out/[A-Z]\d\.md")
+        self.assertEqual(code, 0, text)
+        self.assertIn("status=blocked runs=1 messages=2 tool calls=2", text)
+        code, text = self.run_tool("--card", "t_aaaa0008")
+        self.assertEqual(code, 1)
+        self.assertIn("no worker session recorded", text)                 # the admitted session is not in the store: unaudited, never clean
 
     def test_a_card_with_no_session_and_an_unknown_card_are_reported_not_passed(self):
         code, text = self.run_tool("--card", "t_aaaa0005", "--card", "t_ffff9999")

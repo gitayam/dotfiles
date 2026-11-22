@@ -318,9 +318,21 @@ that holds backticks with single quotes, and to write notes through a
 here-document whose delimiter is quoted (`<<'EOF'`): with a bare delimiter the
 shell expands the body, and markdown is full of backticks.
 
-A card with no recorded session is reported as unaudited, never as clean. A
-clean audit says the worker stayed inside its contract; it does not accept what
-the worker wrote.
+Every attempt of a card is audited, not only the one that completed. A
+completed run names its session in its own record; a run that timed out, gave
+up or crashed names none there, but the board's admission event for that run
+does, and the audit reads it. Before it did, 72 ended runs on one board were
+never opened and 34 cards were reported as having no session when each had one.
+Those runs held a `git reset --hard`, a `git checkout` of a commit, two `rm` and
+a file patched twice in a repository's main checkout by a card whose workspace
+was a scratch folder. A flag from an attempt other than the newest names its
+run (`run 12 (timed_out): ...`). `git merge-base` and `git merge-tree` only read
+and are not counted as prohibited: four of the first eight "prohibited" git
+commands found in those runs were `merge-base --is-ancestor`.
+
+A card with no session in either record, or whose session the profile's store
+does not hold, is reported as unaudited, never as clean. A clean audit says the
+worker stayed inside its contract; it does not accept what the worker wrote.
 
 `scripts/report_work_blocks.py` says why each open card is open, read-only and
 with ids and counts only: it waits for a person (and whether a person has
