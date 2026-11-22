@@ -129,3 +129,18 @@ interrupts running cards: use the guarded `hermes-ops restart` and pick an idle 
     backticks or `$` (!200); it already sent file writes through the file tools. Our board's
     budget deaths in the last three days were the Lumo shadow reviewer at 30/30 (12) and two
     coders at 60/60; every one finished on its retry.
+
+## Lessons from 2026-11-22, ai-coding-env !201-!202, vibe-coding !73
+
+31. **A status note is not an answer.** My note on a blocked card (a release that failed three
+    times at Cloudflare) woke it as the owner's answer; it blocked again unchanged and the
+    dispatcher's block-loop check moved it to triage, which only a person can clear. The healer
+    now skips a person's comment that starts with `Note:` (!202). Start operator notes with it.
+32. **Retry once, then believe it.** Cloudflare Pages' "Unknown internal error occurred" while
+    publishing a Function now gets the ship's one release retry (!201). For lunarnewyear !327 it
+    failed the same way four times while the commits around it published, so a repeat is a real
+    failure: card it for diagnosis rather than retrying again.
+33. **Numbered lessons collide like migrations.** Another session and I each wrote vibe-coding
+    lesson 110 on 2026-11-21. Its CI now fails on a repeated, missing or out-of-order lesson
+    heading (vibe-coding !73). Wait for a green pipeline before merging: I had merged !72 while
+    its pipeline was still running.
