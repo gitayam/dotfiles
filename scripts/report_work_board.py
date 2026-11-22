@@ -14,9 +14,12 @@ way the card was written. Three traps it avoids, each learned from a wrong first
 
 - A "blocked" run with no worker is a hold someone placed, not a failed run. Only runs
   where a worker started are counted as attempts.
-- The model a run used is read from the worker's session when one is recorded. When
-  none is (most failed runs), the card's own model override or the profile's default is
-  used and the row is marked "assumed".
+- The model a run used is read from the worker's session. A completed run names its
+  session in its own record; a run that ended any other way names none, but the board's
+  admission event for that run does. Only a run with neither falls back to the card's
+  model override or the profile's default, and that row is marked "assumed". Assuming
+  where a record existed once charged 22 of a role's 37 failed runs to the model the role
+  runs today instead of the ones they ran on.
 - A card that waits for a parent card is waiting by design. Waiting time is measured on
   cards with no parent.
 """
@@ -103,16 +106,19 @@ def load(board_db: sqlite3.Connection) -> dict:
     run_cols = columns(board_db, "task_runs")
     pid = "worker_pid" if "worker_pid" in run_cols else "null"
     wstart = "worker_started_at" if "worker_started_at" in run_cols else "null"
+    admitted = admitted_sessions(board_db)
     runs = []
     for row in board_db.execute(
-        f"select task_id, profile, coalesce(outcome, status), started_at, ended_at, error, metadata, {pid}, {wstart} from task_runs"
+        f"select task_id, profile, coalesce(outcome, status), started_at, ended_at, error, metadata, {pid}, {wstart}, id from task_runs"
     ):
         try:
             session = (json.loads(row[6] or "{}") or {}).get("worker_session_id")
         except (ValueError, AttributeError):
             session = None
+        from_admission = not session and bool(admitted.get(row[9]))
         runs.append(dict(task=row[0], profile=row[1] or "(none)", outcome=row[2] or "(none)", started_at=row[3], ended_at=row[4],
-                         error=row[5] or "", session=session, worker=bool(row[7] or row[8]) or bool(row[3] and row[4] and row[4] > row[3])))
+                         error=row[5] or "", session=session or admitted.get(row[9]), session_from_admission=from_admission,
+                         worker=bool(row[7] or row[8]) or bool(row[3] and row[4] and row[4] > row[3])))
     children = {row[0] for row in board_db.execute("select child_id from task_links")} if "task_links" in tables(board_db) else set()
     events = dict(board_db.execute("select kind, count(*) from task_events group by 1")) if "task_events" in tables(board_db) else {}
     return dict(tasks=tasks, runs=runs, children=children, events=events)
@@ -120,6 +126,24 @@ def load(board_db: sqlite3.Connection) -> dict:
 
 def tables(db: sqlite3.Connection) -> set[str]:
     return {row[0] for row in db.execute("select name from sqlite_master where type='table'")}
+
+
+def admitted_sessions(board_db: sqlite3.Connection) -> dict[int, str]:
+    """Run id to the session the board admitted for it, for every run including the failed ones.
+
+    A board without that event, or an older one whose events carry no run or payload, gives none.
+    """
+    if "task_events" not in tables(board_db) or not {"run_id", "payload"} <= columns(board_db, "task_events"):
+        return {}
+    found = {}
+    for run, payload in board_db.execute("select run_id, payload from task_events where kind='owner_admitted' and run_id is not null order by id"):
+        try:
+            session = (json.loads(payload or "{}") or {}).get("session_id")
+        except (ValueError, AttributeError):
+            continue
+        if isinstance(session, str) and session:
+            found[run] = session
+    return found
 
 
 def session_reader(facts: dict[str, dict]):
@@ -175,6 +199,7 @@ def summarise(data: dict, facts: dict[str, dict], lookup=lambda profile, session
     budget_by_creator = collections.Counter()
     time_deaths: list[dict] = []
     attempts_per_card = collections.Counter()
+    from_admission = 0
     for run in runs:
         task = tasks.get(run["task"], {})
         if not run["worker"]:
@@ -186,6 +211,8 @@ def summarise(data: dict, facts: dict[str, dict], lookup=lambda profile, session
         if not model:
             model = task.get("override") or (facts.get(run["profile"], {}).get("default_model")) or "unknown"
             source = "assumed"
+        elif run.get("session_from_admission"):
+            from_admission += 1
         by_model[(run["profile"], model, source)][run["outcome"]] += 1
         by_creator[task.get("created_by", "(none)")][run["outcome"]] += 1
         if turns is not None and run["outcome"] == COMPLETED:
@@ -222,6 +249,7 @@ def summarise(data: dict, facts: dict[str, dict], lookup=lambda profile, session
         worker_runs=sum(attempts_per_card.values()),
         holds_without_a_worker=dict(holds),
         by_profile_and_model=rows(by_model),
+        models_read_through_admission=from_admission,
         by_card_author=rows(by_creator),
         cards_by_number_of_attempts=dict(sorted(collections.Counter(attempts_per_card.values()).items())),
         steps_on_completed_runs=step_rows,
@@ -277,7 +305,8 @@ def as_text(board: str, s: dict) -> str:
     out = [f"Board {board}: {s['cards_total']} cards ({', '.join(f'{k} {v}' for k, v in sorted(s['cards'].items(), key=lambda i: -i[1]))}); {s['runs_total']} runs, of which a worker started {s['worker_runs']}."]
     if s["holds_without_a_worker"]:
         out.append(f"  Holds with no worker (not attempts): {', '.join(f'{k} {v}' for k, v in s['holds_without_a_worker'].items())}.")
-    out.append("  Worker runs by profile and model (model read from the session, or assumed from the card or profile):")
+    through = f"; {s['models_read_through_admission']} of them found through the board's admission record" if s.get("models_read_through_admission") else ""
+    out.append(f"  Worker runs by profile and model (model read from the worker's session{through}; otherwise assumed from the card or profile):")
     for row in s["by_profile_and_model"]:
         profile, model, source = row["key"]
         other = ", ".join(f"{k} {v}" for k, v in row["other"].items())

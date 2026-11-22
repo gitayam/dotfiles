@@ -32,7 +32,7 @@ def make_home(root: str) -> str:
         create table task_runs (id integer primary key, task_id text, profile text, status text, outcome text, started_at integer,
                                 ended_at integer, error text, metadata text, worker_pid integer, worker_started_at integer);
         create table task_links (parent_id text, child_id text);
-        create table task_events (id integer primary key, task_id text, kind text);
+        create table task_events (id integer primary key, task_id text, run_id integer, kind text, payload text);
     """)
     tasks = [  # id, status, assignee, author, override, created, started, completed
         ("t_aaaa0001", "done", "builder", "operator", "big-model", 100, 110, 250),
@@ -58,6 +58,11 @@ def make_home(root: str) -> str:
     board.execute("insert into task_links values ('t_aaaa0001', 't_aaaa0006')")
     board.executemany("insert into task_events (task_id, kind) values (?, ?)",
                       [("t_aaaa0005", "block_loop_detected"), ("t_aaaa0005", "decomposed"), ("t_aaaa0001", "created")])
+    # The board admits a session for every run. Run 2 timed out and its own record names no session;
+    # run 6 gave up and its admission payload cannot be read.
+    board.executemany("insert into task_events (task_id, run_id, kind, payload) values (?, ?, 'owner_admitted', ?)",
+                      [("t_aaaa0002", 2, json.dumps({"session_id": "s5", "db": "a path that must never be printed"})),
+                       ("t_aaaa0005", 6, "not json")])
     board.commit()
     board.close()
 
@@ -80,6 +85,7 @@ def make_home(root: str) -> str:
         "s1": ("big-model", [shell("cat /srv/pack/INPUT.md")] * 15),                 # 15 tool-calling turns: one below the limit of 16
         "s2": ("big-model", [shell("cat /srv/pack/INPUT.md"), None]),                # one tool-calling turn and a text-only turn
         "s3": ("small-model", [shell("cat /srv/pack/INPUT.md"), shell("cat > /srv/out/N1.md <<'EOF'\nA note; with a semicolon && an ampersand.\nrm is a word here, not a command\nEOF")]),
+        "s5": ("small-model", [shell("cat /srv/pack/INPUT.md")]),                   # the timed-out run: its card says big-model
     })
     write(os.path.join(builder, "config.yaml"), "model:\n  provider: local\n  default: small-model\nagent:\n  # comment\n  max_turns: 16\n  nested:\n    max_turns: 99\n")
     checker = os.path.join(home, "profiles", "checker")
@@ -122,9 +128,20 @@ class BoardReport(unittest.TestCase):
         self.assertEqual(rows[("builder", "big-model", "session")]["completed"], 2)
         # The card had no override and the profile's default is small-model, but the session says which model ran.
         self.assertEqual(rows[("builder", "small-model", "session")]["completed"], 1)
-        # A failed run recorded no session: the card's own override is used and the row says so.
-        self.assertEqual(rows[("builder", "big-model", "assumed")]["other"], {"timed_out": 1})
+        # A timed-out run names no session in its own record, but the board admitted one for it. That
+        # session says small-model ran, where the card's override would have had us assume big-model.
+        self.assertEqual(rows[("builder", "small-model", "session")]["other"], {"timed_out": 1})
+        self.assertNotIn(("builder", "big-model", "assumed"), rows)
+        self.assertEqual(self.summary["models_read_through_admission"], 1)
+        # A failed run with no readable admission either: the profile's default is used and the row says so.
         self.assertEqual(rows[("checker", "big-model", "assumed")]["other"], {"gave_up": 1})
+
+    def test_a_board_whose_events_carry_no_run_or_payload_admits_nothing(self):
+        old = sqlite3.connect(":memory:")
+        old.execute("create table task_events (id integer primary key, task_id text, kind text)")
+        old.execute("insert into task_events (task_id, kind) values ('t_aaaa0001', 'owner_admitted')")
+        self.assertEqual(report.admitted_sessions(old), {})
+        self.assertEqual(report.admitted_sessions(sqlite3.connect(":memory:")), {})
 
     def test_budgets_attempts_and_events(self):
         self.assertEqual(self.summary["step_budget_exhausted"], {"16/16 checker": 1})
