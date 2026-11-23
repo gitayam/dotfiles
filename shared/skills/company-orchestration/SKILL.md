@@ -34,8 +34,12 @@ tasks, changes inference routes or restarts the gateway/Paperclip. On a laptop,
 install `scripts/setup_work_sleep_compensate.py --board <board> --apply` (the
 main installer records the choice with `--sleep-compensate` and prints this
 command): every minute it pushes running workers' active starts forward by the
-time the Mac slept, so closing the lid pauses work instead of the dispatcher
-killing it as timed out on wake. Instance-wide
+time the Mac slept. That does not carry a worker through a closed lid: its turn
+lease lapses in the sleep and it is stopped on wake, blocked after its one
+attempt. With `--recover` the same job releases such cards once the lid is open
+again (at most three times a card; never one that ran out of steps). Before a
+long wave on a laptop, check the power and the lid; after a sleep, read the
+cards again rather than a watcher's last line. Instance-wide
 recovery counters can describe historical or other-company issues; inspect exact
 task/run evidence rather than automatically retrying them. Enrollment/service
 failures produce a failed receipt instead of leaving an old success as current.

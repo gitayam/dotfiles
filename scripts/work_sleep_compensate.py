@@ -30,17 +30,37 @@ board is touched, so a re-run never compensates the same sleep twice. Read-only
 on the board unless ``--apply``; it touches only the two columns the
 dispatcher's timers read, on tasks that are running right now, and nothing
 else.
+
+What the shift cannot do, measured on 2026-11-23 (66 ticks that saw a sleep, 3
+that still found a running card to shift): a worker does not survive a sleep of
+more than a few minutes whatever its timers say. Its turn lease lapses while the
+Mac is asleep and it is interrupted on wake, and the dispatcher's own pass runs
+within seconds of the wake, before this tick. So ``--recover`` does the other
+half: a card whose one attempt was ended by a wake is released again, by the
+board's own ``unblock``, once the lid is open and the Mac has stayed awake for a
+moment. A card is released at most a few times, never when it ran out of steps
+or was blocked by a person or by its own worker, and never while the lid is
+closed, where the next sleep would only stop it again.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import sqlite3
+import subprocess
 import sys
 import time
 from pathlib import Path
 
 STATE_VERSION = 1
+GRACE_SECONDS = 180          # an attempt ended this soon after a wake was ended by it
+MIN_SLEEP_SECONDS = 120      # shorter naps stop nobody
+SETTLE_SECONDS = 90          # a dark wake lasts under a minute: wait until the Mac has stayed awake
+MAX_RELEASES = 3             # per card, ever: a card that keeps stopping stays for a person
+RECENT_SECONDS = 48 * 3600   # older stops are history, not work in flight
+STOPPED_BY_WAKE = ("timed_out", "reclaimed", "crashed")
+SLEEP_LINE = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) ([+-]\d{4}) (Sleep|Wake|DarkWake) {2,}\t")
 
 
 def slept_seconds() -> float:
@@ -66,6 +86,132 @@ def slept_seconds() -> float:
     absolute = libc.mach_absolute_time()
     continuous = libc.mach_continuous_time()
     return max(0, continuous - absolute) * scale
+
+
+def sleep_windows(log_text: str) -> list[tuple[int, int]]:
+    """Every (fell asleep, woke) pair of epochs in the text of ``pmset -g log``, oldest first.
+
+    A wake that follows no sleep line and a sleep the log has no wake for yet are left out.
+    """
+    windows, asleep_from = [], None
+    for line in log_text.splitlines():
+        found = SLEEP_LINE.match(line)
+        if not found:
+            continue
+        try:
+            at = int(time.mktime(time.strptime(found.group(1), "%Y-%m-%d %H:%M:%S")))
+        except ValueError:
+            continue
+        if found.group(3) == "Sleep":
+            if asleep_from is None:
+                asleep_from = at
+        elif asleep_from is not None:
+            windows.append((asleep_from, at))
+            asleep_from = None
+    return windows
+
+
+def stopped_by_wake(payload: str) -> bool:
+    """Whether a card's ``gave_up`` record says the attempt was ended from outside, the way a wake ends one.
+
+    A timer that ran out, a claim taken back, a worker interrupted (exit 130) or lost: yes.
+    A worker that ran out of steps, and anything this cannot read: no.
+    """
+    try:
+        said = json.loads(payload or "")
+    except ValueError:
+        return False
+    if not isinstance(said, dict):
+        return False
+    error = str(said.get("error") or "")
+    if "budget exhausted" in error:
+        return False
+    outcome = said.get("trigger_outcome")
+    if outcome == "crashed":
+        return "code 130" in error or "worker lost" in error or "settled interrupted" in error
+    return outcome in STOPPED_BY_WAKE
+
+
+def stopped_cards(db_path: str, windows: list[tuple[int, int]] | None, now: int) -> list[tuple[str, int]]:
+    """(card, the wake that stopped it) for every blocked card whose last attempt a wake ended.
+
+    The card's newest record among gave_up, blocked, unblocked and completed has to be the
+    ``gave_up`` itself: a card a person or its own worker blocked afterwards is theirs.
+    With ``windows`` None the sleep log is not consulted: the answer is every card that
+    MIGHT have been stopped by a wake (with 0 for the wake), a cheap first look.
+    """
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=10)
+    try:
+        rows = conn.execute(
+            "SELECT t.id, e.kind, e.payload, e.created_at FROM tasks t JOIN task_events e ON e.id = ("
+            "  SELECT id FROM task_events WHERE task_id = t.id AND kind IN ('gave_up', 'blocked', 'unblocked', 'completed')"
+            "  ORDER BY created_at DESC, id DESC LIMIT 1) "
+            "WHERE t.status = 'blocked'"
+        ).fetchall()
+    finally:
+        conn.close()
+    found = []
+    for task_id, kind, payload, at in rows:
+        if kind != "gave_up" or not isinstance(at, (int, float)) or now - at > RECENT_SECONDS:
+            continue
+        if not stopped_by_wake(payload):
+            continue
+        if windows is None:
+            found.append((task_id, 0))
+            continue
+        for fell_asleep, woke in windows:
+            if woke - fell_asleep >= MIN_SLEEP_SECONDS and woke <= at <= woke + GRACE_SECONDS:
+                found.append((task_id, woke))
+                break
+    return found
+
+
+def recover(db_path: str, state_path: Path, *, now: int, windows: list[tuple[int, int]], lid_open: bool,
+            unblock, apply: bool = False) -> dict:
+    """Release the cards a wake stopped, when the Mac is open and has stayed awake.
+
+    ``unblock(ids, reason)`` is the board's own command; it is called once, with every card
+    to release. The count of releases per card is kept in a file of its own beside the
+    state file, so a card is released at most MAX_RELEASES times.
+    """
+    result: dict = {"stopped": [], "released": [], "held": ""}
+    stopped = stopped_cards(db_path, windows, now)
+    result["stopped"] = [task_id for task_id, _ in stopped]
+    if not stopped:
+        return result
+    if not lid_open:
+        result["held"] = "the lid is closed"
+        return result
+    if windows and now - windows[-1][1] < SETTLE_SECONDS:
+        result["held"] = "the Mac has only just woken"
+        return result
+    counts_path = state_path.with_name(state_path.stem + "-released.json")
+    try:
+        counts = json.loads(counts_path.read_text())
+    except (OSError, ValueError):
+        counts = {}
+    if not isinstance(counts, dict):
+        counts = {}
+    due = [(task_id, woke) for task_id, woke in stopped if counts.get(task_id, 0) < MAX_RELEASES]
+    if not due:
+        result["held"] = f"each was already released {MAX_RELEASES} times"
+        return result
+    result["released"] = [task_id for task_id, _ in due]
+    if apply:
+        woke = time.strftime("%H:%M", time.localtime(max(at for _, at in due)))
+        unblock(result["released"], f"Stopped when this Mac slept (it woke at {woke}); released by the sleep compensator.")
+        for task_id in result["released"]:
+            counts[task_id] = counts.get(task_id, 0) + 1
+        counts_path.parent.mkdir(parents=True, exist_ok=True)
+        counts_path.write_text(json.dumps(counts))
+    return result
+
+
+def lid_is_open() -> bool:
+    """Whether the lid is open; a Mac with no lid counts as open."""
+    out = subprocess.run(["/usr/sbin/ioreg", "-r", "-k", "AppleClamshellState", "-d", "4"],
+                         capture_output=True, text=True, timeout=20).stdout
+    return '"AppleClamshellState" = Yes' not in out
 
 
 def load_state(path: Path) -> dict | None:
@@ -147,6 +293,9 @@ def main(argv=None) -> int:
     p.add_argument("--db", help="Board database path override, for tests")
     p.add_argument("--state", type=Path, help="State file; defaults to a file beside the board database")
     p.add_argument("--apply", action="store_true", help="Write the shift to the board; without it, report only")
+    p.add_argument("--recover", action="store_true",
+                   help="Also release cards whose one attempt a wake ended, once the lid is open (with --apply; else report)")
+    p.add_argument("--hermes", type=Path, default=Path.home() / ".local/bin/hermes", help="The board's own command")
     a = p.parse_args(argv)
     if sys.platform != "darwin" and not a.db:
         p.error("This tool reads macOS sleep time; pass --db with an injected sleep total to test it elsewhere.")
@@ -157,6 +306,19 @@ def main(argv=None) -> int:
     state = a.state or (Path(db).parent / "sleep-compensate-state.json")
     result = compensate(db, state, apply=a.apply)
     result["applied"] = a.apply
+    if a.recover:
+        now = int(time.time())
+        # The sleep log is read (about a second) only when a blocked card might be waiting on it.
+        if stopped_cards(db, None, now):
+            log = subprocess.run(["/usr/bin/pmset", "-g", "log"], capture_output=True, text=True, timeout=60).stdout
+
+            def unblock(ids, reason):
+                subprocess.run([str(a.hermes), "kanban", "--board", a.board, "unblock", "--reason", reason, *ids],
+                               capture_output=True, text=True, timeout=120, check=True)
+
+            result["recover"] = recover(db, state, now=now, windows=sleep_windows(log), lid_open=lid_is_open(),
+                                        unblock=unblock, apply=a.apply)
+    result["at"] = time.strftime("%Y-%m-%d %H:%M:%S")
     print(json.dumps(result))
     return 0
 
