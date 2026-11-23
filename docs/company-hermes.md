@@ -454,13 +454,32 @@ seconds: it records the machine's slept seconds since boot
 (`mach_continuous_time - mach_absolute_time`, both declared 64-bit — ctypes'
 32-bit default truncates them into negative nonsense) and, on the tick after a
 sleep, pushes running workers' active starts forward by exactly the sleep, so
-elapsed time counts only awake time and closing the lid pauses work instead of
-killing it. The state ledger beside the board database advances every tick,
+elapsed time counts only awake time. The state ledger beside the board database advances every tick,
 with or without `--apply`, so a dry run followed by an apply never shifts the
 same sleep twice; the shift is capped at the wall time between ticks plus one
 interval; a reboot resets the ledger; a run started inside the sleep window is
 left alone, at most one interval under-compensated. `--remove --apply` unloads
 the job and deletes only its own plist.
+
+What the shift does not do, measured on one device on 2026-11-23: of 66 ticks
+that saw a sleep, 3 still found a running card to shift. A worker does not
+survive a sleep of more than a few minutes whatever its timers say: its turn
+lease (300 seconds, wall clock) lapses and it is interrupted on wake with
+"session turn lease lost", and the dispatcher's own pass runs within seconds of
+the wake, before the minute's tick, so a card with a short limit is timed out
+with the sleep billed. Closing the lid STOPS the cards in flight; each is left
+blocked after its one attempt. Install with `--recover` to have them released
+again without a person: on each tick the tool looks for blocked cards whose
+last record is a `gave_up` from outside (a timer, a claim taken back, an
+interrupted or lost worker; never one that ran out of steps, never one a person
+or its worker blocked afterwards), reads `pmset -g log` only when there is such
+a card, and releases those stopped within three minutes of a wake that followed
+at least two minutes asleep. It releases through `hermes kanban unblock`, only
+while the lid is open and the Mac has been awake for ninety seconds (a dark
+wake lasts under a minute, and a card released into one is stopped again), and
+at most three times a card. The work in flight when the lid closed is lost and
+starts again; a card's worktree keeps what was written. Keeping the Mac awake
+with the lid closed on battery is a system setting and its owner's decision.
 
 Observed on one device after turning decomposition off and installing the
 intake: the refresh changed one key of the root configuration and left the three

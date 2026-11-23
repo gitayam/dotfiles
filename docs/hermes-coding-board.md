@@ -187,3 +187,18 @@ interrupts running cards: use the guarded `hermes-ops restart` and pick an idle 
     for callers of any route that starts refusing old input (!230). Earlier the same day, a
     canceled release pipeline (main moved on) counted as a failed deploy. It now waits for
     the later release, as a failed one does (!227).
+39. **Shifting timers is not surviving a sleep.** A job pushed running workers' start times
+    forward by the time a laptop slept, so that a closed lid would pause the board. In the
+    field it almost never acted: of 66 ticks that saw a sleep, 3 still found a running card.
+    The dispatcher's own pass runs within seconds of a wake, before a job that ticks each
+    minute, so a card with a twenty-minute limit was timed out with a fifteen-minute sleep
+    billed to it. And the timers were not the only clock: a worker's turn lease (300 seconds)
+    lapses while the Mac is asleep, and on wake the worker is interrupted with "session turn
+    lease lost". Twice in one day a closed lid left about ten cards blocked, the second time
+    twenty minutes after they had been released by hand. The job now also releases what a
+    wake stopped (`work_sleep_compensate.py --recover`): only cards whose last record is a
+    stop from outside within three minutes of a wake, only with the lid open and the Mac
+    awake for ninety seconds, at most three times a card. Its first tick released the
+    eleven cards the day's sleeps had stopped and left the four other blocked cards alone.
+    A sleep still costs the work in flight. Read the board's records before believing a
+    fix is in: the job's log said `"compensated": 0` every time.
