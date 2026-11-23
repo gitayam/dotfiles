@@ -244,7 +244,9 @@ def compensate(db_path: str, state_path: Path, *, now: int | None = None,
             result["reset"] = True            # the machine rebooted; start the ledger again
         elif now >= last_wall:
             delta = min(sleep_total - last_sleep, now - last_wall + interval)
-            if delta > 0:
+            # Two readings of the clocks an instant apart differ by a hair on an awake Mac:
+            # under a second is no sleep, and no reason to write to the board every minute.
+            if delta >= 1:
                 result["sleep_delta"] = round(delta, 3)
                 result["compensated"], result["skipped_unreadable"] = _shift_runs(
                     db_path, last_wall, delta, apply)

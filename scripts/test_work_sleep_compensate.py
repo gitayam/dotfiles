@@ -76,6 +76,12 @@ class SleepCompensation(unittest.TestCase):
         self.assertEqual(out["sleep_delta"], 0)
         self.assertEqual(self.starts()["t_run"], (1000, 900))
 
+    def test_a_hair_of_difference_between_two_clock_readings_is_no_sleep(self):
+        comp.compensate(self.db, self.state, now=2000, sleep_total=100.0, apply=True)
+        result = comp.compensate(self.db, self.state, now=2060, sleep_total=100.0004, apply=True)
+        self.assertEqual((result["sleep_delta"], result["compensated"]), (0, 0))
+        self.assertEqual(self.starts()["t_run"], (1000, 900))
+
     def test_a_reboot_resets_the_ledger_and_compensates_nothing(self):
         comp.compensate(self.db, self.state, now=2000, sleep_total=3600.0, apply=True)
         out = comp.compensate(self.db, self.state, now=2100, sleep_total=10.0, apply=True)
