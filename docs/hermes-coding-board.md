@@ -210,3 +210,42 @@ interrupts running cards: use the guarded `hermes-ops restart` and pick an idle 
     back to its own profile. Before treating a parked card as waiting for a person, check
     whether its work already landed: one audit found 17 of 24 such cards already done or
     superseded.
+
+## Lessons from 2026-11-27: irregularchat-monorepo !816-!847 (bot downloader and SimpleX parity)
+
+41. **A stacked child closes its parent's MR, so the parent's work rides on the child.** When
+    a child card stacks a patch on an open parent MR, the ship service closes the parent as
+    superseded and deletes its branch. The reviewed downloader fix (!816) and the first
+    parity MRs (!838, !839, !841) were left without an MR of their own. Their successor
+    (!842) then conflicted with a sibling chain merged in the meantime (!845). Both
+    recoveries kept the review:
+    - push the reviewed head as a new branch and MR (!816 became !820);
+    - or have a card cherry-pick only the successor's unique commits onto main and ship a
+      replacement (!842 became !847; its five conflicting commits were already in !845).
+
+    Before closing out a chain, list which open or merged MR now carries each card's commits.
+42. **Ship status is not deploy status after a person merges.** !845 merged on GitLab with a
+    green pipeline while `ship_status` still said `conflict`. For a hand-merged MR, take the
+    forge's merge state and the running container's `/health` `source_version`, not the ship
+    ledger.
+43. **An infrastructure outage looks like a card failure.** At 08:50 UTC a recreate onto a
+    new sandbox image stopped `hermes-coding-sandbox` (stuck in "removing", Docker `Dead`). It
+    left both replacements in Created until 09:02. A card that ran during the outage
+    (`t_46939a30`) blocked with "cannot resolve hermes-coding-sandbox".
+    - Before answering or re-carding such a block, run `docker ps -a --filter name=sandbox`
+      on the host and `getent hosts hermes-coding-sandbox` in the chat container.
+    - Once the sandbox was back, the card resumed from its recorded point and finished.
+    - Swap the sandbox image while no card is running.
+44. **Give the planner verified paths, or it invents them.** The parity plan's children named
+    files that do not exist: `docker-compose.yml` instead of `compose.yml`, and `src/bot/…`
+    instead of `signal-messenger/src/src/bot/…`. The media-pins card also missed files. Each
+    needed a correcting `Note:` before it ran. Put the real paths, line anchors and baseline
+    SHA in the parent body; planners copy them.
+45. **"Deploy.sh does it" is an acceptance check, not a hope.** The first parity plan left the
+    cookie move as a manual step for the operator. The owner's rule is now part of the cards:
+    deploy.sh does host migrations, build-context inputs and bind-mount sources. Each step is
+    idempotent, fails before `compose up`, and is tested on a fake tree
+    (`shared/prepare-cookies.sh` with `test-prepare-cookies.sh`, !847). The check has to run
+    before every `up`, because Compose creates a missing bind source as a root-owned
+    directory. The integration card blocked twice waiting for owner merges and went to
+    Triage (lesson 40). Park such a card with a `Note:` naming the MR it waits on.
