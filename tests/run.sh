@@ -421,6 +421,8 @@ ap_decisions() {
   c icgl 3 --model Qwen/Qwen2.5-72B-Instruct
   c ic 0 --model claude-opus-5-5
   c ic 0 --model deepseek-v4-pro --base-url https://api.deepseek.com/anthropic
+  c icgl 3 --model kimi-k2.7-code --provider custom:alibaba   # Hermes provider id for Alibaba Cloud
+  c icgl 0 --model kimi-k2.7-code --provider custom:lumo
   c own 0 --model qwen3.8-max --base-url https://dashscope-intl.aliyuncs.com/apps/anthropic
   return $rc
 }
