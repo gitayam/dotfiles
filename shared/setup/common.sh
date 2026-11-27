@@ -186,6 +186,29 @@ link_agent_config() {
   done
 }
 
+# Run vibe-coding's own installer for one tool (claude, codex or vibe), so skills added
+# to its skills/catalog.json get installed too. It links only what is missing (NEW/OK/SKIP)
+# and runs after the links above, so the private and already-linked copies win. For claude
+# it also registers its safety hook in ~/.claude/settings.json (backing that file up first).
+run_vibe_coding_installer() {
+  local tool="$1" installer="$VIBE_CODING_DIR/scripts/install.py" mode="--apply"
+  if [[ ! -f "$installer" ]]; then
+    echo "  skipped the vibe-coding catalog installer: $installer not found (older checkout)"
+    return 0
+  fi
+  if ! command -v python3 &>/dev/null; then
+    echo "  skipped the vibe-coding catalog installer: python3 not found"
+    note_problem "vibe-coding: python3 not found; run: python3 -I $installer $tool --apply"
+    return 0
+  fi
+  is_dry_run && mode="--dry-run"
+  echo "  vibe-coding catalog installer ($tool $mode):"
+  python3 -I "$installer" "$tool" "$mode" 2>&1 | sed 's/^/    /'
+  if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
+    note_problem "vibe-coding: catalog installer for $tool failed; run: python3 -I $installer $tool --dry-run"
+  fi
+}
+
 # Clone or update vibe-coding and link the chosen parts in
 install_vibe_coding() {
   if has_choice 6 "${VIBE_CODING_CHOICES[@]}"; then
@@ -221,6 +244,7 @@ install_vibe_coding() {
         # Single-file skills: Claude Code wants <name>/SKILL.md
         link_if_missing "$repo/orchestrator/vibe-orchestrator-skill.md" "$HOME/.claude/skills/vibe-orchestrator/SKILL.md"
         link_if_missing "$repo/orchestrator/cloud-escalator-skill.md" "$HOME/.claude/skills/cloud-escalator/SKILL.md"
+        run_vibe_coding_installer claude
         ;;
       2)
         # The dotfiles ship their own copy in shared/bin
@@ -239,6 +263,7 @@ install_vibe_coding() {
         for f in "$repo"/vibe-config/agents/*.toml; do
           [[ -e "$f" ]] && link_if_missing "$f" "$HOME/.vibe/agents/$(basename "$f")"
         done
+        run_vibe_coding_installer vibe
         ;;
       4)
         # A copy, not a link: it is a template to edit

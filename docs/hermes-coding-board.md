@@ -202,3 +202,11 @@ interrupts running cards: use the guarded `hermes-ops restart` and pick an idle 
     eleven cards the day's sleeps had stopped and left the four other blocked cards alone.
     A sleep still costs the work in flight. Read the board's records before believing a
     fix is in: the job's log said `"compensated": 0` every time.
+40. **Triage is a stop that needs a person, so tell one.** The board's loop guard moves a card
+    that was blocked twice the same way into Triage, where no profile picks it up again. The
+    board now notifies the owner once per stop for a Triage card. When a person answers
+    after the card's last stop (a comment from an author who is not an agent, or one
+    starting "Owner:"; never one starting "Note:"), a card that was already attempted goes
+    back to its own profile. Before treating a parked card as waiting for a person, check
+    whether its work already landed: one audit found 17 of 24 such cards already done or
+    superseded.
