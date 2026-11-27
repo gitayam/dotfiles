@@ -129,8 +129,11 @@ def classify(policy, models=(), base_url=None, provider=None):
             terms.setdefault(f'tag:{tag}', why)
 
     def service_for_provider(pid, why):
+        # Hermes names its own providers custom:<name>; custom:alibaba serving kimi-k2.7-code was
+        # allowed in an IrregularChat repository because only the bare name was matched (2026-11-27).
+        ids = {pid, pid.split(':', 1)[1]} if pid.startswith('custom:') else {pid}
         for name, spec in policy['services'].items():
-            if any(fnmatch.fnmatch(pid, p) for p in spec.get('providers', [])):
+            if any(fnmatch.fnmatch(i, p) for i in ids for p in spec.get('providers', [])):
                 add(f'service:{name}', why, spec.get('tags', []))
 
     for raw in models:
