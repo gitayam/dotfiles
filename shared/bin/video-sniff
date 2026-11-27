@@ -1,0 +1,228 @@
+#!/usr/bin/env -S uv run --quiet --script
+# video-sniff: open a page in a headless browser and list the video streams it loads.
+#
+# For pages yt-dlp can't parse ("Unsupported URL", "No video formats found"): the page
+# runs in a real Chromium (Brave/Chrome/Edge if installed, else Playwright's own), its
+# videos are started muted, and every HLS/DASH manifest or video file the page fetches
+# is recorded. download_video uses it as its last fallback; the URLs go to yt-dlp.
+#
+#   video-sniff URL                    tab-separated lines: "title<TAB>page title", then
+#                                      "hls|dash|file<TAB>url", best candidate first
+#   video-sniff --cookies FILE URL     load a Netscape cookie file (yt-dlp --cookies format)
+#   video-sniff --wait 20 URL          seconds to watch the network after load (default 12)
+#   video-sniff --show URL             visible browser window (debugging, solving a consent box)
+#
+# VIDEO_SNIFF_BROWSER=/path/to/chromium picks the browser. Without an installed Chromium
+# browser, run once: uvx --from playwright==1.64.1 playwright install chromium
+# Exit 0 with at least one media line, 1 when the page loaded none, 2 on usage/browser errors.
+# It visits the page as a browser would; it does not get past logins or paywalls.
+#
+# /// script
+# requires-python = ">=3.9"
+# dependencies = ["playwright==1.64.1"]
+# [tool.uv]
+# exclude-newer = "2026-11-12T00:00:00Z"
+# ///
+import argparse
+import os
+import platform
+import re
+import shutil
+import sys
+from urllib.parse import urlsplit
+
+MANIFEST_TYPES = {
+    "application/vnd.apple.mpegurl": "hls",
+    "application/x-mpegurl": "hls",
+    "audio/mpegurl": "hls",
+    "application/dash+xml": "dash",
+}
+EXT_KIND = {".m3u8": "hls", ".mpd": "dash", ".mp4": "file", ".m4v": "file",
+            ".webm": "file", ".mov": "file", ".mkv": "file"}
+# Segments of a stream, not the stream itself
+SEGMENT_RE = re.compile(r"\.(ts|m4s|aac|vtt)$|/(seg|segment|chunk|frag)[-_]?\d+", re.I)
+
+
+def log(msg):
+    print(f"video-sniff: {msg}", file=sys.stderr)
+
+
+def find_browser():
+    env = os.environ.get("VIDEO_SNIFF_BROWSER")
+    if env:
+        return env if os.access(env, os.X_OK) else None
+    if platform.system() == "Darwin":
+        for app in ("Brave Browser", "Google Chrome", "Chromium", "Microsoft Edge", "Vivaldi"):
+            for root in ("/Applications", os.path.expanduser("~/Applications")):
+                p = f"{root}/{app}.app/Contents/MacOS/{app}"
+                if os.access(p, os.X_OK):
+                    return p
+        return None
+    for name in ("brave-browser", "brave", "google-chrome", "google-chrome-stable",
+                 "chromium", "chromium-browser", "microsoft-edge", "vivaldi"):
+        p = shutil.which(name)
+        if p:
+            return p
+    return None
+
+
+def load_cookies(path):
+    """Netscape cookie file -> Playwright cookies. Values are never printed."""
+    cookies = []
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            line = line.rstrip("\n")
+            http_only = line.startswith("#HttpOnly_")
+            if http_only:
+                line = line[len("#HttpOnly_"):]
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split("\t")
+            if len(parts) != 7:
+                continue
+            domain, _sub, path_, secure, expires, name, value = parts
+            c = {"name": name, "value": value, "domain": domain, "path": path_ or "/",
+                 "secure": secure.upper() == "TRUE", "httpOnly": http_only}
+            try:
+                exp = int(float(expires))
+                if exp > 0:
+                    c["expires"] = exp
+            except ValueError:
+                pass
+            cookies.append(c)
+    return cookies
+
+
+def classify(url, content_type):
+    if not url.startswith(("http://", "https://")):
+        return None
+    ct = (content_type or "").split(";")[0].strip().lower()
+    if ct in MANIFEST_TYPES:
+        return MANIFEST_TYPES[ct]
+    path = urlsplit(url).path.lower()
+    if SEGMENT_RE.search(path):
+        return None
+    for ext, kind in EXT_KIND.items():
+        if path.endswith(ext):
+            return kind
+    if ct.startswith("video/"):
+        return "file"
+    return None
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="video-sniff", description="List the video streams a page loads.")
+    ap.add_argument("url")
+    ap.add_argument("--cookies", help="Netscape cookie file")
+    ap.add_argument("--wait", type=float, default=12, help="seconds to watch after load (default 12)")
+    ap.add_argument("--show", action="store_true", help="visible browser window")
+    a = ap.parse_args()
+
+    if not re.match(r"^https?://", a.url):
+        log("URL must start with http:// or https://")
+        return 2
+    cookies = []
+    if a.cookies:
+        try:
+            cookies = load_cookies(a.cookies)
+        except OSError as e:
+            log(f"cannot read cookie file: {e.strerror}")
+            return 2
+        log(f"loaded {len(cookies)} cookies")
+
+    from playwright.sync_api import Error as PWError, sync_playwright
+
+    found = {}  # url -> (kind, size, first-seen index)
+
+    def note(url, ct, size=0):
+        kind = classify(url, ct)
+        if kind:
+            old = found.get(url)
+            found[url] = (kind, max(size, old[1] if old else 0), old[2] if old else len(found))
+
+    with sync_playwright() as p:
+        exe = find_browser()
+        try:
+            browser = p.chromium.launch(headless=not a.show, executable_path=exe,
+                                        args=["--autoplay-policy=no-user-gesture-required"])
+        except PWError as e:
+            first = str(e).strip().splitlines()[0] if str(e).strip() else "launch failed"
+            log(f"cannot start a browser ({first})")
+            log("install one, or run: uvx --from playwright==1.64.1 playwright install chromium")
+            return 2
+        log(f"browser: {exe or 'Playwright chromium'}")
+        # Headless Chromium says "HeadlessChrome" in its user agent; many sites refuse it
+        probe = browser.new_page()
+        ua = probe.evaluate("navigator.userAgent").replace("HeadlessChrome", "Chrome")
+        probe.close()
+        ctx = browser.new_context(user_agent=ua, viewport={"width": 1280, "height": 800})
+        if cookies:
+            try:
+                ctx.add_cookies(cookies)
+            except PWError:
+                log("some cookies were rejected; continuing without them")
+        page = ctx.new_page()
+
+        def on_response(r):
+            try:
+                h = r.headers
+                size = int(h.get("content-length", "0") or 0)
+                if r.status in (200, 206):
+                    note(r.url, h.get("content-type", ""), size)
+            except Exception:
+                pass
+
+        page.on("response", on_response)
+        page.on("request", lambda req: note(req.url, ""))
+        try:
+            page.goto(a.url, wait_until="domcontentloaded", timeout=45000)
+        except PWError as e:
+            log(f"page did not load: {str(e).splitlines()[0]}")
+            browser.close()
+            return 2
+        # Start every video muted so the player fetches its stream
+        play_js = """() => { const out = [];
+          document.querySelectorAll('video').forEach(v => {
+            v.muted = true; try { v.play().catch(() => {}); } catch (e) {}
+            [v.currentSrc, v.src].forEach(s => s && out.push(s));
+            v.querySelectorAll('source').forEach(s => s.src && out.push(s.src)); });
+          document.querySelectorAll('meta[property^="og:video"], meta[name^="twitter:player:stream"]')
+            .forEach(m => m.content && out.push(m.content));
+          return out; }"""
+        deadline = a.wait
+        step = 2.0
+        while deadline > 0:
+            try:
+                for src in page.evaluate(play_js):
+                    note(src, "")
+            except PWError:
+                pass
+            page.wait_for_timeout(step * 1000)
+            deadline -= step
+            if any(v[0] in ("hls", "dash") for v in found.values()) and deadline < a.wait - 6:
+                break
+        # Read the title once the page has settled; single-page apps set it late
+        title = ""
+        try:
+            title = page.evaluate("""() => document.title ||
+                (document.querySelector('meta[property="og:title"]') || {}).content || ''""") or ""
+        except PWError:
+            pass
+        browser.close()
+
+    if not found:
+        log("the page loaded no video stream (it may need a login, or play only after a click: try --show)")
+        return 1
+    # Manifests in the order the player asked for them (the master playlist comes first);
+    # plain files largest first
+    order = {"hls": 0, "dash": 1, "file": 2}
+    ranked = sorted(found.items(), key=lambda kv: (order[kv[1][0]],
+                                                   kv[1][2] if kv[1][0] != "file" else -kv[1][1]))
+    print(f"title\t{' '.join(title.split())}")
+    for url, (kind, _size, _idx) in ranked:
+        print(f"{kind}\t{url}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
