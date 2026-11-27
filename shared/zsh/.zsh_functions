@@ -401,333 +401,367 @@ check_video_format() {
   fi
 }
 
-# Download video or audio with yt-dlp (quality, audio-only, format fixes)
-download_video() {
-  # Usage: download_video url [options]
-  # Options:
-  #   --output/-o FILENAME    Output filename (default: auto-generated from title)
-  #   --start/-s TIME         Start time (format: HH:MM:SS or seconds)
-  #   --end/-e TIME           End time (format: HH:MM:SS or seconds)
-  #   --quality/-q QUALITY    Video quality (best, 1080p, 720p, 480p, 360p, worst)
-  #   --format/-f FORMAT      Format (mp4, webm, mp3, etc.)
-  #   --subtitles/-sub        Download subtitles if available (default: false, default language: en)
-  #   --language/-l LANGUAGE  Language (default: en)
-  #   --audio-only/-a         Download audio only
-  #   --help/-h               Show this help message
+# True when a yt-dlp error means "log in / send cookies"
+_dlv_auth_error() {
+  local re='--cookies|[Ll]og ?in|[Ss]ign in|authenticat|[Pp]rivate video|HTTP Error 40[13]|rate.?limit'
+  [[ $1 =~ $re ]]
+}
 
-  # Show help if requested or no arguments provided
-  if [[ "$1" == "--help" || "$1" == "-h" || -z "$1" ]]; then
-    echo "Usage: download_video url [options]"
-    echo "Options:"
-    echo "  --output, -o FILENAME    Output filename (default: auto-generated from title)"
-    echo "  --start, -s TIME         Start time (format: HH:MM:SS or seconds)"
-    echo "  --end, -e TIME           End time (format: HH:MM:SS or seconds)"
-    echo "  --quality, -q QUALITY    Video quality (best, 1080p, 720p, 480p, 360p, worst)"
-    echo "  --format, -f FORMAT      Format (mp4, webm, mp3, etc.)"
-    echo "  --subtitles, -sub        Download subtitles if available (default: false, default language: en)"
-    echo "  --language, -l LANGUAGE  Language (default: en)"
-    echo "  --audio-only, -a         Download audio only"
-    echo "  --no-sanitize            Keep original filename (don't remove spaces/special chars)"
-    echo "  --check-format           Force format check/conversion (automatic for incompatible videos)"
-    echo "  --output-dir, -d DIR     Output directory (default: /tmp/, falls back to ./ or ~/)"
-    echo "  --help, -h               Show this help message"
-    echo ""
-    echo "Note: Videos are AUTOMATICALLY converted to Signal/iOS/Android compatible format (H.264+AAC+MP4)"
-    echo "      Filenames are sanitized by default (lowercase, underscores instead of spaces)"
-    echo "      Downloads save to /tmp/ by default (with fallback to ./ or ~/)"
-    return 0
-  fi
-
-  # Check if yt-dlp or youtube-dl is installed (prefer yt-dlp)
-  local downloader=""
-  if command -v yt-dlp &> /dev/null; then
-    downloader="yt-dlp"
-  elif command -v youtube-dl &> /dev/null; then
-    downloader="youtube-dl"
+# Browsers whose cookies yt-dlp can read here, one per line; blocked ones are reported on stderr
+_dlv_cookie_browsers() {
+  local as="$HOME/Library/Application Support" cfg="$HOME/.config" name p
+  local -a cands
+  if [[ "$(uname -s)" == Darwin ]]; then
+    cands=("brave|$as/BraveSoftware/Brave-Browser" "chrome|$as/Google/Chrome" "chromium|$as/Chromium"
+           "edge|$as/Microsoft Edge" "vivaldi|$as/Vivaldi" "firefox|$as/Firefox/Profiles"
+           "safari|$HOME/Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies")
   else
-    echo "❌ Neither yt-dlp nor youtube-dl could be found"
-    echo "yt-dlp is the recommended modern replacement for youtube-dl"
-    # Prompt the user to install yt-dlp
-    printf '%s' "Do you want to install yt-dlp? (y/n) "; read -r REPLY  # not read -p: zsh reads a coprocess
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-      HOMEBREW_NO_ASK=1 brew install yt-dlp
-      downloader="yt-dlp"
-    else
-      return 1
+    cands=("brave|$cfg/BraveSoftware/Brave-Browser" "chrome|$cfg/google-chrome" "chromium|$cfg/chromium"
+           "edge|$cfg/microsoft-edge" "vivaldi|$cfg/vivaldi" "firefox|$HOME/.mozilla/firefox"
+           "firefox|$cfg/mozilla/firefox" "firefox|$HOME/snap/firefox/common/.mozilla/firefox")
+  fi
+  for p in "${cands[@]}"; do
+    name="${p%%|*}"; p="${p#*|}"
+    [[ -e "$p" ]] || continue
+    # macOS privacy protection makes these unreadable even to sudo; ls/head see that, -r does not
+    if [[ -d "$p" ]] && ls "$p" >/dev/null 2>&1; then echo "$name"
+    elif [[ -f "$p" ]] && head -c1 "$p" >/dev/null 2>&1; then echo "$name"
+    else echo "   ⚠️  $name: macOS blocks reading its cookies (sudo doesn't help). Allow your terminal app under System Settings → Privacy & Security → Full Disk Access, then restart the terminal." >&2
     fi
+  done
+}
+
+# The video-sniff helper (shared/bin), or nothing when it or uv is missing
+_dlv_sniffer() {
+  command -v uv >/dev/null 2>&1 || return 1
+  if command -v video-sniff >/dev/null 2>&1; then command -v video-sniff
+  elif [[ -x "$HOME/Git/dotfiles/shared/bin/video-sniff" ]]; then echo "$HOME/Git/dotfiles/shared/bin/video-sniff"
+  else return 1
   fi
+}
 
-  echo "📥 Using downloader: $downloader"
+# Download a video or audio with yt-dlp; on a login wall retries with browser cookies, then sniffs the page
+download_video() {
+  # Usage: download_video URL [options]   (options before or after the URL)
+  #   --output/-o NAME        Output filename without extension (default: the title)
+  #   --output-dir/-d DIR     Output directory (default: /tmp, then ./, then ~)
+  #   --start/-s TIME         Download from TIME (HH:MM:SS, MM:SS or seconds)
+  #   --end/-e TIME           Download up to TIME
+  #   --quality/-q QUALITY    best, 1080p, 720p, 480p, 360p, worst
+  #   --format/-f FORMAT      Re-encode to this container (mp4, webm, mkv, ...)
+  #   --audio-only/-a         Audio only, as mp3
+  #   --subtitles/-sub        Subtitles too (--language/-l LANG, default en)
+  #   --cookies FILE          Netscape cookie file (default: $DL_COOKIES)
+  #   --browser NAME[:PROF]   Use this browser's cookies (default: $DL_BROWSER)
+  #   --sniff                 Skip yt-dlp's page parsing; find the stream with a headless browser
+  #   --no-fallback           Don't retry with browser cookies or the headless browser
+  #   --no-sanitize           Keep the original filename
+  #   --check-format          Always run the Signal/QuickTime format check
+  local url="" output_filename="" start_time="" end_time="" quality="best" format=""
+  local subtitles=false language="en" audio_only=false sanitize=true check_format=false
+  local output_dir_override="" cookies_file="${DL_COOKIES:-}" browser="${DL_BROWSER:-}"
+  local fallback=true sniff_only=false
+  local download_dir="" out_tmpl="" cookie_copy="" errfile="" pathfile="" sniffer=""
+  local ok=false how="" err="" b="" kind="" val="" title="" name="" tries=0
+  local f dir base ext new_file video_codec pix_fmt container needs_conversion fixed_file trimmed
+  local -a ytdl_args browsers media files sniff_args trim_args
 
-  # Parse arguments
-  local url="$1"
-  local output_filename=""
-  local start_time=""
-  local end_time=""
-  local quality="best"
-  local format=""
-  local subtitles=false
-  local language="en"
-  local audio_only=false
-  local sanitize=true
-  local check_format=false
-  local output_dir_override=""
-  local ytdl_args=()
-  
-  shift # Skip the URL arg
-
-  # Validate the URL
-  if [[ ! "$url" =~ ^https?:// ]]; then
-    echo "❌ Invalid URL: $url"
-    echo "URL must start with http:// or https://"
-    return 1
-  fi
-
-  # Parse options
+  if [[ $# -eq 0 ]]; then set -- --help; fi
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --output|-o)
-        shift
-        output_filename="$1"
+      --help|-h)
+        echo "Usage: download_video URL [options]   (options may come before or after the URL)"
+        echo "  --output, -o NAME        Output filename without extension (default: the title)"
+        echo "  --output-dir, -d DIR     Output directory (default: /tmp, falls back to ./ or ~/)"
+        echo "  --start, -s TIME         Download from TIME (HH:MM:SS, MM:SS or seconds)"
+        echo "  --end, -e TIME           Download up to TIME"
+        echo "  --quality, -q QUALITY    best, 1080p, 720p, 480p, 360p, worst"
+        echo "  --format, -f FORMAT      Re-encode to this container (mp4, webm, mkv, ...)"
+        echo "  --audio-only, -a         Audio only, as mp3"
+        echo "  --subtitles, -sub        Subtitles too (--language, -l LANG; default en)"
+        echo "  --cookies FILE           Netscape cookie file, e.g. from a cookies.txt extension (default: \$DL_COOKIES)"
+        echo "  --browser NAME[:PROFILE] Use a browser's cookies: brave, chrome, firefox, safari, ... (default: \$DL_BROWSER)"
+        echo "  --sniff                  Skip yt-dlp's page parsing; find the stream with a headless browser"
+        echo "  --no-fallback            Don't retry with browser cookies or the headless browser"
+        echo "  --no-sanitize            Keep the original filename (no lowercase/underscores)"
+        echo "  --check-format           Always run the Signal/QuickTime format check"
+        echo ""
+        echo "When a download fails:"
+        echo "  1. a login or bot wall (\"Account authentication is required\", \"Sign in to confirm\")"
+        echo "     is retried with the cookies of each browser on this machine you can read;"
+        echo "  2. anything still failing goes to video-sniff, which opens the page in headless"
+        echo "     Brave/Chrome, plays it muted and downloads the HLS/DASH/MP4 stream it loads."
+        echo "Videos are converted to Signal/iOS/Android-compatible H.264+AAC MP4 when needed."
+        return 0
         ;;
-      --start|-s)
-        shift
-        start_time=$(normalize_time "$1")
+      --output|-o) shift; output_filename="$1" ;;
+      --start|-s) shift; start_time=$(normalize_time "$1") ;;
+      --end|-e) shift; end_time=$(normalize_time "$1") ;;
+      --quality|-q) shift; quality="$1" ;;
+      --format|-f) shift; format="$1" ;;
+      --subtitles|-sub) subtitles=true ;;
+      --language|-l) shift; language="$1" ;;
+      --audio-only|-a) audio_only=true ;;
+      --no-sanitize) sanitize=false ;;
+      --check-format) check_format=true ;;
+      --output-dir|-d) shift; output_dir_override="$1" ;;
+      --cookies) shift; cookies_file="$1" ;;
+      --cookies-from-browser|--browser) shift; browser="$1" ;;
+      --sniff) sniff_only=true ;;
+      --no-fallback) fallback=false ;;
+      http://*|https://*)
+        if [[ -n "$url" ]]; then
+          echo "❌ One URL at a time (got a second one: $1)"
+          return 1
+        fi
+        url="$1"
         ;;
-      --end|-e)
-        shift
-        end_time=$(normalize_time "$1")
-        ;;
-      --quality|-q)
-        shift
-        quality="$1"
-        ;;
-      --format|-f)
-        shift
-        format="$1"
-        ;;
-      --subtitles|-sub)
-        subtitles=true
-        ;;
-      --language|-l)
-        shift
-        language="$1"
-        ;;
-      --audio-only|-a)
-        audio_only=true
-        ;;
-      --no-sanitize)
-        sanitize=false
-        ;;
-      --check-format)
-        check_format=true
-        ;;
-      --output-dir|-d)
-        shift
-        output_dir_override="$1"
-        ;;
-      *)
+      -*)
         echo "❌ Unknown option: $1"
         echo "Use 'download_video --help' to see available options"
+        return 1
+        ;;
+      *)
+        echo "❌ Invalid URL: $1"
+        echo "URL must start with http:// or https://"
         return 1
         ;;
     esac
     shift
   done
 
-  # Build youtube-dl arguments
-  if [[ "$audio_only" == true ]]; then
-    ytdl_args+=("-x" "--audio-format" "mp3")
-  else
-    # Handle video quality
-    case "$quality" in
-      best)
-        ytdl_args+=("-f" "bestvideo+bestaudio/best")
-        ;;
-      1080p)
-        ytdl_args+=("-f" "bestvideo[height<=1080]+bestaudio/best[height<=1080]")
-        ;;
-      720p)
-        ytdl_args+=("-f" "bestvideo[height<=720]+bestaudio/best[height<=720]")
-        ;;
-      480p)
-        ytdl_args+=("-f" "bestvideo[height<=480]+bestaudio/best[height<=480]")
-        ;;
-      360p)
-        ytdl_args+=("-f" "bestvideo[height<=360]+bestaudio/best[height<=360]")
-        ;;
-      worst)
-        ytdl_args+=("-f" "worstvideo+worstaudio/worst")
-        ;;
-      *)
-        ytdl_args+=("-f" "best") # Default to best quality
-        ;;
-    esac
+  if [[ -z "$url" ]]; then
+    echo "❌ No URL given. Use 'download_video --help' for usage."
+    return 1
+  fi
+  if [[ -n "$cookies_file" ]]; then
+    cookies_file="${cookies_file/#\~/$HOME}"
+    if [[ ! -r "$cookies_file" ]]; then
+      echo "❌ Cannot read cookie file: $cookies_file"
+      return 1
+    fi
   fi
 
-  # Handle format if specified
-  if [[ -n "$format" ]]; then
-    ytdl_args+=(--recode-video "$format")
+  if ! command -v yt-dlp >/dev/null 2>&1; then
+    echo "❌ yt-dlp not found"
+    if command -v brew >/dev/null 2>&1; then
+      printf '%s' "Install yt-dlp with Homebrew? (y/n) "; read -r REPLY  # not read -p: zsh reads a coprocess
+      [[ $REPLY =~ ^[Yy]$ ]] || return 1
+      HOMEBREW_NO_ASK=1 brew install yt-dlp || return 1
+    else
+      echo "   Install it with: uv tool install yt-dlp   (or pipx install yt-dlp)"
+      return 1
+    fi
   fi
 
-  # Handle subtitles
-  if [[ "$subtitles" == true ]]; then
-    ytdl_args+=(--write-sub --convert-subs srt --sub-lang "$language")
-  fi
-
-  # Determine output directory (prefer /tmp/, fall back to ./ or ~/)
-  local download_dir=""
-
-  # Use user-specified directory if provided
+  # Output directory: --output-dir, else /tmp, ./ or ~
   if [[ -n "$output_dir_override" ]]; then
-    # Expand ~ to home directory
     output_dir_override="${output_dir_override/#\~/$HOME}"
-
     if [[ ! -d "$output_dir_override" ]]; then
       echo "❌ Error: Directory does not exist: $output_dir_override"
       return 1
-    fi
-
-    if [[ -w "$output_dir_override" ]]; then
-      download_dir="$output_dir_override"
-    else
+    elif [[ ! -w "$output_dir_override" ]]; then
       echo "❌ Error: No write permission for: $output_dir_override"
       return 1
     fi
-  # Try /tmp/ first
-  elif [[ -w "/tmp" ]]; then
-    download_dir="/tmp"
-  # Fall back to current directory
-  elif [[ -w "." ]]; then
-    download_dir="."
-  # Fall back to home directory
-  elif [[ -w "$HOME" ]]; then
-    download_dir="$HOME"
+    download_dir="$output_dir_override"
+  elif [[ -w /tmp ]]; then download_dir="/tmp"
+  elif [[ -w . ]]; then download_dir="."
+  elif [[ -w "$HOME" ]]; then download_dir="$HOME"
   else
     echo "❌ Error: Cannot find writable directory for download"
     return 1
   fi
 
-  # Handle output filename
-  if [[ -n "$output_filename" ]]; then
-    # Sanitize filename: replace spaces with underscores, remove special characters
-    output_filename=$(echo "$output_filename" | tr ' ' '_' | tr -cd '[:alnum:]._-')
-    ytdl_args+=(-o "${download_dir}/${output_filename}.%(ext)s")
+  # Format choice. -S prefers H.264/AAC at the same resolution, so most videos need no re-encode.
+  if [[ "$audio_only" == true ]]; then
+    ytdl_args+=(-x --audio-format mp3)
   else
-    # Auto-generate filename from title
-    ytdl_args+=(-o "${download_dir}/%(title)s.%(ext)s")
+    # A sort limit (res:720 = "largest up to 720p") still works when a stream doesn't state
+    # its height, where a [height<=720] filter fails with "Requested format is not available"
+    case "$quality" in
+      best)                ytdl_args+=(-f "bv*+ba/b" -S "res,fps,vcodec:h264,acodec:aac") ;;
+      1080p|720p|480p|360p) ytdl_args+=(-f "bv*+ba/b" -S "res:${quality%p},fps,vcodec:h264,acodec:aac") ;;
+      worst)               ytdl_args+=(-f "wv*+wa/w") ;;
+      *)
+        echo "❌ Unknown quality: $quality (best, 1080p, 720p, 480p, 360p, worst)"
+        return 1
+        ;;
+    esac
+    [[ -z "$format" ]] && ytdl_args+=(--merge-output-format mp4)
+  fi
+  [[ -n "$format" ]] && ytdl_args+=(--recode-video "$format")
+  [[ "$subtitles" == true ]] && ytdl_args+=(--write-subs --convert-subs srt --sub-langs "$language")
+
+  if [[ -n "$output_filename" ]]; then
+    output_filename=$(echo "$output_filename" | tr ' ' '_' | tr -cd '[:alnum:]._-')
+    out_tmpl="${download_dir}/${output_filename}.%(ext)s"
+  else
+    out_tmpl="${download_dir}/%(title).100B.%(ext)s"   # long titles break filesystems
   fi
 
-  echo "📁 Download directory: $download_dir"
+  # yt-dlp writes the final path of every file here, and rewrites a --cookies file it is given,
+  # so it gets a private copy and never touches the original
+  errfile=$(mktemp) pathfile=$(mktemp)
+  if [[ -n "$cookies_file" ]]; then
+    cookie_copy=$(mktemp); chmod 600 "$cookie_copy"; cat "$cookies_file" > "$cookie_copy"
+  fi
 
-  # Download the video
-  echo "🎬 Downloading from: $url"
-  echo "⚙️ Options: quality=$quality, format=$format"
-  [[ -n "$start_time" ]] && echo "Starting at: $start_time"
-  [[ -n "$end_time" ]] && echo "Ending at: $end_time"
-  
-  # Download with yt-dlp or youtube-dl - capture output for error detection
-  local download_output=$(mktemp)
-  local download_error=$(mktemp)
+  echo "🎬 Downloading: $url"
+  echo "📁 Directory:   $download_dir   ⚙️  quality=$quality${format:+, format=$format}${start_time:+, from $start_time}${end_time:+, to $end_time}"
 
-  if $downloader "${ytdl_args[@]}" "$url" > "$download_output" 2> "$download_error"; then
-    echo "✅ Download complete!"
-
-    # Get the downloaded filename (with full path)
-    local downloaded_file="${download_dir}/$($downloader --get-filename -o "%(title)s.%(ext)s" "$url" 2>/dev/null)"
-
-    # Sanitize filename if enabled
-    if [[ "$sanitize" == true && -f "$downloaded_file" ]]; then
-      local dir=$(dirname "$downloaded_file")
-      local basename=$(basename "$downloaded_file")
-      local extension="${basename##*.}"
-      local filename_no_ext="${basename%.*}"
-
-      # Sanitize the filename (without extension)
-      local sanitized_name=$(sanitize_filename "$filename_no_ext")
-      local new_file="${dir}/${sanitized_name}.${extension}"
-
-      if [[ "$downloaded_file" != "$new_file" ]]; then
-        echo "📝 Sanitizing filename..."
-        echo "   From: $basename"
-        echo "   To: $(basename "$new_file")"
-        mv "$downloaded_file" "$new_file"
-        downloaded_file="$new_file"
-      fi
+  # Attempt 1: as given (with the cookie file or browser you named, if any)
+  if [[ "$sniff_only" != true ]]; then
+    if [[ -n "$cookie_copy" ]]; then how="cookie file"; set -- --cookies "$cookie_copy"
+    elif [[ -n "$browser" ]]; then how="$browser cookies"; set -- --cookies-from-browser "$browser"
+    else how="no cookies"; set --
     fi
+    yt-dlp "${ytdl_args[@]}" "$@" -o "$out_tmpl" --print-to-file after_move:filepath "$pathfile" "$url" 2> "$errfile" && ok=true
+    err=$(grep -E '^ERROR' "$errfile" | head -3 | sed 's/^ERROR: //')
+    [[ "$err" == *"Operation not permitted"* ]] && \
+      echo "   ⚠️  macOS blocked reading the browser's cookies (sudo doesn't help): allow your terminal app under System Settings → Privacy & Security → Full Disk Access, then restart it."
 
-    # Post-processing: trim if start/end times were specified
-    if [[ -n "$start_time" || -n "$end_time" ]]; then
-      echo "🔪 Trimming video..."
-      # Call trim_vid to handle the trimming
-      trim_vid "$downloaded_file" --start "$start_time" --end "$end_time"
-    fi
-
-    # Check and fix format if requested OR if video is not Signal-compatible
-    if [[ "$audio_only" == false ]]; then
-      # Always check format for Signal/iOS/Android compatibility
-      local video_codec=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$downloaded_file" 2>/dev/null)
-      local pix_fmt=$(ffprobe -v error -select_streams v:0 -show_entries stream=pix_fmt -of default=noprint_wrappers=1:nokey=1 "$downloaded_file" 2>/dev/null)
-      local container=$(ffprobe -v error -show_entries format=format_name -of default=noprint_wrappers=1:nokey=1 "$downloaded_file" 2>/dev/null)
-
-      # Check if video needs conversion for Signal compatibility
-      local needs_conversion=false
-      if [[ "$video_codec" != "h264" ]]; then
-        needs_conversion=true
-      elif [[ "$pix_fmt" != "yuv420p" ]]; then
-        needs_conversion=true
-      elif [[ "$container" != *"mp4"* ]]; then
-        needs_conversion=true
+    # Attempt 2: a login/bot wall, and no cookie source named: try each readable browser
+    if [[ "$ok" != true && "$fallback" == true && -z "$cookie_copy" && -z "$browser" ]] && _dlv_auth_error "$err"; then
+      echo "🔐 The site wants a login: ${err%%$'\n'*}"
+      browsers=()
+      while IFS= read -r b; do [[ -n "$b" ]] && browsers+=("$b"); done < <(_dlv_cookie_browsers)
+      if [[ ${#browsers[@]} -eq 0 ]]; then
+        echo "   No readable browser cookies. Log in with a browser, or pass --cookies FILE."
       fi
-
-      # Auto-convert if needed OR if explicitly requested via --check-format
-      if [[ "$needs_conversion" == true || "$check_format" == true ]]; then
-        echo ""
-        echo "🔍 Converting to Signal/iOS/Android-compatible format..."
-        echo "   Current codec: $video_codec (needs H.264)"
-        echo "   Current pixel format: $pix_fmt (needs yuv420p)"
-        check_video_format "$downloaded_file" true "$download_dir"
-
-        # If a _fixed version was created, update the downloaded_file reference
-        local fixed_file="${downloaded_file%.*}_fixed.mp4"
-        if [[ -f "$fixed_file" ]]; then
-          downloaded_file="$fixed_file"
+      for b in "${browsers[@]}"; do
+        echo "🍪 Retrying with $b's cookies (macOS may ask to let yt-dlp read \"$b Safe Storage\": Allow)"
+        : > "$pathfile"
+        if yt-dlp "${ytdl_args[@]}" --cookies-from-browser "$b" -o "$out_tmpl" \
+             --print-to-file after_move:filepath "$pathfile" "$url" 2> "$errfile"; then
+          ok=true; how="$b cookies"; break
         fi
+        err=$(grep -E '^ERROR' "$errfile" | head -3 | sed 's/^ERROR: //')
+        echo "   ✗ $b: ${err%%$'\n'*}"
+      done
+    fi
+  fi
+
+  # Attempt 3: open the page in a headless browser and download the stream it plays
+  if [[ "$ok" != true && ( "$fallback" == true || "$sniff_only" == true ) ]]; then
+    if sniffer=$(_dlv_sniffer); then
+      echo "🧭 Looking for the stream in a headless browser (video-sniff)..."
+      media=()
+      title=""
+      sniff_args=()
+      [[ -n "$cookies_file" ]] && sniff_args=(--cookies "$cookies_file")
+      while IFS=$'\t' read -r kind val; do
+        case "$kind" in
+          title) title="$val" ;;
+          hls|dash|file) media+=("$val") ;;
+        esac
+      done < <("$sniffer" "${sniff_args[@]}" "$url")
+      if [[ ${#media[@]} -eq 0 ]]; then
+        echo "   ✗ The page loaded no video stream."
       else
-        echo ""
-        echo "✅ Video format is already Signal/iOS/Android compatible!"
+        echo "   Found ${#media[@]} stream(s)${title:+ on \"$title\"}"
+        if [[ -n "$output_filename" ]]; then name="$output_filename"
+        else
+          name=$(sanitize_filename "${title:0:100}")
+          [[ -z "$name" || "$name" == "." ]] && name="video_$(date +%Y%m%d_%H%M%S)"
+        fi
+        tries=0
+        for val in "${media[@]}"; do
+          tries=$((tries + 1)); [[ $tries -gt 3 ]] && break
+          echo "⬇️  ${val:0:120}"
+          : > "$pathfile"
+          set -- --referer "$url"
+          [[ -n "$cookie_copy" ]] && set -- "$@" --cookies "$cookie_copy"
+          if yt-dlp "${ytdl_args[@]}" "$@" -o "${download_dir}/${name}.%(ext)s" \
+               --print-to-file after_move:filepath "$pathfile" "$val" 2> "$errfile"; then
+            ok=true; how="headless browser"; break
+          fi
+          err=$(grep -E '^ERROR' "$errfile" | head -3 | sed 's/^ERROR: //')
+          echo "   ✗ ${err%%$'\n'*}"
+        done
       fi
+    elif [[ "$fallback" == true || "$sniff_only" == true ]]; then
+      echo "   (headless fallback unavailable: needs uv and shared/bin/video-sniff)"
     fi
+  fi
 
-    echo "📁 Final file: $downloaded_file"
-    rm -f "$download_output" "$download_error"
-    return 0
-  else
-    # Check error output for specific known errors
-    local error_msg=$(cat "$download_error")
-
-    if [[ "$error_msg" =~ "No video could be found" ]]; then
-      echo "📭 No video found in this URL"
-      echo "   This URL may contain:"
-      echo "   • Text-only content"
-      echo "   • Images only"
-      echo "   • External links without embedded video"
-    elif [[ "$error_msg" =~ "Unsupported URL" ]]; then
-      echo "❌ Unsupported URL or platform"
-      echo "   The downloader doesn't support this website"
-    elif [[ "$error_msg" =~ "Private video" || "$error_msg" =~ "This video is private" ]]; then
-      echo "🔒 This video is private or requires authentication"
-    elif [[ "$error_msg" =~ "Video unavailable" ]]; then
+  if [[ "$ok" != true ]]; then
+    if [[ "$err" =~ "No video could be found" || "$err" =~ "No video formats found" ]]; then
+      echo "📭 No video found at this URL (text, images or an external link only?)"
+    elif [[ "$err" =~ "Unsupported URL" ]]; then
+      echo "❌ Unsupported URL: yt-dlp doesn't know this site and the page played no stream"
+    elif _dlv_auth_error "$err"; then
+      echo "🔒 Still needs a login. Log in with a browser and pass --browser NAME, or export"
+      echo "   the site's cookies to a file (a cookies.txt extension) and pass --cookies FILE."
+    elif [[ "$err" =~ "Video unavailable" ]]; then
       echo "📵 Video unavailable (may be deleted or restricted)"
-    else
-      echo "❌ Download failed!"
-      # Show first line of error for debugging
-      echo "   Error: $(echo "$error_msg" | head -1 | sed 's/ERROR: //')"
+    elif [[ "$err" =~ "ffmpeg exited with code" ]]; then
+      echo "🧱 ffmpeg failed while downloading. If 'ffmpeg -v error -i https://example.com -f null -'"
+      echo "   times out while curl works, a per-app firewall (LuLu, Little Snitch) is blocking ffmpeg."
     fi
-
-    rm -f "$download_output" "$download_error"
+    echo "❌ Download failed${err:+: }${err%%$'\n'*}"
+    [[ -n "$err" ]] || tail -3 "$errfile"
+    rm -f "$errfile" "$pathfile" "$cookie_copy"
     return 1
   fi
+
+  echo "✅ Download complete ($how)"
+  files=()
+  while IFS= read -r f; do [[ -n "$f" && -f "$f" ]] && files+=("$f"); done < "$pathfile"
+  rm -f "$errfile" "$pathfile" "$cookie_copy"
+
+  for f in "${files[@]}"; do
+    if [[ "$sanitize" == true ]]; then
+      dir="${f%/*}"; base="${f##*/}"; ext="${base##*.}"
+      new_file="${dir}/$(sanitize_filename "${base%.*}" | sed -E 's/[._-]+$//').${ext}"
+      if [[ "$f" != "$new_file" && ! -e "$new_file" ]]; then
+        mv "$f" "$new_file" && f="$new_file"
+      fi
+    fi
+
+    # Trim locally: yt-dlp's --download-sections needs ffmpeg itself on the network, which
+    # a per-app firewall (LuLu) can block; this works whichever downloader fetched the file
+    if [[ -n "$start_time" || -n "$end_time" ]]; then
+      trim_args=()
+      [[ -n "$start_time" ]] && trim_args+=(-ss "$start_time")
+      [[ -n "$end_time" ]] && trim_args+=(-to "$end_time")
+      if [[ "$audio_only" == true ]]; then
+        trimmed="${f%.*}_trimmed.mp3"; set -- -c:a libmp3lame -q:a 2
+      else
+        trimmed="${f%.*}_trimmed.mp4"; set -- -c:v libx264 -pix_fmt yuv420p -c:a aac -movflags +faststart
+      fi
+      echo "🔪 Trimming${start_time:+ from $start_time}${end_time:+ to $end_time}"
+      if ffmpeg -v error -y "${trim_args[@]}" -i "$f" "$@" "$trimmed" </dev/null; then
+        echo "   Full download kept: $f"
+        f="$trimmed"
+      else
+        echo "   ⚠️  Trim failed; keeping the full file"
+      fi
+    fi
+
+    # Convert anything that won't play in Signal/iOS/Android/QuickTime
+    if [[ "$audio_only" == false ]]; then
+      video_codec=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$f" 2>/dev/null </dev/null)
+      pix_fmt=$(ffprobe -v error -select_streams v:0 -show_entries stream=pix_fmt -of default=noprint_wrappers=1:nokey=1 "$f" 2>/dev/null </dev/null)
+      container=$(ffprobe -v error -show_entries format=format_name -of default=noprint_wrappers=1:nokey=1 "$f" 2>/dev/null </dev/null)
+      needs_conversion=false
+      if [[ -n "$video_codec" ]] && [[ "$video_codec" != "h264" || "$pix_fmt" != "yuv420p" || "$container" != *mp4* ]]; then
+        needs_conversion=true
+      fi
+      if [[ -n "$video_codec" ]] && [[ "$needs_conversion" == true || "$check_format" == true ]]; then
+        echo ""
+        echo "🔍 Converting to Signal/iOS/Android-compatible format..."
+        echo "   Current codec: $video_codec (needs H.264), pixel format: $pix_fmt (needs yuv420p)"
+        check_video_format "$f" true "$download_dir" </dev/null
+        fixed_file="${f%.*}_fixed.mp4"
+        [[ -f "$fixed_file" ]] && f="$fixed_file"
+      elif [[ -n "$video_codec" ]]; then
+        echo "✅ Already Signal/iOS/Android compatible (h264, yuv420p, mp4)"
+      fi
+    fi
+    echo "📁 Final file: $f"
+  done
+  return 0
 }
 
 # Quick download for Instagram/TikTok/etc

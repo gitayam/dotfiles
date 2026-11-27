@@ -153,6 +153,56 @@ expect "dots -s on a shared/bin command shows its usage" 'secret run PROFILE' en
 expect "vcheck checks without converting" '\[false\]' env -i HOME="$H" PATH=/usr/bin:/bin bash -c \
   'source ~/.zsh_functions; check_video_format() { echo "[$2]"; }; vcheck x.mp4'
 
+echo "== download_video"
+# A fake yt-dlp: logs its arguments, "downloads" an empty file named from the -o template,
+# fails with Reddit's login error when FAKE_NEED_COOKIES is set and no cookies were given,
+# and rewrites any --cookies file like the real one does
+mkdir -p "$WORK/fakebin" "$WORK/dl" "$WORK/dlz"
+cat > "$WORK/fakebin/yt-dlp" <<'EOF'
+#!/bin/bash
+echo "$*" >> "$FAKE_LOG"
+args=("$@"); pf=""; out=""; cookies=0
+for ((i = 0; i < ${#args[@]}; i++)); do
+  case "${args[i]}" in
+    --print-to-file) pf="${args[i+2]}" ;;
+    -o) out="${args[i+1]}" ;;
+    --cookies) cookies=1; echo "# rewritten" >> "${args[i+1]}" ;;
+    --cookies-from-browser) cookies=1 ;;
+  esac
+done
+if [[ -n "${FAKE_NEED_COOKIES:-}" && $cookies -eq 0 ]]; then
+  echo "ERROR: [Reddit] 1y5hsju: Account authentication is required. Use --cookies-from-browser or --cookies for the authentication." >&2
+  exit 1
+fi
+f=$(printf '%s' "$out" | sed 's/%(title)\.100B/My Clip./; s/%(ext)s/mp4/')
+: > "$f"; echo "$f" >> "$pf"
+EOF
+chmod +x "$WORK/fakebin/yt-dlp"
+printf '# Netscape HTTP Cookie File\n' > "$WORK/cookies.txt"
+dlv() {  # dlv SHELL [setup;] ARGS...: run download_video with the fake yt-dlp and no uv
+  local sh="$1" pre="$2"; shift 2
+  env -i HOME="$H" PATH="$WORK/fakebin:/usr/bin:/bin" FAKE_LOG="$WORK/fake.log" FAKE_NEED_COOKIES="${NEED:-}" \
+    "$sh" -c "source ~/.zsh_functions; $pre download_video \"\$@\"" dlv "$@"
+}
+expect "download_video takes options after the URL" 'Final file: .*/dl/my_clip\.mp4' \
+  dlv bash '' https://www.reddit.com/r/x/s/abc -d "$WORK/dl" -q 720p
+if command -v zsh >/dev/null; then
+  expect "download_video works in zsh (options before the URL)" 'Final file: .*/dlz/my_clip\.mp4' \
+    dlv zsh '' -d "$WORK/dlz" https://www.reddit.com/r/x/s/abc
+fi
+dlv_login_wall() { NEED=1 dlv "$@"; }
+expect "download_video retries a login wall with browser cookies" 'Download complete \(brave cookies\)' \
+  dlv_login_wall bash '_dlv_cookie_browsers() { echo brave; };' https://www.reddit.com/r/x/s/abc -d "$WORK/dl"
+expect "download_video explains a login wall it can't pass" 'Still needs a login' \
+  dlv_login_wall bash '_dlv_cookie_browsers() { :; };' https://www.reddit.com/r/x/s/abc -d "$WORK/dl"
+cookie_file_untouched() {
+  dlv bash '' https://example.com/v --cookies "$WORK/cookies.txt" -d "$WORK/dl" >/dev/null 2>&1 &&
+    grep -q -- '--cookies' "$WORK/fake.log" && ! grep -q rewritten "$WORK/cookies.txt"
+}
+check "download_video gives yt-dlp a copy of the cookie file" cookie_file_untouched
+expect "download_video rejects an unknown option" 'Unknown option: --bogus' dlv bash '' --bogus https://example.com/v
+check "video-sniff is valid Python" python3 -I -c 'import ast, sys; ast.parse(open(sys.argv[1]).read())' "$REPO/shared/bin/video-sniff"
+
 echo "== shell functions"
 mac_ok() {
   local fn; fn=$(sed -n '/^gen_mac_addr() {/,/^}/p' "$REPO/shared/zsh/.zsh_network")
